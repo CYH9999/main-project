@@ -646,6 +646,47 @@ window.TGTests = (() => {
     eq('إلغاء التوزيع يعيد السيولة', Svc.finance.summary().cash, cashBefore);
     eq('إلغاء التوزيع لا يمسّ الربح',
        Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to), profitBefore);
+
+    /* توزيع يمتدّ عدة أشهر: يُقسم بنسبة النصيب، ومجموع ما قُسم = ما قُبض */
+    const keys = D.monthsBack(9).slice(0, 3);
+    const cat0 = Repos.expCats.list()[0];
+    for (let i = 0; i < keys.length; i++)
+      await Svc.finance.addRevenue({ date:D.startOfMonth(keys[i]), amount:[100000, 200000, 700000][i],
+        source:'service', description:'اختبار التقسيم', method:'cash' });
+    for (const k of keys){ if (Svc.periods.isClosed(k)) await Svc.periods.reopen(k, 'ضبط').catch(() => {});
+      await Svc.periods.close(k); }
+    const mFrom = D.startOfMonth(keys[0]), mTo = D.endOfMonth(keys[2]);
+    const stBefore = Svc.distributions.statement(partner.id);
+    const paidBefore = Object.fromEntries(stBefore.periods.map(p => [p.key, p.paid]));
+    const spread = 90000;
+    await Svc.distributions.create({ partnerId:partner.id, periodFrom:mFrom, periodTo:mTo,
+      amount:spread, date:D.today(), method:'cash' });
+    const stAfter = Svc.distributions.statement(partner.id);
+    const allocated = U.round2(U.sum(stAfter.periods.filter(p => keys.includes(p.key)),
+      p => p.paid - (paidBefore[p.key] || 0)));
+    eq('التوزيع الممتدّ يُقسَّم بالكامل على أشهره', allocated, spread);
+    const shares = keys.map(k => Calc.partnerShare(Svc.periods.get(k).net, partner.sharePercent));
+    const pos = shares.filter(x => x > 0), total = U.sum(pos, x => x);
+    const expected = keys.map(k => { const sh = Calc.partnerShare(Svc.periods.get(k).net, partner.sharePercent);
+      return total > 0 ? U.round2(spread * Math.max(0, sh) / total) : U.round2(spread / keys.length); });
+    const got = keys.map(k => U.round2((stAfter.periods.find(p => p.key === k) || {}).paid - (paidBefore[k] || 0)));
+    ok('الشهر الأكثر ربحاً يأخذ النصيب الأكبر',
+       JSON.stringify(got) === JSON.stringify(expected), `${got} مقابل ${expected}`);
+    ok('الشهر الخاسر لا يأخذ شيئاً من التوزيع',
+       shares.every((sh, i) => sh > 0 || got[i] === 0), `${shares} / ${got}`);
+    ok('التقسيم معلَّم في الكشف بأنه تقديري',
+       stAfter.periods.filter(p => keys.includes(p.key)).some(p => p.apportioned));
+    ok('كشف الطباعة يشرح التقسيم',
+       T().Print.partnerStatementHtml(partner.id).includes('التفصيل الشهري تقديري'));
+    eq('إجمالي المقبوض في الكشف يبقى مضبوطاً', stAfter.paid,
+       U.round2(U.sum(Svc.distributions.ofPartner(partner.id), d => d.amount)));
+
+    /* الزيادة على الاستحقاق تُقال بصراحة لا تُخفى خلف صفر */
+    const overPaid = Svc.distributions.statement(partner.id);
+    if (overPaid.remaining < 0)
+      ok('الكشف المطبوع يُعلن القبض الزائد بدل إظهار صفر',
+         T().Print.partnerStatementHtml(partner.id).includes('قُبض مقدماً فوق الاستحقاق'));
+
     return results;
   }
 

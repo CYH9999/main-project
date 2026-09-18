@@ -42,6 +42,11 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 a{color:var(--rose-700)}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
 .num{font-variant-numeric:tabular-nums;direction:ltr;display:inline-block;unicode-bidi:isolate}
+/* الصنف نفسه يُستعمل أحياناً على الخلية لا على نصّها. و display:inline-block يُخرج
+   الخلية من تخطيط الجدول فتنكمش على محتواها وتنفصل عن عنوانها — ويظهر الجدول
+   مبعثراً على الشاشة وفي الورق معاً. تُعاد الخلية إلى طبيعتها هنا مرة واحدة
+   بدل تعديل عشرات مواضع الاستدعاء، ويبقى الرقم لاتينياً ومحاذياً كبقية الأرقام. */
+td.num,th.num{display:table-cell;text-align:end}
 .hidden{display:none !important}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:#D9CEDA;border-radius:8px;border:3px solid var(--page)}
@@ -538,6 +543,19 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
   .content{padding:14px}
   .pulse{gap:16px}.pulse .p-sep{display:none}
   .gsearch{display:none}
+  /* الجداول المصغّرة تُكتب داخل البطاقات مباشرة بلا غلاف تمرير (بخلاف .tbl-wrap)،
+     فتدفع الصفحة كلها أفقياً على شاشة الهاتف. تُمرَّر داخل بطاقتها بدل أن تجرّ الصفحة،
+     فيبقى الشريط الجانبي والأزرار في مكانها ولا يختفي شيء خارج الحافة. */
+  .card-body{overflow-x:auto}
+  .rep-cards{grid-template-columns:repeat(2,1fr)}
+  /* عنصر الشبكة يرفض افتراضياً أن يضيق تحت عرض محتواه (min-width:auto)، فبطاقةٌ
+     فيها جدول عريض تتمدّد وتجرّ الصفحة كلها. السماح لها بالضيق يجعل غلاف
+     التمرير (.tbl-wrap) يؤدّي عمله: الجدول يُمرَّر داخل بطاقته. */
+  .grid > *, .stack > *, .view > *{min-width:0}
+  /* رأس البطاقة صفّ واحد لا يلتفّ، فبطاقة بثلاثة أزرار تدفع آخرها خارج الشاشة
+     حيث لا يمكن الوصول إليه ولا رؤيته. يلتفّ هنا فتبقى كل الأزرار قابلة للضغط. */
+  .card-head{flex-wrap:wrap;row-gap:8px}
+  .card-head .sp{flex-basis:100%;height:0}
 }
 
 </style>
@@ -4470,11 +4488,31 @@ Svc.distributions = {
     const paid = U.round2(U.sum(dists, d => d.amount));
     /* الاستحقاق يُحسب على الفترات المقفلة وحدها: ما لم يُقفل لم يُثبَّت بعد */
     const closed = Svc.periods.list();
+    /* التوزيع الواحد قد يغطّي عدة أشهر، والسجل لا يقول كم منه يخصّ كل شهر —
+       لأن الشريكة قبضت مبلغاً واحداً عن الفترة كلها. فيُوزَّع على أشهرها بنسبة
+       نصيبها في كل شهر: شهرٌ ربحه الضعف يأخذ الضعف. وإذا لم يكن للفترة نصيب
+       موجب (خسارة أو صفر) فلا نسبة يُقاس عليها، فيُقسم بالتساوي.
+       الإجماليات تبقى مضبوطة في الحالتين — التوزيع هنا عرضٌ لا قيدٌ محاسبي. */
+    const shareOf = key => { const p = Svc.periods.get(key);
+      return p ? Calc.partnerShare(p.net, partner.sharePercent) : 0; };
+    const allocation = (d, key) => {
+      const months = Svc.periods.monthsBetween(d.periodFrom, d.periodTo);
+      if (!months.includes(key)) return 0;
+      if (months.length === 1) return Number(d.amount) || 0;
+      /* الأشهر الخاسرة لا تأخذ نصيباً، ولا تدخل المقام أيضاً — وإلا لم يعد
+         مجموع ما وُزّع على الأشهر يساوي ما قُبض فعلاً. */
+      const shares = months.map(k => Math.max(0, shareOf(k)));
+      const total = U.sum(shares, x => x);
+      if (total > 0) return U.round2((Number(d.amount) || 0) * (Math.max(0, shareOf(key)) / total));
+      return U.round2((Number(d.amount) || 0) / months.length);
+    };
     const periods = closed.map(p => {
       const share = Calc.partnerShare(p.net, partner.sharePercent);
-      const got = U.round2(U.sum(dists.filter(d => Svc.periods.monthsBetween(d.periodFrom, d.periodTo).includes(p.key))
-        .map(d => ({ d, n:Svc.periods.monthsBetween(d.periodFrom, d.periodTo).length })), x => x.d.amount / x.n));
-      return { key:p.key, label:D.monthName(p.key), net:p.net, share, paid:got, remaining:U.round2(share - got) };
+      const got = U.round2(U.sum(dists, d => allocation(d, p.key)));
+      return { key:p.key, label:D.monthName(p.key), net:p.net, share, paid:got, remaining:U.round2(share - got),
+               /* التوزيع الممتدّ موزَّع تقديراً على أشهره، ويُعلَّم ليُقرأ على حقيقته */
+               apportioned:dists.some(d => allocation(d, p.key) > 0
+                 && Svc.periods.monthsBetween(d.periodFrom, d.periodTo).length > 1) };
     });
     const entitled = U.round2(U.sum(periods, p => p.share));
     return {
@@ -12289,7 +12327,7 @@ const Print = {
       ${page}
       body{background:#fff;margin:0;padding:0;color:#000}
       .doc{padding:0}
-      table{page-break-inside:auto} thead{display:table-header-group}
+      table{page-break-inside:auto} thead{display:table-header-group} tfoot{display:table-footer-group}
       tr{page-break-inside:avoid;break-inside:avoid}
       .page-break{page-break-after:always}
       </style></head><body>${html}
@@ -12475,7 +12513,7 @@ Print.cashDayHtml = function(date){
   const pays = U.sortBy(Repos.payments.list().filter(x => x.date === date), x => x.createdAt);
   const row = (k, v, cls) => `<tr><td>${U.esc(k)}</td><td class="num ta-l ${cls || ''}">${v}</td></tr>`;
   return `<div class="doc">
-    ${Brand.printHeader('كشف الصندوق اليومي', `${D.dayName(date)} ${D.fmt(date)}`)}
+    ${Brand.printHeader('كشف الصندوق اليومي', `عن يوم ${D.dayName(date)} ${D.fmt(date)}`)}
     <table class="doc-tbl doc-sums"><tbody>
       ${row('الرصيد الافتتاحي', Money.fmt(p.opening))}
       ${row('+ المقبوض نقداً', Money.fmt(p.cashIn))}
@@ -12563,11 +12601,13 @@ Print.partnerStatementHtml = function(partnerId){
     <table class="doc-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
       ${st.periods.length ? st.periods.map(x => `<tr><td>${U.esc(x.label)}</td>
         <td class="num">${Money.fmt(x.net)}</td><td class="num">${Money.fmt(x.share)}</td>
-        <td class="num">${Money.fmt(x.paid)}</td><td class="num">${Money.fmt(x.remaining)}</td></tr>`).join('')
+        <td class="num">${Money.fmt(x.paid)}${x.apportioned ? ' *' : ''}</td><td class="num">${Money.fmt(x.remaining)}</td></tr>`).join('')
         : '<tr><td colspan="5">لا فترة مقفلة بعد — لا استحقاق مثبَّت</td></tr>'}
-    </tbody><tfoot><tr><td>الإجمالي</td><td class="num"></td>
+    </tbody><tfoot><tr><td>الإجمالي</td><td class="num">${Money.fmt(U.sum(st.periods, p => p.net))}</td>
       <td class="num">${Money.fmt(st.entitled)}</td><td class="num">${Money.fmt(st.paid)}</td>
       <td class="num">${Money.fmt(st.remaining)}</td></tr></tfoot></table>
+    ${st.periods.some(p => p.apportioned) ? `<div class="doc-note">* توزيعٌ واحد غطّى أكثر من شهر، فقُسم على أشهره
+      بنسبة نصيبها في كلٍّ منها. الإجماليات أعلاه مضبوطة، والتفصيل الشهري تقديري.</div>` : ''}
 
     <h3 class="doc-title">التوزيعات المدفوعة</h3>
     <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
@@ -12577,8 +12617,19 @@ Print.partnerStatementHtml = function(partnerId){
         : '<tr><td colspan="4">لا توزيعات</td></tr>'}
     </tbody></table>
 
-    <div class="doc-total"><span>${st.remaining > 0 ? 'المتبقّي لها من الأرباح' : 'لا متبقٍّ من الأرباح'}</span>
-      <span class="num">${Money.fmt(Math.max(0, st.remaining))}</span></div>
+    ${(() => {
+      /* الصفر ليس جواباً صادقاً حين يكون الموزَّع أكبر من الاستحقاق: الشريكة
+         قبضت مقدماً على حساب أرباح لم تُقفل بعد، وإخفاء ذلك يُظهر حساباً مسوّى
+         بينما هو مدين. يُقال الرقم بوجهه وباسمه. */
+      if (st.remaining > 0) return `<div class="doc-total"><span>المتبقّي لها من الأرباح</span>
+        <span class="num">${Money.fmt(st.remaining)}</span></div>`;
+      if (st.remaining < 0) return `<div class="doc-total"><span>قُبض مقدماً فوق الاستحقاق</span>
+        <span class="num">${Money.fmt(Math.abs(st.remaining))}</span></div>
+        <div class="doc-note">هذا المبلغ سُلّم للشريكة زيادةً على نصيبها من الفترات المقفلة،
+          ويُخصم من نصيبها في الفترات القادمة.</div>`;
+      return `<div class="doc-total"><span>لا متبقٍّ من الأرباح</span>
+        <span class="num">${Money.fmt(0)}</span></div>`;
+    })()}
     <div class="doc-note">استرجاع رأس المال ليس توزيع ربح: الأول إعادة مالٍ استُثمر، والثاني نصيب من ربحٍ تحقّق.
       وتوزيع الأرباح يقلّل سيولة النادي ولا يقلّل ربحه.</div>
     ${st.openPeriods.length ? `<div class="doc-note">فترات انتهت ولم تُقفل بعد فلا استحقاق مثبَّت عنها:
@@ -12605,9 +12656,13 @@ Screens.partnerStatement = function(partnerId){
       <h4 style="font-size:14px;margin:0 0 8px">الاستحقاق حسب الفترة</h4>
       ${st.periods.length ? `<table class="mini-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
         ${st.periods.map(x => `<tr><td>${U.esc(x.label)}</td><td class="num">${Money.fmt(x.net)}</td>
-          <td class="num">${Money.fmt(x.share)}</td><td class="num">${Money.fmt(x.paid)}</td>
+          <td class="num">${Money.fmt(x.share)}</td>
+          <td class="num">${Money.fmt(x.paid)}${x.apportioned ? ' <span class="t-sub" title="توزيع غطّى عدة أشهر — قُسم بنسبة النصيب">*</span>' : ''}</td>
           <td class="num ${x.remaining > 0 ? 'money-neg' : ''}">${Money.fmt(x.remaining)}</td></tr>`).join('')}
-        </tbody></table>` : '<div class="t-sub">لا فترة مقفلة بعد — أقفلي فترة ليثبت استحقاقها.</div>'}
+        </tbody></table>
+        ${st.periods.some(x => x.apportioned) ? `<div class="t-sub" style="margin-top:6px">* توزيعٌ واحد غطّى أكثر من شهر،
+          فقُسم على أشهره بنسبة نصيبها في كلٍّ منها. الإجماليات مضبوطة والتفصيل الشهري تقديري.</div>` : ''}`
+        : '<div class="t-sub">لا فترة مقفلة بعد — أقفلي فترة ليثبت استحقاقها.</div>'}
       ${st.openPeriods.length ? `<div class="t-sub" style="margin-top:10px">فترات انتهت ولم تُقفل:
         ${U.esc(st.openPeriods.map(x => D.monthName(x.key)).join('، '))}</div>` : ''}
       <h4 style="font-size:14px;margin:16px 0 8px">التوزيعات</h4>

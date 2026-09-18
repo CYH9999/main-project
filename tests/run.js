@@ -619,6 +619,319 @@ group('التقارير والتصديرات', async (browser, url) => {
   record('التقارير والتصديرات', rows, errors);
 });
 
+group('الطباعة الفعلية', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:1440, height:960 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await page.evaluate(() => window.TG.ready);
+
+  /* بيانات قاسية عمداً: اسم طويل جداً ومبالغ بسبعة أرقام وفاتورة متعدّدة البنود */
+  const ids = await page.evaluate(async () => {
+    await window.TG.Seed.loadDemo(20);
+    const { Svc, Repos, D, Actions } = window.TG;
+    const { rec:m } = await Svc.members.create({ name:'فاطمة عبد الرحمن محمد الحسيني الجبوري العنزي', phone:'07901234567' });
+    const { rec:sub } = await Svc.subs.create({ memberId:m.id, startDate:D.today(),
+      customDuration:{ value:12, unit:'month' }, price:12750000, discount:250000, paidAmount:9500000, paymentMethod:'transfer' });
+    const rc = await Svc.receipts.ensure(Actions.lastPaymentOf('subscription', sub.id).id);
+    const idx = Svc.inventory.onHandIndex();
+    const prods = Repos.products.list().filter(p => (idx[p.id] || 0) >= 3).slice(0, 4);
+    let saleRcId = null;
+    if (prods.length){
+      const { rec:sale } = await Svc.sales.create({ date:D.today(), memberId:m.id,
+        lines:prods.map(p => ({ productId:p.id, qty:3, unitPrice:p.price, discount:0 })),
+        discount:5000, paidAmount:'', paymentMethod:'cash' });
+      saleRcId = (await Svc.receipts.ensure(Actions.lastPaymentOf('sale', sale.id).id)).id;
+    }
+    const partner = Repos.partners.list()[0];
+    const key = D.monthsBack(3)[0];
+    if (partner && !Svc.periods.isClosed(key)) await Svc.periods.close(key);
+    if (partner) await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(key),
+      periodTo:D.endOfMonth(key), amount:120000, date:D.today(), method:'cash' }).catch(() => {});
+    return { memberId:m.id, receiptId:rc.id, saleRcId, partnerId:partner && partner.id };
+  });
+
+  /* التقاط ما تكتبه نافذة الطباعة فعلاً بدل الاكتفاء بأن الدالة لم ترمِ */
+  const capture = (code, a) => page.evaluate(([c, arg]) => {
+    let out = '';
+    const real = window.open;
+    window.open = () => ({ document:{ write(h){ out += h; }, close(){} } });
+    try { (new Function('a', 'return (' + c + ')(a)'))(arg); } finally { window.open = real; }
+    return out;
+  }, [code.toString(), a]);
+
+  const docs = {
+    'وصل A4':        await capture(a => TG.Print.open('و', TG.Print.receiptHtml(TG.Repos.receipts.get(a.receiptId), { format:'a4' }), {}), ids),
+    'وصل شريط 80مم': await capture(a => TG.Print.open('و', TG.Print.receiptHtml(TG.Repos.receipts.get(a.receiptId), { format:'slip' }), { slip:true }), ids),
+    'وصل فاتورة':    ids.saleRcId ? await capture(a => TG.Print.open('و', TG.Print.receiptHtml(TG.Repos.receipts.get(a.saleRcId), { format:'a4' }), {}), ids) : '',
+    'كشف مشتركة':    await capture(a => TG.Print.open('ك', TG.Print.statementHtml(a.memberId), {}), ids),
+    'كشف شريكة':     ids.partnerId ? await capture(a => TG.Print.open('ك', TG.Print.partnerStatementHtml(a.partnerId), {}), ids) : '',
+    'كشف الصندوق':   await capture(() => TG.Print.open('ص', TG.Print.cashDayHtml(TG.D.today()), {}), ids),
+    'التقرير الشهري': await capture(() => { const r = TG.Reports.build(TG.D.monthKey(TG.D.today()));
+      return TG.UI.printSection('ت', TG.Reports.html(r, true), { plain:true }); }, ids),
+    'قائمة المشتركات': await capture(() => { TG.go('members'); TG.renderRoute();
+      const b = document.getElementById('mPrint'); if (b) b.click(); }, ids),
+    'كشف المستحقات': await capture(() => { TG.State.f.financeTab = 'dues'; TG.go('finance'); TG.renderRoute();
+      const b = document.getElementById('duPrint'); if (b) b.click(); }, ids)
+  };
+
+  const rows = [];
+  for (const [name, html] of Object.entries(docs)){
+    if (!html){ rows.push({ name:`${name}: يُولَّد`, pass:false, detail:'لم يُكتب أي HTML' }); continue; }
+    rows.push({ name:`${name}: يُولَّد`, pass:true, detail:'' });
+    const slip = name.includes('شريط');
+    const p = await ctx0.newPage();
+    await p.setContent(html, { waitUntil:'load' });
+    await p.emulateMedia({ media:'print' });
+    await p.setViewportSize({ width: slip ? 302 : 794, height:1123 });   /* عرض الورقة الحقيقي */
+    await p.waitForTimeout(120);
+    const m = await p.evaluate(() => {
+      const de = document.documentElement;
+      /* محاذاة الأعمدة: رأس الجدول وجسمه يجب أن يبدآ عند النقطة نفسها */
+      const tables = [...document.querySelectorAll('table')].map(t => {
+        const head = [...t.querySelectorAll('thead th')];
+        const row = t.querySelector('tbody tr');
+        if (!head.length || !row) return null;
+        const body = [...row.children];
+        if (head.length !== body.length) return { cells:`${head.length}/${body.length}`, bad:head.length };
+        return { cells:head.length, bad:head.filter((h, i) =>
+          Math.abs(h.getBoundingClientRect().left - body[i].getBoundingClientRect().left) > 3).length };
+      }).filter(Boolean);
+      /* القراءة بالأبيض والأسود: كل نصّ يجب أن يكون داكناً كفايةً على ورق أبيض */
+      const lum = c => { const n = (c.match(/\d+/g) || []).slice(0, 3).map(Number);
+        const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * f(n[0]) + 0.7152 * f(n[1]) + 0.0722 * f(n[2]); };
+      const faint = [];
+      document.querySelectorAll('.doc *, .print-wrap *').forEach(el => {
+        if (!el.textContent.trim() || el.children.length) return;
+        const c = getComputedStyle(el).color;
+        const ratio = (1.05) / (lum(c) + 0.05);
+        if (ratio < 4.5) faint.push({ c, ratio:Math.round(ratio * 10) / 10, t:el.textContent.trim().slice(0, 25) });
+      });
+      return { overflow: de.scrollWidth > de.clientWidth + 1, tables,
+               badTables: tables.filter(t => t.bad > 0).length, faint: faint.slice(0, 4), faintCount: faint.length,
+               dir: de.getAttribute('dir'), hasText: document.body.innerText.trim().length > 40 };
+    });
+    await p.close();
+    rows.push({ name:`${name}: بلا فيض أفقي على عرض الورقة`, pass:!m.overflow, detail:m.overflow ? 'النص يتجاوز عرض الورقة' : '' });
+    rows.push({ name:`${name}: أعمدة الجداول تحت عناوينها`, pass:m.badTables === 0, detail:`جداول مختلّة=${m.badTables}` });
+    rows.push({ name:`${name}: اتجاه الصفحة من اليمين`, pass:m.dir === 'rtl', detail:m.dir });
+    rows.push({ name:`${name}: مقروء بالأبيض والأسود`, pass:m.faintCount === 0, detail:JSON.stringify(m.faint) });
+  }
+
+  /* الوصل يحمل ما يجعله وصلاً: رقم، مبلغ، طريقة، تاريخ */
+  const rc = await page.evaluate(a => {
+    const r = TG.Repos.receipts.get(a.receiptId);
+    const h = TG.Print.receiptHtml(r, { format:'a4' });
+    return { no:h.includes(r.no), amount:h.includes(TG.Money.fmt(r.amount)),
+             method:h.includes(TG.PayMethods.label(r.snapshot.payment.method)),
+             date:h.includes(TG.D.fmt(String(r.issuedAt).slice(0, 10))),
+             member:h.includes(r.snapshot.member.name), gym:h.includes(TG.Settings.get('gymName')) };
+  }, ids);
+  Object.entries({ no:'رقم الوصل', amount:'المبلغ', method:'طريقة الدفع', date:'التاريخ',
+                   member:'اسم المشتركة', gym:'اسم النادي' })
+    .forEach(([k, label]) => rows.push({ name:`الوصل المطبوع يحمل ${label}`, pass:rc[k], detail:'' }));
+
+  await ctx0.close();
+  record('الطباعة الفعلية', rows, errors);
+});
+
+group('قبول التشغيل — يوم عمل كامل', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    const { Svc, Repos, D, U, Calc, Settings, Actions, PayMethods } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+    await window.TG.Seed.loadDemo(15);
+    const today = D.today();
+
+    const c0 = Svc.cashbook.expected(today);
+    const cat = Repos.expCats.list()[0];
+    const m = Repos.members.list()[0];
+
+    /* يوم يحتوي كل ما يحدث في نادٍ حقيقي */
+    const { rec:sub } = await Svc.subs.create({ memberId:m.id, startDate:today,
+      customDuration:{ value:1, unit:'month' }, price:90000, paidAmount:30000, paymentMethod:'cash' });
+    await Svc.payments.add({ refType:'subscription', refId:sub.id, memberId:m.id, date:today, amount:30000, method:'transfer' });
+    await Svc.payments.add({ refType:'subscription', refId:sub.id, memberId:m.id, date:today, amount:30000, method:'card' });
+    const expCash = await Svc.finance.addExpense({ date:today, amount:7000, categoryId:cat && cat.id,
+      description:'مصروف نقدي', method:'cash' });
+    const expBank = await Svc.finance.addExpense({ date:today, amount:11000, categoryId:cat && cat.id,
+      description:'مصروف بتحويل', method:'transfer' });
+    const expUnknown = await Repos.expenses.create({ date:today, amount:13000, categoryId:cat && cat.id,
+      description:'راتب قديم بلا طريقة', method:PayMethods.UNKNOWN_KEY, refType:'payroll', refId:'x' });
+    const idx = Svc.inventory.onHandIndex();
+    const prod = Repos.products.list().find(p => (idx[p.id] || 0) >= 2);
+    let sale = null;
+    if (prod) sale = (await Svc.sales.create({ date:today, memberId:m.id,
+      lines:[{ productId:prod.id, qty:2, unitPrice:prod.price, discount:0 }], discount:0,
+      paidAmount:'', paymentMethod:'cash' })).rec;
+    const partner = Repos.partners.list()[0];
+    const key = D.monthsBack(4)[0];
+    if (partner && !Svc.periods.isClosed(key)) await Svc.periods.close(key);
+    const profitBefore = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), D.startOfMonth(key), D.endOfMonth(key));
+    const cashBeforeDist = Svc.finance.summary().cash;
+    if (partner) await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(key),
+      periodTo:D.endOfMonth(key), amount:15000, date:today, method:'cash' });
+
+    const cv = Svc.cashbook.expected(today);
+    const saleCash = sale ? sale.total : 0;
+    /* الدرج: النقد وحده يدخله ويخرج منه */
+    ok('الدرج يستقبل النقد وحده',
+       r2(cv.cashIn - c0.cashIn) === r2(30000 + saleCash), `${r2(cv.cashIn - c0.cashIn)} مقابل ${r2(30000 + saleCash)}`);
+    ok('التحويل والبطاقة خارج الدرج',
+       r2(cv.nonCash - c0.nonCash) === 60000, `${r2(cv.nonCash - c0.nonCash)}`);
+    ok('المصروف النقدي وتوزيع الأرباح النقدي يخرجان من الدرج',
+       r2(cv.cashOut - c0.cashOut) === r2(7000 + (partner ? 15000 : 0)), `${r2(cv.cashOut - c0.cashOut)}`);
+    ok('المصروف بتحويل لا يخرج من الدرج',
+       !Repos.expenses.list().filter(e => e.id === expBank.id).some(e => Svc.cashbook.isCash(e.method)));
+    ok('المصروف مجهول الطريقة معزول ومعلَن',
+       r2(cv.unknownOut) >= 13000 && cv.movement.counts.unknownOut >= 1, `${cv.unknownOut}`);
+    ok('المتوقّع = الافتتاحي + الداخل − الخارج',
+       r2(cv.expected) === r2(cv.opening + cv.cashIn - cv.cashOut), JSON.stringify(cv));
+    const methods = (cv.byMethod || []).map(x => x.key);
+    ok('جدول الطرق يفصل النقد والتحويل والبطاقة',
+       ['cash','transfer','card'].every(k => methods.includes(k)), methods.join(','));
+    /* الصندوق ليس ربحاً */
+    ok('توزيع الأرباح يقلّل السيولة ولا يقلّل الربح',
+       partner ? (r2(Svc.finance.summary().cash) === r2(cashBeforeDist - 15000)
+         && r2(Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), D.startOfMonth(key), D.endOfMonth(key))) === r2(profitBefore)) : true);
+    ok('المصروفات لا تحوي التوزيع', !Repos.expenses.list(true).some(e => e.amount === 15000 && e.refType === 'distribution'));
+
+    /* وصولات اليوم وطباعتها جميعاً */
+    const paysToday = Repos.payments.list().filter(p => p.date === today);
+    ok('اليوم فيه مقبوضات بأكثر من طريقة', paysToday.length >= 3, paysToday.length);
+    const realOpen = window.open;
+    let printedHtml = '';
+    window.open = () => ({ document:{ write(h){ printedHtml += h; }, close(){} } });
+    await Actions.printDayReceipts(today);
+    window.open = realOpen;
+    const issued = paysToday.filter(p => Svc.receipts.forPayment(p.id)).length;
+    ok('«طباعة الكل» تُصدر وصلاً لكل دفعة اليوم', issued === paysToday.length, `${issued}/${paysToday.length}`);
+    ok('صفحة الطباعة الجماعية تفصل الوصولات بفواصل صفحات',
+       (printedHtml.match(/page-break/g) || []).length >= paysToday.length - 1,
+       (printedHtml.match(/page-break/g) || []).length);
+    const dup = {};
+    Repos.receipts.list(true).forEach(r => { dup[r.no] = (dup[r.no] || 0) + 1; });
+    ok('لا رقم وصل مكرّر', !Object.values(dup).some(n => n > 1));
+
+    /* كشف اليوم المطبوع يطابق الشاشة */
+    const sheet = window.TG.Print.cashDayHtml(today);
+    ok('كشف اليوم المطبوع يحمل المتوقّع نفسه', sheet.includes(window.TG.Money.fmt(cv.expected)));
+    ok('كشف اليوم يذكر المصروف مجهول الطريقة', sheet.includes('لا تُعرف طريقة صرفها'));
+    return out;
+  });
+  await ctx.close();
+  record('قبول التشغيل — يوم عمل كامل', rows, errors);
+});
+
+group('قبول الواجهة والخصوصية', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    const { Svc, Repos, D, U } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    await window.TG.Seed.loadDemo(20);
+
+    /* الأسئلة التي تسألها الموظفة، من الملف وحده */
+    const m = Svc.members.rows().find(r => r.st.endDate) || Svc.members.rows()[0];
+    window.TG.go('member', { id:m.m.id }); window.TG.renderRoute();
+    const root = document.getElementById('viewRoot');
+    const side = root.querySelector('.prof-side').innerText.replace(/\s+/g, ' ');
+    const pane = root.querySelector('#pPane').innerText.replace(/\s+/g, ' ');
+    const tabs = [...root.querySelectorAll('#pTabs .tab')].map(t => t.textContent.trim());
+    ok('الملف يجيب: من هي؟', side.includes(m.m.name) && side.includes(m.m.code));
+    ok('الملف يجيب: متى ينتهي اشتراكها؟', /نهاية الاشتراك/.test(side));
+    ok('الملف يجيب: كم باقٍ عليها؟', /المتبقّي عليها/.test(side));
+    ok('الملف يجيب: متى آخر حضور؟', /آخر زيارة/.test(side));
+    ok('الملف يجيب: هل عليها إجراء الآن؟', /ما يحتاج انتباهاً/.test(pane));
+    ok('ترتيب التبويبات كما اعتُمد',
+       tabs.join('|') === 'نظرة عامة|الاشتراكات|المالية والوصولات|الحضور|اللياقة|البيانات والمستندات|السجل', tabs.join('|'));
+    const quick = [...root.querySelectorAll('.prof-quick button')].map(b => b.textContent.trim());
+    ok('أفعال سريعة صالحة في رأس الملف', quick.includes('تجديد') && quick.includes('تسجيل حضور'), quick.join('،'));
+    ok('تلميح اكتمال الملف ظاهر', /اكتمال الملف/.test(side));
+
+    /* المعلومات الحسّاسة لا تتسرّب */
+    const target = Repos.members.list()[0];
+    await Svc.members.update(target.id, { name:target.name, phone:target.phone,
+      idNumber:'ID-SECRET-99887', idType:'هوية',
+      health:{ notes:'إصابة سرية', allergies:'حساسية سرية' },
+      emergency:{ name:'جهة سرية', phone:'07800000000' } });
+    const leaks = s => /ID-SECRET-99887|إصابة سرية|حساسية سرية|07800000000/.test(s);
+    const grab = (r, p) => { window.TG.go(r, p || undefined); window.TG.renderRoute();
+      return document.getElementById('viewRoot').innerHTML; };
+    ok('لا تسرّب في قائمة المشتركات', !leaks(grab('members')));
+    ok('لا تسرّب في سجل الاشتراكات', !leaks(grab('subs')));
+    ok('لا تسرّب في المستحقات', !leaks((window.TG.State.f.financeTab = 'dues', grab('finance'))));
+    ok('لا تسرّب في التقارير', !leaks(grab('reports')));
+    window.TG.Actions.globalSearch(target.name.slice(0, 3));
+    ok('لا تسرّب في البحث العام', !leaks(document.getElementById('globalSearchRes').innerHTML));
+    const pay = Svc.payments.ofMember(target.id)[0];
+    if (pay){ const rc = await Svc.receipts.ensure(pay.id);
+      ok('لا تسرّب في الوصل المطبوع', !leaks(window.TG.Print.receiptHtml(rc, { format:'a4' }))); }
+    ok('لا تسرّب في كشف الحساب', !leaks(window.TG.Print.statementHtml(target.id)));
+    ok('لا تسرّب في التنبيهات', !leaks(JSON.stringify(Svc.notify.build())));
+    ok('المعلومات الحسّاسة موجودة في تبويبها وحده',
+       leaks(grab('member', { id:target.id, tab:'docs' })), 'يجب أن تظهر هنا');
+    return out;
+  });
+  await ctx.close();
+  record('قبول الواجهة والخصوصية', rows, errors);
+});
+
+group('العرض الضيّق', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:390, height:844 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await page.evaluate(() => window.TG.ready);
+  await page.evaluate(() => window.TG.Seed.loadDemo(20));
+  const rows = await page.evaluate(async () => {
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const screens = [['الاستقبال','desk'], ['المشتركات','members'], ['لوحة التحكم','dashboard'],
+      ['الحسابات','finance',{tab:'revenues'}], ['الصندوق اليومي','finance',{tab:'cash'}],
+      ['الشركاء والأرباح','finance',{tab:'partners'}], ['التقارير','reports'], ['الإعدادات','settings']];
+    for (const [name, r, p] of screens){
+      window.TG.go(r, p || undefined); window.TG.renderRoute();
+      await new Promise(x => setTimeout(x, 140));
+      const de = document.documentElement;
+      /* الصفحة نفسها يجب ألا تُجرّ أفقياً — الجدول العريض يُمرَّر داخل بطاقته */
+      ok(`${name}: لا تمرير أفقي للصفحة`, de.scrollWidth <= de.clientWidth + 2,
+         `${de.scrollWidth} > ${de.clientWidth}`);
+      /* ولا زر يسقط خارج الحافة فلا يُضغط */
+      const lost = [...document.querySelectorAll('#viewRoot button, .card-head button')].filter(b => {
+        const x = b.getBoundingClientRect();
+        if (!x.width) return false;
+        let n = b.parentElement, scrolled = false;
+        while (n && n !== document.body){ const o = getComputedStyle(n).overflowX;
+          if (o === 'auto' || o === 'scroll'){ scrolled = true; break; } n = n.parentElement; }
+        return !scrolled && (x.left < -2 || x.right > de.clientWidth + 2);
+      }).map(b => b.textContent.trim().slice(0, 18));
+      ok(`${name}: كل الأزرار داخل الشاشة`, !lost.length, lost.join('، '));
+    }
+    const m = window.TG.Repos.members.list()[0];
+    window.TG.go('member', { id:m.id }); window.TG.renderRoute();
+    await new Promise(x => setTimeout(x, 140));
+    ok('ملف المشتركة: لا تمرير أفقي',
+       document.documentElement.scrollWidth <= document.documentElement.clientWidth + 2);
+    window.TG.Forms.member();
+    await new Promise(x => setTimeout(x, 200));
+    const ov = document.querySelector('.ov,.modal,.overlay');
+    ok('النافذة المنبثقة تسع الشاشة', ov.getBoundingClientRect().width <= window.innerWidth + 2);
+    ok('زر الحفظ في النافذة قابل للوصول',
+       !![...ov.querySelectorAll('button')].find(b => /إضافة المشتركة/.test(b.textContent)));
+    return out;
+  });
+  await ctx0.close();
+  record('العرض الضيّق', rows, errors);
+});
+
 group('رسم كل الشاشات', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   await page.evaluate(() => window.TG.Seed.loadDemo(20));
@@ -676,6 +989,128 @@ group('رسم كل الشاشات', async (browser, url) => {
   }
   await ctx.close();
   record('رسم كل الشاشات', rows, []);
+});
+
+group('الأداء على قاعدة كبيرة', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:1440, height:960 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
+  await page.evaluate(() => window.TG.ready);
+
+  /* قاعدة بحجم نادٍ عامل سنتين: تُكتب دفعةً واحدة لأن المقيس هو القراءة والرسم */
+  const built = await page.evaluate(async () => {
+    const { DB, D } = window.TG;
+    const now = new Date().toISOString(), today = D.today();
+    let seq = 0; const uid = p => `${p}_${(seq++).toString(36)}_b`;
+    const base = o => Object.assign({ createdAt:now, updatedAt:now, archived:false }, o);
+    const pick = a => a[Math.floor(Math.random() * a.length)];
+    const F = ['زهراء','فاطمة','نور','سجى','رقية','مريم','آية','هبة','دعاء','لينا'];
+    const L = ['الموسوي','الحسيني','الزبيدي','الجابري','العبادي','الساعدي','الربيعي','التميمي'];
+    const members = [], subs = [], payments = [], revenues = [], attendance = [],
+          sales = [], stock = [], products = [], audit = [], receipts = [], notes = [];
+    for (let i = 0; i < 500; i++)
+      members.push(base({ id:uid('mem'), name:`${pick(F)} ${pick(L)}`, code:'ت' + String(i + 1).padStart(4, '0'),
+        phone:'0770' + String(1000000 + i), joinDate:D.addDays(today, -(i % 900)), suspended:false, custom:{} }));
+    for (let i = 0; i < 300; i++)
+      products.push(base({ id:uid('prd'), name:`صنف ${i}`, sku:'S' + i, category:'مكمّلات', unit:'قطعة',
+        price:1000 + i * 10, cost:500 + i * 5, minStock:3, active:true, stockTracked:true }));
+    products.forEach(p => stock.push(base({ id:uid('stk'), productId:p.id, date:D.addDays(today, -400),
+      type:'purchase', qty:500, unitCost:p.cost, refType:null, refId:null, expenseId:null })));
+    for (let i = 0; i < 2000; i++){
+      const m = members[i % members.length];
+      const start = D.addDays(today, -(i % 800));
+      const price = [45000, 60000, 90000, 120000][i % 4];
+      subs.push(base({ id:uid('sub'), memberId:m.id, planId:null, planName:'شهر', durationValue:1,
+        durationUnit:'month', durationLabel:'شهر', startDate:start, endDate:D.addDays(start, 29),
+        baseEndDate:D.addDays(start, 29), price, discount:0, finalPrice:price, paymentMethod:'cash',
+        sessionCredits:0, ptCredits:0 }));
+    }
+    for (let i = 0; i < 5000; i++){
+      const s = subs[i % subs.length], amt = Math.round(s.finalPrice / 3);
+      const pid = uid('pmt'), rid = uid('rev'), meth = i % 5 === 0 ? 'transfer' : 'cash';
+      payments.push(base({ id:pid, refType:'subscription', refId:s.id, memberId:s.memberId, date:s.startDate,
+        amount:amt, method:meth, notes:'', revenueId:rid }));
+      revenues.push(base({ id:rid, date:s.startDate, amount:amt, source:'subscription', refId:s.id,
+        paymentId:pid, description:'اشتراك', method:meth, notes:'' }));
+      if (i % 4 === 0) receipts.push(base({ id:uid('rcp'), no:'و' + String(i).padStart(5, '0'),
+        refType:'subscription', refId:s.id, paymentId:pid, memberId:s.memberId, amount:amt, issuedAt:now,
+        issuedBy:'', format:'a4', reprints:0, lastPrintedAt:null, voided:false,
+        snapshot:{ member:{ name:'', code:'' }, doc:{}, payment:{} } }));
+    }
+    for (let i = 0; i < 5000; i++)
+      attendance.push(base({ id:uid('att'), memberId:members[i % members.length].id,
+        date:D.addDays(today, -(i % 200)), time:'10:00', trainingId:null, sessionId:null,
+        method:'staff', status:'in', checkOut:null, notes:'' }));
+    for (let i = 0; i < 1000; i++){
+      const p = products[i % products.length], sid = uid('sal');
+      sales.push(base({ id:sid, code:'ف' + String(i).padStart(5, '0'), date:D.addDays(today, -(i % 300)),
+        memberId:members[i % members.length].id, customerName:'',
+        lines:[{ productId:p.id, name:p.name, qty:1, unitPrice:p.price, discount:0, unitCost:p.cost, total:p.price }],
+        subtotal:p.price, discount:0, total:p.price, items:1, notes:'' }));
+      stock.push(base({ id:uid('stk'), productId:p.id, date:D.addDays(today, -(i % 300)), type:'sale',
+        qty:-1, unitCost:p.cost, refType:'sale', refId:sid, expenseId:null }));
+    }
+    for (let i = 0; i < 3000; i++)
+      audit.push(base({ id:uid('aud'), ts:now, entity:'payment', action:'create', summary:'قبض', entityId:null }));
+    for (let i = 0; i < 300; i++)
+      notes.push(base({ id:uid('not'), memberId:members[i].id, text:'ملاحظة', kind:'general',
+        date:today, author:'المالكة', pinned:false }));
+    for (const [st, rows] of [['members',members],['products',products],['subscriptions',subs],
+      ['payments',payments],['revenues',revenues],['receipts',receipts],['attendance',attendance],
+      ['sales',sales],['stockMoves',stock],['audit',audit],['notes',notes]]) await DB.putMany(st, rows);
+    return Object.fromEntries(window.TG.STORE_NAMES.map(s => [s, DB.count(s)]).filter(([, n]) => n));
+  });
+
+  /* إعادة التحميل: الإقلاع الحقيقي على قاعدة ممتلئة */
+  const t0 = Date.now();
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:120000 });
+  await page.evaluate(() => window.TG.ready);
+  const bootMs = Date.now() - t0;
+
+  const timeIt = (code, arg) => page.evaluate(async ([c, a]) => {
+    const f = new Function('a', 'return (' + c + ')(a)');
+    await f(a);
+    const runs = [];
+    for (let i = 0; i < 3; i++){ const t = performance.now(); await f(a); runs.push(performance.now() - t); }
+    return Math.round(Math.min(...runs));
+  }, [code.toString(), arg]);
+
+  const mid = await page.evaluate(() => window.TG.Repos.members.list()[10].id);
+  const rows = [];
+  /* العتبات فضفاضة عمداً: الغرض كشف انهيار في التوسّع لا قياس دقيق يتذبذب */
+  const cases = [
+    ['الإقلاع الكامل', null, null, 6000, bootMs],
+    ['لوحة التحكم', () => { TG.go('dashboard'); TG.renderRoute(); }, null, 1500],
+    ['الاستقبال', () => { TG.go('desk'); TG.renderRoute(); }, null, 1500],
+    ['قائمة 500 مشتركة', () => { TG.go('members'); TG.renderRoute(); }, null, 1500],
+    ['Svc.members.rows()', () => { TG.Svc.members.rows(); }, null, 800],
+    ['البحث العام', () => { TG.Actions.globalSearch('زهراء'); }, null, 1200],
+    ['ملف مشتركة', a => { TG.go('member', { id:a }); TG.renderRoute(); }, mid, 1500],
+    ['ملف مشتركة — المالية', a => { TG.go('member', { id:a, tab:'money' }); TG.renderRoute(); }, mid, 1500],
+    ['سجل 2000 اشتراك', () => { TG.go('subs'); TG.renderRoute(); }, null, 1500],
+    ['المستحقات', () => { TG.State.f.financeTab='dues'; TG.go('finance'); TG.renderRoute(); }, null, 2000],
+    ['الصندوق اليومي', () => { TG.State.f.financeTab='cash'; TG.go('finance'); TG.renderRoute(); }, null, 1500],
+    ['الشركاء والأرباح', () => { TG.State.f.financeTab='partners'; TG.go('finance'); TG.renderRoute(); }, null, 1500],
+    ['بناء التقرير الشهري', () => { TG.Reports.build(TG.D.monthKey(TG.D.today())); }, null, 2000],
+    ['سجل 5000 حضور', () => { TG.go('attendance'); TG.renderRoute(); }, null, 1500],
+    ['بناء نسخة احتياطية', () => { TG.Backup.build(false); }, null, 2000],
+    ['فحص سلامة البيانات', () => { TG.Integrity.scan(); }, null, 2000]
+  ];
+  const timings = {};
+  for (const [name, code, arg, limit, preset] of cases){
+    const ms = preset != null ? preset : await timeIt(code, arg);
+    timings[name] = ms;
+    rows.push({ name:`${name} — ${ms}ms (الحد ${limit}ms)`, pass: ms <= limit, detail: ms > limit ? 'أبطأ من الحد' : '' });
+  }
+  rows.push({ name:`حجم القاعدة: ${Object.values(built).reduce((a, b) => a + b, 0)} سجلاً`, pass:true,
+              detail:JSON.stringify(built) });
+  console.log('   ⏱  ' + Object.entries(timings).map(([k, v]) => `${k}=${v}ms`).join(' · '));
+  await ctx0.close();
+  record('الأداء على قاعدة كبيرة', rows, errors);
 });
 
 /* -------------------------------- التشغيل -------------------------------- */
