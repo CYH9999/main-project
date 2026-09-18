@@ -1958,6 +1958,33 @@ Svc.members = {
                              m && m.suspended, Svc.membership.freezesOfMember(id));
   },
   /* صف جاهز للعرض: يجمع الحالة والإحصاءات مرة واحدة (بدون حسابات داخل الجدول) */
+  /* بحث بالكود تماماً — قلب الاستقبال السريع. الماسح الضوئي لوحةُ مفاتيح:
+     يرسل الكود ثم Enter، وقد يرسل الأرقام بلا حرف «ت»، وقد ترسلها المستخدمة
+     بأرقام عربية. التطبيع يقبلها كلها ويرفض ما عداها. */
+  byCode(code){
+    const q = U.normAr(code);
+    if (!q) return null;
+    const bare = s => String(s).replace(/^ت/, '');
+    const target = bare(q);
+    return Repos.members.list(true).find(m => {
+      const c = U.normAr(m.code || '');
+      return !!c && (c === q || (target && bare(c) === target));
+    }) || null;
+  },
+  /* بيانات التجديد المقترحة: آخر اشتراك هو الأرجح تكراراً، والبداية يوم تلي النهاية */
+  renewalDefaults(memberId){
+    const subs = Svc.subs.ofMember(memberId);
+    const last = U.sortBy(subs, s => s.startDate, -1)[0] || null;
+    const lastEnd = subs.length ? U.sortBy(subs, s => s.endDate, -1)[0].endDate : null;
+    const startDate = lastEnd && D.cmp(lastEnd, D.today()) >= 0 ? D.addDays(lastEnd, 1) : D.today();
+    if (!last) return { startDate, last:null, planId:null, duration:null, price:'', sessionCredits:0, ptCredits:0 };
+    const dur = Svc.subs.durationInfo(last);
+    const plan = last.planId && Repos.plans.get(last.planId) ? last.planId : null;
+    return { startDate, last, planId:plan,
+             duration:{ value:dur.value, unit:dur.unit },
+             price: last.price == null ? '' : last.price,
+             sessionCredits:Number(last.sessionCredits) || 0, ptCredits:Number(last.ptCredits) || 0 };
+  },
   rows(inclArchived=false){
     const today = D.today(), soon = Settings.get('expiringSoonDays');
     const byMember = U.groupBy(Repos.subs.list(true).filter(s=>!s.archived), s=>s.memberId);
@@ -3367,6 +3394,30 @@ Svc.membership = {
     const m = Repos.members.get(sub.memberId);
     await Audit.log('subscription','extend',`تمديد اشتراك ${m ? m.name : ''} ${days} يوماً — النهاية ${D.fmt(rec.endDate)}`, subId);
     return { event:ev, sub:rec };
+  },
+  /* إنهاء التجميد اليوم: المشتركة واقفة أمام الاستقبال وتريد الدخول الآن.
+     لا تُحذف الأيام التي جُمّدت فعلاً ولا تُمدّ النهاية بأيام لم تُجمّد — تُقصّ
+     فترة التجميد عند أمس، فتُحتسب الأيام الماضية وحدها وتعود النهاية إليها.
+     وتجميدٌ لم يبدأ بعد يُلغى بالكامل: لا معنى لقصّه عند أمس. */
+  async endFreezeToday(subId, reason){
+    const f = this.frozenOn(subId);
+    if (!f) throw new AppError('هذا الاشتراك غير مجمّد اليوم','NOT_FROZEN');
+    const today = D.today();
+    const sub0 = Repos.subs.get(subId);
+    const m = sub0 ? Repos.members.get(sub0.memberId) : null;
+    if (D.cmp(f.from, today) >= 0){
+      await this.cancelEvent(f.id, U.norm(reason) || 'أُنهي التجميد قبل أن يبدأ');
+      return { event:Repos.subEvents.get(f.id), sub:Repos.subs.get(subId), cancelled:true, daysKept:0 };
+    }
+    const to = D.addDays(today, -1);
+    const days = DUR.days(f.from, to);
+    const ev = await Repos.subEvents.update(f.id, { to, days, endedEarly:true,
+      endedAt:new Date().toISOString(), endedBy:Auth.session.actorName || '',
+      endReason:U.norm(reason) || 'أُنهي التجميد من الاستقبال' });
+    const sub = await this.recompute(subId);
+    await Audit.log('subscription','unfreeze',
+      `إنهاء تجميد ${m ? m.name : ''} اليوم — احتُسب ${days} يوماً والنهاية ${D.fmt(sub.endDate)}`, subId);
+    return { event:ev, sub, cancelled:false, daysKept:days };
   },
   /* التراجع عن حدث: يُعلَّم ملغى ولا يُحذف، ثم تُعاد النهاية من بقية الأحداث */
   async cancelEvent(eventId, reason){
@@ -6398,8 +6449,10 @@ Views.desk = {
 
       <div class="card" style="margin-bottom:16px"><div class="card-body">
         <div class="desk-find">
-          <input class="inp" id="dkQ" placeholder="اكتبي اسم المشتركة أو رقمها أو كودها…" autocomplete="off">
+          <input class="inp" id="dkQ" placeholder="امسحي الكود أو اكتبي الاسم أو الرقم ثم Enter…" autocomplete="off">
         </div>
+        <div class="t-sub" style="margin-top:6px">اكتبي الكود كاملاً واضغطي Enter فيُسجَّل الحضور فوراً.
+          الماسح الضوئي USB يعمل هكذا تماماً بلا أي إعداد.</div>
         <div id="dkHits"></div>
       </div></div>
 
@@ -6521,13 +6574,27 @@ Views.desk = {
             <button class="btn btn-sm btn-icon" data-open="${r.m.id}" title="الملف">${svg(ICON.eye, 15)}</button>
           </div></div>`;
       }).join('');
-      on('[data-in]', b => Actions.quickCheckIn(b.dataset.in));
+      on('[data-in]', b => Actions.deskCheckIn(b.dataset.in, { method:'staff' }));
       on('[data-rn]', b => Forms.subscription(null, b.dataset.rn));
       on('[data-dues]', b => Screens.memberDues(b.dataset.dues));
       on('[data-open]', b => Screens.memberProfile(b.dataset.open));
     }, 200);
     const q = root.querySelector('#dkQ');
     q.oninput = e => search(e.target.value);
+    /* Enter = الكود كامل. الماسح يرسل الحروف ثم Enter، والكتابة اليدوية مثله. */
+    q.onkeydown = async e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const raw = q.value;
+      if (!U.norm(raw)) return;
+      q.disabled = true;
+      try { await Actions.deskEnter(raw); }
+      finally {
+        /* الشاشة قد تكون أُعيد رسمها بعد الحضور، فيُبحث عن الحقل من جديد */
+        const el = document.getElementById('dkQ');
+        if (el){ el.disabled = false; el.value = ''; el.focus(); }
+      }
+    };
     setTimeout(() => q.focus(), 60);
   }
 };
@@ -9651,17 +9718,24 @@ Object.assign(Forms, {
     const members = U.sortBy(Repos.members.list(), m=>m.name);
     const plans = Repos.plans.list();
     const member = mid ? Repos.members.get(mid) : null;
-    const lastEnd = mid ? Calc.memberStats(Svc.subs.ofMember(mid)).lastEnd : null;
-    const defStart = sub ? sub.startDate : (lastEnd && D.cmp(lastEnd, D.today()) >= 0 ? D.addDays(lastEnd,1) : D.today());
+    /* التجديد يُملأ من الاشتراك الأخير: المدة والسعر والحصص المشمولة، والبداية
+       يوماً يلي النهاية الحالية. الاشتراك القديم لا يُمسّ — هذا سجلّ جديد. */
+    const rn = (!sub && mid) ? Svc.members.renewalDefaults(mid) : null;
+    const defStart = sub ? sub.startDate : (rn ? rn.startDate : D.today());
     const eligible = mid ? Offers.eligibleForMember(mid) : [];
-    const curDur = sub ? Svc.subs.durationInfo(sub) : null;
+    const curDur = sub ? Svc.subs.durationInfo(sub) : (rn && rn.duration ? rn.duration : null);
     /* اشتراك عليه أحداث: النموذج يعدّل «النهاية الأصلية»، والنهاية الفعلية تُشتقّ */
     const evAdded = sub ? Svc.membership.addedDays(sub.id) : 0;
     const baseEnd = sub ? (sub.baseEndDate || sub.endDate) : '';
-    const curPlanId = sub ? (sub.planId && Repos.plans.get(sub.planId) ? sub.planId : '__custom') : (plans[0] ? plans[0].id : '__custom');
+    const curPlanId = sub ? (sub.planId && Repos.plans.get(sub.planId) ? sub.planId : '__custom')
+      : (rn && rn.planId ? rn.planId : (rn && rn.duration ? '__custom' : (plans[0] ? plans[0].id : '__custom')));
     const h = UI.modal({
-      title: sub ? 'تعديل الاشتراك' : 'اشتراك جديد',
+      title: sub ? 'تعديل الاشتراك' : (rn && rn.last ? `تجديد اشتراك ${member ? member.name : ''}` : 'اشتراك جديد'),
       body:`<div id="subForm">
+        ${rn && rn.last ? `<div class="card" style="background:var(--surface-2);margin-bottom:12px"><div class="card-body" style="padding:11px 14px">
+          <span class="t-sub">الاشتراك السابق: ${U.esc(Svc.subs.durationInfo(rn.last).label)} بـ${Money.fmt(rn.last.finalPrice)}
+          وينتهي ${D.fmt(rn.last.endDate)} — التجديد يبدأ من ${D.fmt(rn.startDate)} ولا يمسّ السجل القديم.</span>
+        </div></div>` : ''}
         <div class="form-grid">
           <div class="full">${UI.field('memberId','المشتركة',
             member ? `<input class="inp" value="${U.esc(member.name)} — ${U.esc(member.code)}" disabled><input type="hidden" name="memberId" value="${U.esc(mid)}">`
@@ -9677,7 +9751,8 @@ Object.assign(Forms, {
               [{v:'day',t:'يوم'},{v:'week',t:'أسبوع'},{v:'month',t:'شهر'}]))}</div>
           </div></div>
 
-          ${UI.field('price','السعر', UI.input('price', sub?sub.price:'', {type:'number', attrs:{min:0,step:'any', placeholder:'اكتبي المبلغ'}}), 'السعر حر لكل اشتراك — اكتبي 0 للاشتراك المجاني')}
+          ${UI.field('price','السعر', UI.input('price', sub ? sub.price : (rn ? rn.price : ''), {type:'number', attrs:{min:0,step:'any', placeholder:'اكتبي المبلغ'}}),
+            rn && rn.last ? `السعر الأخير كان ${Money.fmt(rn.last.finalPrice)} — عدّليه بحرّية` : 'السعر حر لكل اشتراك — اكتبي 0 للاشتراك المجاني')}
           ${UI.field('discount','الخصم', UI.input('discount', sub?(sub.discount||0):0, {type:'number', attrs:{min:0,step:'any'}}))}
           ${UI.field('paymentMethod','طريقة الدفع', UI.select('paymentMethod', sub?sub.paymentMethod:PayMethods.CASH_KEY, payMethodsFor(sub?sub.paymentMethod:null)))}
           ${UI.field('endDate', evAdded ? 'نهاية الاشتراك الأصلية' : 'تاريخ الانتهاء', UI.input('endDate', sub?baseEnd:'', {type:'date'}),
@@ -9688,8 +9763,12 @@ Object.assign(Forms, {
         </div>
 
         <details id="moreBox" style="margin-top:2px">
-          <summary style="cursor:pointer;font-size:13px;color:var(--rose-700);font-weight:600;padding:6px 0">تفاصيل إضافية (عرض، سبب الخصم، ملاحظات)</summary>
+          <summary style="cursor:pointer;font-size:13px;color:var(--rose-700);font-weight:600;padding:6px 0">تفاصيل إضافية (حصص مشمولة، عرض، سبب الخصم، ملاحظات)</summary>
           <div class="form-grid" style="padding-top:10px">
+            ${sub ? '' : `${UI.field('sessionCredits','حصص جماعية مشمولة', UI.input('sessionCredits', rn ? rn.sessionCredits : 0, {type:'number', attrs:{min:0, step:1}}),
+              'رصيد حصص لا مال: يُخصم عند الحجز، ولا يظهر في المالية ولا يُصرف بدلاً عن مبلغ')}
+            ${UI.field('ptCredits','حصص تدريب خاص مشمولة', UI.input('ptCredits', rn ? rn.ptCredits : 0, {type:'number', attrs:{min:0, step:1}}),
+              'تنتهي صلاحيتها بنهاية الاشتراك')}`}
             ${UI.field('offerId','العرض المطبّق', UI.select('offerId', offerId||'', [{v:'',t:'بدون عرض'},
               ...eligible.map(e=>({v:e.offer.id, t:`${e.offer.name} — ${Offers.rewardText(e.offer)}`}))]),
               eligible.length ? 'هذه العروض مستحقة فعلاً حسب سجل الاشتراكات' : 'لا توجد عروض مستحقة لهذه المشتركة')}
@@ -9711,7 +9790,8 @@ Object.assign(Forms, {
             <strong id="effEndOut" class="num">${D.fmt(sub.endDate)}</strong> (+${evAdded} يوماً)</div>` : ''}
         </div></div>
       </div>`,
-      footer:`<button class="btn btn-primary" id="subSave">${sub?'حفظ التعديلات':'تسجيل الاشتراك'}</button>
+      footer:`<button class="btn btn-primary" id="subSave">${sub?'حفظ التعديلات':'حفظ'}</button>
+              ${sub ? '' : `<button class="btn btn-dark" id="subPrint">${svg(ICON.print,15)} حفظ وطباعة وصل</button>`}
               <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
       onMount(ov){
         const scope = ov.querySelector('#subForm');
@@ -9776,22 +9856,26 @@ Object.assign(Forms, {
         if (offerId){ syncOffer(); }
         if (!sub) setTimeout(() => { const f = member ? g('price') : g('memberId'); if (f) f.focus(); }, 60);
 
-        ov.querySelector('#subSave').onclick = async () => {
+        const submit = async print => {
           const d = UI.read(scope);
           d.customDuration = isCustom() ? { value:Number(d.customValue)||1, unit:d.customUnit } : null;
           if (isCustom()) d.planId = '';
           const res = await guard(scope, () => sub ? Svc.subs.update(sub.id, d) : Svc.subs.create(d));
           if (!res) return;
           (res.warnings||[]).forEach(w => UI.toast(w,'warn',5000));
-          if (sub) UI.toast('تم حفظ الاشتراك');
-          else {
-            const bal = Svc.subs.balance(res.rec);
-            UI.toast(bal.total <= 0 ? 'تم تسجيل الاشتراك المجاني'
-              : bal.due > 0 ? `تم تسجيل الاشتراك — قُبض ${Money.fmt(bal.paid)} ويتبقّى ${Money.fmt(bal.due)}`
-              : `تم تسجيل الاشتراك وترحيل ${Money.fmt(bal.paid)} للإيرادات`, 'ok', bal.due > 0 ? 6000 : 3400);
-          }
           h.close(); renderRoute();
+          if (sub){ UI.toast('تم حفظ الاشتراك'); return; }
+          const bal = Svc.subs.balance(res.rec);
+          const msg = bal.total <= 0 ? 'تم تسجيل الاشتراك المجاني'
+            : bal.due > 0 ? `تم تسجيل الاشتراك — قُبض ${Money.fmt(bal.paid)} ويتبقّى ${Money.fmt(bal.due)}`
+            : `تم تسجيل الاشتراك وترحيل ${Money.fmt(bal.paid)} للإيرادات`;
+          /* الوصل وثيقة على دفعة: اشتراك سُجّل بلا قبض لا وصل له، ويُقال ذلك صراحةً */
+          if (print) await Actions.saveAndPrintReceipt((Actions.lastPaymentOf('subscription', res.rec.id) || {}).id, msg);
+          else UI.toast(msg, 'ok', bal.due > 0 ? 6000 : 3400);
         };
+        ov.querySelector('#subSave').onclick = () => submit(false);
+        const sp = ov.querySelector('#subPrint');
+        if (sp) sp.onclick = () => submit(true);
       }
     });
   },
@@ -10186,7 +10270,8 @@ Object.assign(Forms, {
           </div></div></div>
         <span class="err" id="saErr" style="display:block;margin-top:6px"></span>
       </div>`,
-      footer:`<button class="btn btn-primary" id="saSave">تسجيل الفاتورة</button>
+      footer:`<button class="btn btn-primary" id="saSave">حفظ</button>
+              <button class="btn btn-dark" id="saPrint">${svg(ICON.print,15)} حفظ وطباعة وصل</button>
               <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
       onMount(ov){
         const scope = ov.querySelector('#saForm');
@@ -10238,15 +10323,18 @@ Object.assign(Forms, {
         g('memberId').onchange = () => { const m = g('memberId').value;
           scope.querySelector('[data-field="customerName"]').style.display = m ? 'none' : ''; };
         drawLines();
-        ov.querySelector('#saSave').onclick = async () => {
+        const submit = async print => {
           const d = UI.read(scope); d.lines = lines;
           const res = await guard(scope, () => Svc.sales.create(d));
           if (!res) return;
           (res.warnings||[]).forEach(w => UI.toast(w,'warn',5000));
-          UI.toast(`تم تسجيل الفاتورة ${res.rec.code} بمبلغ ${Money.fmt(res.rec.total)}`,'ok',5000);
+          const msg = `تم تسجيل الفاتورة ${res.rec.code} بمبلغ ${Money.fmt(res.rec.total)}`;
           h.close(); renderRoute();
-          Screens.sale(res.rec.id);
+          if (print) await Actions.saveAndPrintReceipt((Actions.lastPaymentOf('sale', res.rec.id) || {}).id, msg);
+          else { UI.toast(msg,'ok',5000); Screens.sale(res.rec.id); }
         };
+        ov.querySelector('#saSave').onclick = () => submit(false);
+        ov.querySelector('#saPrint').onclick = () => submit(true);
       }
     });
   },
@@ -10278,18 +10366,24 @@ Object.assign(Forms, {
         <div class="row" style="margin-top:10px;gap:8px"><button class="btn btn-sm" id="pyFull">قبض كامل المتبقي</button>
           <button class="btn btn-sm" id="pyHalf">قبض النصف</button></div>
       </div>`,
-      footer:`<button class="btn btn-primary" id="pySave">تسجيل القبض</button>
+      footer:`<button class="btn btn-primary" id="pySave">حفظ</button>
+              <button class="btn btn-dark" id="pyPrint">${svg(ICON.print,15)} حفظ وطباعة وصل</button>
               <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
       onMount(ov){
         const scope = ov.querySelector('#pyForm');
         ov.querySelector('#pyFull').onclick = () => { scope.querySelector('[name=amount]').value = st.due; };
         ov.querySelector('#pyHalf').onclick = () => { scope.querySelector('[name=amount]').value = U.round2(st.due/2); };
-        ov.querySelector('#pySave').onclick = async () => {
+        /* مسار واحد للحفظ: الطباعة إضافةٌ بعده لا طريقٌ موازٍ يسجّل دفعة أخرى */
+        const submit = async print => {
           const d = UI.read(scope);
           const res = await guard(scope, () => Svc.payments.add(Object.assign({ refType, refId, memberId:doc.memberId||null }, d)));
           if (!res) return;
-          UI.toast(`تم قبض ${Money.fmt(res.amount)}`); h.close(); renderRoute();
+          h.close(); renderRoute();
+          if (print) await Actions.saveAndPrintReceipt(res.id, `تم قبض ${Money.fmt(res.amount)}`);
+          else UI.toast(`تم قبض ${Money.fmt(res.amount)}`);
         };
+        ov.querySelector('#pySave').onclick = () => submit(false);
+        ov.querySelector('#pyPrint').onclick = () => submit(true);
       }
     });
   },
@@ -11804,18 +11898,48 @@ const Print = {
 /* ------------------------------- الأفعال ------------------------------- */
 Actions.printReceipt = async function(receiptId, format){
   const r = Repos.receipts.get(receiptId);
-  if (!r) return UI.toast('الوصل غير موجود','err');
+  if (!r){ UI.toast('الوصل غير موجود','err'); return null; }
   const w = Print.open(`وصل ${r.no}`, Print.receiptHtml(r, { format }), { slip:(format || r.format) === 'slip' });
-  if (!w) return;
+  if (!w) return null;
   /* العدّاد يزيد بعد فتح نافذة الطباعة فعلاً — لا قبلها */
   await Svc.receipts.markPrinted(receiptId).catch(e => Log.warn('تعذّر تسجيل الطباعة', e));
+  return w;
 };
 /* الطريق المعتاد من الشاشات: دفعة ⇒ وصل (يُصدَر مرة واحدة) ⇒ طباعة */
 Actions.printReceiptForPayment = async function(paymentId){
   const r = await guard(null, () => Svc.receipts.ensure(paymentId));
-  if (!r) return;
+  if (!r) return null;
   const fmt = Settings.get('receiptFormat') || 'a4';
   await Actions.printReceipt(r.id, fmt);
+  return r;
+};
+
+/* «حفظ وطباعة وصل»: الحفظ وقع قبل أن تُفتح نافذة الطباعة، فلا يجوز أن يبدو
+   تعثّر الطباعة تعثّراً في القبض. القاعدة هنا صريحة:
+     · المال يُحفظ أولاً ويُعلَن نجاحه بنفسه.
+     · الوصل يُصدَر مرة واحدة برقم واحد (ensure) مهما تكرّر الطلب.
+     · إن مُنعت النافذة أو فشلت الطباعة، تبقى الدفعة والوصل كما هما، وتُقال
+       للمستخدمة الجملة التي تمنعها من تسجيل دفعة ثانية بالخطأ: أين تعيد الطباعة.
+   ====================================================================== */
+Actions.saveAndPrintReceipt = async function(paymentId, okMsg){
+  if (okMsg) UI.toast(okMsg, 'ok', 4500);
+  if (!paymentId){
+    UI.toast('لا توجد دفعة على هذا المستند — سجّلي قبضاً أولاً ثم اطبعي وصله','warn', 7000);
+    return null;
+  }
+  const r = await guard(null, () => Svc.receipts.ensure(paymentId));
+  if (!r){
+    UI.toast('تمّ الحفظ، لكن تعذّر إصدار الوصل — المال مسجَّل، وأعيدي الطباعة من سجل الدفعات','warn', 9000);
+    return null;
+  }
+  const w = await Actions.printReceipt(r.id, Settings.get('receiptFormat') || 'a4');
+  if (!w) UI.toast(`تمّ الحفظ ووصلها رقم ${r.no} — لم تُفتح نافذة الطباعة، وتعيدينها من سجل الدفعات متى شئتِ`,'warn', 10000);
+  return r;
+};
+/* آخر دفعة على مستند — ما يُطبع وصله بعد الحفظ مباشرة */
+Actions.lastPaymentOf = function(refType, refId){
+  const rows = Svc.payments.forRef(refType, refId).filter(p => !p.archived);
+  return U.sortBy(rows, p => `${p.date}|${p.createdAt || ''}|${p.id}`, -1)[0] || null;
 };
 Actions.printStatement = function(memberId){
   const m = Repos.members.get(memberId);
@@ -11837,6 +11961,93 @@ Actions.quickCheckIn = async function(memberId, opts){
   UI.toast(`سُجّل حضور ${m.name}`);
   renderRoute();
   return res.rec;
+};
+
+/* ===================== الاستقبال السريع (المرحلة الأولى) =================
+   مقياس النجاح واحد: المشتركة تمرّ بالكود في ثانية. وما عدا ذلك — تجميد،
+   انتهاء، دين — لا يُعالَج بصمت ولا يُحوَّل إلى بحث يدوي في شاشة أخرى، بل
+   يُعرض بزرّه في المكان نفسه.
+   ====================================================================== */
+
+/* تسجيل حضور من الاستقبال مع معالجة الحالات الاستثنائية بأزرارها.
+   يُرجع سجل الحضور عند النجاح، و null إذا اختارت المستخدمة عدم التسجيل. */
+Actions.deskCheckIn = async function(memberId, opts){
+  const o = opts || {};
+  const m = Repos.members.get(memberId);
+  if (!m){ UI.toast('المشتركة غير موجودة','err'); return null; }
+  const st = Svc.members.status(memberId);
+  const method = o.method || 'staff';
+
+  /* ---------- مجمّدة اليوم: الدخول يعني إنهاء التجميد أو استثناءً بلا إنهائه ---------- */
+  if (st.status === STATUS.FROZEN && st.current){
+    const f = st.freeze || Svc.membership.frozenOn(st.current.id);
+    const pick = await UI.choice({
+      title:`اشتراك ${m.name} مجمّد`,
+      message:`التجميد من <strong class="num">${D.fmt(f.from)}</strong> إلى <strong class="num">${D.fmt(f.to)}</strong>`
+        + `${f.reason ? ` — ${U.esc(f.reason)}` : ''}.<br>إنهاء التجميد اليوم يحتسب الأيام الماضية وحدها،`
+        + ` وتعود نهاية الاشتراك بمقدار ما بقي منه.`,
+      options:[
+        { key:'end',  label:'إنهاء التجميد اليوم وتسجيل الحضور', primary:true },
+        { key:'keep', label:'تسجيل الحضور وإبقاء التجميد' },
+        { key:'no',   label:'إلغاء' }
+      ]
+    });
+    if (!pick || pick === 'no') return null;
+    if (pick === 'end'){
+      const r = await guard(null, () => Svc.membership.endFreezeToday(st.current.id, 'دخلت النادي — أُنهي التجميد من الاستقبال'));
+      if (!r) return null;
+      UI.toast(r.cancelled ? 'أُلغي التجميد ولم يُحتسب منه يوم'
+        : `أُنهي التجميد — احتُسب ${r.daysKept} يوماً والاشتراك ينتهي ${D.fmt(r.sub.endDate)}`, 'ok', 7000);
+    }
+  }
+
+  /* ---------- منتهية أو بلا اشتراك: التحذير ومعه زر التجديد في الحال ---------- */
+  if (st.status === STATUS.EXPIRED || st.status === STATUS.NEVER || st.status === STATUS.SUSPENDED){
+    const why = st.status === STATUS.NEVER ? 'لا يوجد اشتراك مسجَّل لها'
+      : st.status === STATUS.SUSPENDED ? 'عضويتها موقوفة'
+      : `اشتراكها منتهٍ منذ ${Math.abs(st.daysLeft)} يوماً (انتهى ${D.fmt(st.endDate)})`;
+    const allow = Settings.get('attendanceAllowExpired') && st.status !== STATUS.SUSPENDED;
+    const pick = await UI.choice({
+      title:`${m.name} — ${why}`,
+      message:'التجديد الآن يبدأ من اليوم ويملأ المدة والسعر من اشتراكها الأخير.',
+      options:[
+        { key:'renew', label:'تجديد الاشتراك الآن', primary:true },
+        ...(allow ? [{ key:'in', label:'تسجيل الحضور رغم ذلك' }] : []),
+        { key:'no', label:'إلغاء' }
+      ]
+    });
+    if (!pick || pick === 'no') return null;
+    if (pick === 'renew'){ Forms.subscription(null, memberId); return null; }
+  }
+
+  const res = await guard(null, () => Svc.attendance.checkIn({ memberId, method }));
+  if (!res) return null;
+  (res.warnings || []).forEach(w => UI.toast(w, 'warn', 6000));
+  UI.toast(`سُجّل حضور ${m.name}${method === 'code' ? ' — بالكود' : ''}`, 'ok');
+  renderRoute();
+  return res.rec;
+};
+
+/* Enter في شريط الاستقبال: كود كامل ⇒ حضور فوري.
+   الماسح الضوئي USB يتصرّف كلوحة مفاتيح فيرسل الكود ثم Enter — فلا يحتاج
+   النادي جهازاً خاصاً ولا إعداداً، ويعمل الكتابة اليدوية بالطريقة نفسها. */
+Actions.deskEnter = async function(raw){
+  const q = U.norm(raw);
+  if (!q) return null;
+  const byCode = Svc.members.byCode(q);
+  if (byCode) return Actions.deskCheckIn(byCode.id, { method:'code' });
+
+  /* ليس كوداً: نتيجة واحدة مطابقة تكفي، وأكثر من واحدة تُترك للعين */
+  const s = U.normAr(q);
+  const hits = Svc.members.rows().filter(r =>
+    [r.m.name, r.m.phone, r.m.phone2, r.m.code].map(U.normAr).join(' ').includes(s));
+  if (hits.length === 1) return Actions.deskCheckIn(hits[0].m.id, { method:'staff' });
+  if (!hits.length){
+    UI.toast(`لا مشتركة بالكود أو الاسم «${q}»`, 'warn', 5000);
+    return null;
+  }
+  UI.toast(`${hits.length} نتيجة مطابقة — اختاري واحدة من القائمة`, 'warn', 4000);
+  return null;
 };
 
 /* المستحقات على مشتركة واحدة، مع القبض والطباعة من المكان نفسه */
