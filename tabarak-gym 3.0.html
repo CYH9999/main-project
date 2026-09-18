@@ -6709,13 +6709,31 @@ Views.member = {
     const paid = U.round2(U.sum(liveSubs, x => payIdx[x.id] || 0) + U.sum(mySales, x => saleIdx[x.id] || 0));
     const balance = Calc.payStatus(owed, paid);
     const att = Svc.attendance.profile(m.id);
+    const myPayments = Svc.payments.ofMember(m.id);
+    const lastPayment = myPayments[0] || null;
     const photo = m.photoMediaId ? Repos.media.get(m.photoMediaId) : null;
     const age = Svc.members.age(m);
     const classCr = Svc.credits.balance(m.id, 'class'), ptCr = Svc.credits.balance(m.id, 'pt');
     const tab = params.tab || 'overview';
 
-    const TABS = [['overview','نظرة عامة'], ['fitness','اللياقة والأهداف'], ['subs','الاشتراكات'],
-                  ['attendance','الحضور'], ['money','المالية'], ['docs','المستندات والبيانات'], ['timeline','السجل']];
+    /* ترتيب التبويبات يتبع يوم الاستقبال لا هيكل قاعدة البيانات:
+       من هي ⇐ ما اشتراكها ⇐ ماذا دفعت ⇐ متى تحضر ⇐ تقدّمها ⇐ أوراقها ⇐ تاريخها */
+    const TABS = [['overview','نظرة عامة'], ['subs','الاشتراكات'], ['money','المالية والوصولات'],
+                  ['attendance','الحضور'], ['fitness','اللياقة'], ['docs','البيانات والمستندات'], ['timeline','السجل']];
+    const notes = Svc.notes.ofMember(m.id);
+    const pinned = notes.filter(n => n.pinned);
+    /* اكتمال الملف: تلميح لا إلزام. لا حقل مطلوب غير الاسم، لكن الناقص يُعرف. */
+    const completeness = (() => {
+      const checks = [
+        ['رقم الهاتف', !!U.norm(m.phone)],
+        ['تاريخ الميلاد', !!m.birthDate],
+        ['جهة اتصال للطوارئ', !!(m.emergency && U.norm(m.emergency.phone))],
+        ['صورة', !!m.photoMediaId],
+        ['اشتراك مسجَّل', liveSubs.length > 0]
+      ];
+      const done = checks.filter(c => c[1]).length;
+      return { done, total:checks.length, pct:U.pct(done, checks.length), missing:checks.filter(c => !c[1]).map(c => c[0]) };
+    })();
 
     root.innerHTML = `<div class="prof-wrap">
       <aside class="prof-side">
@@ -6724,6 +6742,8 @@ Views.member = {
                     `<div style="margin-bottom:10px">${UI.avatar(m.name, true)}</div>`}
           <h3>${U.esc(m.name)}</h3>
           <div class="code">${U.esc(m.code)}${age != null ? ` — ${age} سنة` : ''}</div>
+          <div class="t-sub" style="margin-top:5px" title="${U.esc(completeness.missing.join('، '))}">
+            اكتمال الملف ${completeness.pct}%${completeness.missing.length ? ` — ينقصه ${U.esc(completeness.missing.slice(0, 2).join('، '))}${completeness.missing.length > 2 ? ' وغيره' : ''}` : ' — مكتمل'}</div>
           <div style="margin-top:9px">${UI.chip(st.status)}</div>
           ${m.suspended ? '<div class="pill warn" style="margin-top:6px">العضوية موقوفة</div>' : ''}
           <dl class="kv">
@@ -6734,12 +6754,19 @@ Views.member = {
             <dt>المتبقّي عليها</dt><dd class="${balance.due > 0 ? 'money-neg' : 'money-pos'}">${Money.fmt(balance.due)}</dd>
           </dl>
           <div class="prof-quick">
-            <button class="btn btn-primary btn-sm" data-a="renew">تجديد / اشتراك جديد</button>
+            <button class="btn btn-primary btn-sm" data-a="renew">${st.status === STATUS.NEVER ? 'تسجيل اشتراك' : 'تجديد'}</button>
             <button class="btn btn-sm" data-a="checkin">تسجيل حضور</button>
-            ${balance.due > 0 ? '<button class="btn btn-sm" data-a="collect">قبض دفعة</button>' : ''}
+            ${balance.due > 0 ? '<button class="btn btn-sm" data-a="collect">قبض</button>' : ''}
+            ${lastPayment ? '<button class="btn btn-sm" data-a="lastreceipt">طباعة وصل</button>' : ''}
+            <button class="btn btn-sm" data-a="note">ملاحظة</button>
             <button class="btn btn-sm" data-a="edit">تعديل البيانات</button>
           </div>
         </div>
+        ${pinned.length ? `<div class="card" style="margin-top:12px;border-color:var(--gold-600)"><div class="card-body" style="padding:11px 13px">
+          <strong style="font-size:13px">ملاحظات مثبّتة</strong>
+          ${pinned.slice(0, 4).map(n => `<div class="t-sub" style="margin-top:6px">${U.esc(n.text)}
+            <div style="opacity:.75">${U.esc(n.author)} — ${D.fmt(n.date)}</div></div>`).join('')}
+        </div></div>` : ''}
       </aside>
 
       <div>
@@ -6864,45 +6891,63 @@ Views.member = {
       </div></div>`;
     };
 
-    /* ---------------------------- الاشتراكات ---------------------------- */
-    const paneSubs = () => `<div class="card"><div class="card-head"><h3>سجل الاشتراكات</h3><div class="sp"></div>
-      <button class="btn btn-sm btn-primary" data-a="renew">اشتراك جديد</button></div><div class="card-body">
-      ${subs.length ? `<table class="mini-tbl"><thead><tr><th>المدة</th><th>من</th><th>إلى</th><th>المستحق</th><th>المقبوض</th><th>الحالة</th><th></th></tr></thead><tbody>
-        ${subs.map(s => { const b = Calc.payStatus(s.finalPrice, payIdx[s.id] || 0);
-          const ev = Svc.membership.summary(s.id);
-          return `<tr${s.archived ? ' class="archived-row"' : ''}>
-            <td><strong>${U.esc(Svc.subs.durationInfo(s).label)}</strong>${s.archived ? ' <span class="pill">مؤرشف</span>' : ''}
-              ${s.sessionCredits ? `<div class="t-sub">${s.sessionCredits} حصة مشمولة</div>` : ''}</td>
-            <td class="num">${D.fmt(s.startDate)}</td>
-            <td class="num">${D.fmt(s.endDate)}${ev.addedDays
-              ? `<div class="t-sub">الأصلية ${D.fmt(ev.baseEnd)} +${ev.addedDays} يوم (${ev.frozenDays ? 'تجميد' : 'تمديد'})</div>` : ''}</td>
-            <td class="num">${Money.fmt(s.finalPrice)}${s.discount ? `<div class="t-sub">خصم ${Money.fmt(s.discount)}</div>` : ''}</td>
-            <td class="num">${Money.fmt(b.paid)}</td>
-            <td>${UI.chip(b)}</td>
-            <td class="ta-l"><div class="t-actions">
-              <button class="btn btn-sm btn-icon" data-pmts="${s.id}" title="سجل الدفعات والوصولات">${svg(ICON.coins, 15)}</button>
-              ${!s.archived ? `<button class="btn btn-sm" data-freeze="${s.id}">تجميد</button>
-                               <button class="btn btn-sm" data-extend="${s.id}">تمديد</button>` : ''}
-              ${b.due > 0 ? `<button class="btn btn-sm btn-primary" data-pay="${s.id}">قبض</button>` : ''}
-            </div></td></tr>`;
-        }).join('')}</tbody></table>
-        ${(() => {
-          const evs = subs.flatMap(s => Svc.membership.eventsOf(s.id).map(e => ({ e, s })));
-          if (!evs.length) return '';
-          return `<h4 style="font-size:13px;margin:18px 0 8px">أحداث التجميد والتمديد</h4>
+    /* ---------------------------- الاشتراكات ----------------------------
+       مجموعة كما تُسأل في الاستقبال: ما اشتراكها الآن؟ وهل حجزت القادم؟
+       وماذا كان قبل؟ والصف الواحد يحمل أفعاله معه — قبض، وصولات، تجميد،
+       تمديد، إنهاء تجميد — فلا تُغادر الموظفة الملف لتفعل شيئاً منها. */
+    const subGroup = s => {
+      const t = D.today();
+      if (s.archived) return 'past';
+      if (D.cmp(s.startDate, t) > 0) return 'next';
+      return D.cmp(s.endDate, t) >= 0 ? 'current' : 'past';
+    };
+    const GROUP_LABEL = { current:'الحالي', next:'القادم', past:'السابق' };
+    const subRow = s => {
+      const b = Calc.payStatus(s.finalPrice, payIdx[s.id] || 0);
+      const ev = Svc.membership.summary(s.id);
+      const frozen = !s.archived && Svc.membership.frozenOn(s.id);
+      return `<tr${s.archived ? ' class="archived-row"' : ''}>
+        <td><strong>${U.esc(Svc.subs.durationInfo(s).label)}</strong>${s.archived ? ' <span class="pill">مؤرشف</span>' : ''}
+          ${s.sessionCredits ? `<div class="t-sub">${s.sessionCredits} حصة جماعية مشمولة</div>` : ''}
+          ${s.ptCredits ? `<div class="t-sub">${s.ptCredits} تدريب خاص مشمول</div>` : ''}</td>
+        <td class="num">${D.fmt(s.startDate)}</td>
+        <td class="num">${D.fmt(s.endDate)}${ev.addedDays
+          ? `<div class="t-sub">الأصلية ${D.fmt(ev.baseEnd)} +${ev.addedDays} يوم (${ev.frozenDays ? 'تجميد' : 'تمديد'})</div>` : ''}
+          ${frozen ? `<div class="pill warn">مجمّد حتى ${D.fmt(frozen.to)}</div>` : ''}</td>
+        <td class="num">${Money.fmt(s.finalPrice)}${s.discount ? `<div class="t-sub">خصم ${Money.fmt(s.discount)}</div>` : ''}</td>
+        <td class="num">${Money.fmt(b.paid)}</td>
+        <td>${UI.chip(b)}</td>
+        <td class="ta-l"><div class="t-actions">
+          <button class="btn btn-sm btn-icon" data-pmts="${s.id}" title="سجل الدفعات والوصولات">${svg(ICON.coins, 15)}</button>
+          ${b.due > 0 ? `<button class="btn btn-sm btn-primary" data-pay="${s.id}">قبض</button>` : ''}
+          ${!s.archived && !frozen ? `<button class="btn btn-sm" data-freeze="${s.id}">تجميد</button>` : ''}
+          ${frozen ? `<button class="btn btn-sm btn-dark" data-unfreeze="${s.id}">إنهاء التجميد اليوم</button>` : ''}
+          ${!s.archived ? `<button class="btn btn-sm" data-extend="${s.id}">تمديد</button>` : ''}
+        </div></td></tr>`;
+    };
+    const paneSubs = () => {
+      const groups = ['current','next','past'].map(g => ({ g, rows:subs.filter(s => subGroup(s) === g) })).filter(x => x.rows.length);
+      const events = subs.flatMap(s => Svc.membership.eventsOf(s.id).map(e => ({ e, s })));
+      return `<div class="card"><div class="card-head"><h3>سجل الاشتراكات</h3><div class="sp"></div>
+        <button class="btn btn-sm btn-primary" data-a="renew">اشتراك جديد</button></div><div class="card-body">
+        ${groups.length ? groups.map(({ g, rows }) => `
+          <h4 style="font-size:13px;margin:16px 0 8px">${GROUP_LABEL[g]} <span class="t-sub">(${rows.length})</span></h4>
+          <table class="mini-tbl"><thead><tr><th>المدة</th><th>من</th><th>إلى</th><th>المستحق</th><th>المقبوض</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>${rows.map(subRow).join('')}</tbody></table>`).join('')
+          : UI.empty('لا اشتراكات','سجّلي أول اشتراك لهذه المشتركة','<button class="btn btn-primary" data-a="renew">تسجيل اشتراك</button>')}
+        ${events.length ? `<h4 style="font-size:13px;margin:18px 0 8px">أحداث التجميد والتمديد</h4>
           <table class="mini-tbl"><thead><tr><th>النوع</th><th>الفترة</th><th>الأيام</th><th>السبب</th><th>من</th><th></th></tr></thead><tbody>
-          ${U.sortBy(evs, x => x.e.createdAt, -1).map(({ e }) => `<tr${e.cancelled ? ' class="archived-row"' : ''}>
-            <td>${U.esc(Svc.membership.EVENT[e.type] || e.type)}${e.cancelled ? ' <span class="pill">ملغى</span>' : ''}</td>
+          ${U.sortBy(events, x => x.e.createdAt, -1).map(({ e }) => `<tr${e.cancelled ? ' class="archived-row"' : ''}>
+            <td>${U.esc(Svc.membership.EVENT[e.type] || e.type)}${e.cancelled ? ' <span class="pill">ملغى</span>' : ''}${e.endedEarly ? ' <span class="pill">أُنهي مبكراً</span>' : ''}</td>
             <td class="num">${e.from ? `${D.fmt(e.from)} ← ${D.fmt(e.to)}` : '—'}</td>
             <td class="num">${e.days}</td><td>${U.esc(e.reason || '')}</td><td class="t-sub">${U.esc(e.createdBy || '')}</td>
             <td class="ta-l">${e.cancelled ? '' : `<button class="btn btn-sm" data-evcancel="${e.id}">تراجع</button>`}</td></tr>`).join('')}
-          </tbody></table>`;
-        })()}`
-      : UI.empty('لا اشتراكات','سجّلي أول اشتراك لهذه المشتركة','<button class="btn btn-primary" data-a="renew">تسجيل اشتراك</button>')}
+          </tbody></table>` : ''}
       </div></div>
       ${(classCr.total || ptCr.total) ? `<div class="card" style="margin-top:14px"><div class="card-head"><h3>أرصدة الحصص</h3>
         <div class="sp"></div><button class="btn btn-sm" data-a="grant">إضافة رصيد</button></div><div class="card-body">
-        <div class="t-sub" style="margin-bottom:10px">الحصص ليست نقوداً ولا تُصرف بدلاً عنها. الاستهلاك يبدأ من الباقة الأقرب انتهاءً.</div>
+        <div class="t-sub" style="margin-bottom:10px">الحصص ليست نقوداً ولا تُصرف بدلاً عنها، ولا تدخل أي حساب مالي.
+          الاستهلاك يبدأ من الباقة الأقرب انتهاءً، وأرشفة الاشتراك تُسقط ما بقي من باقته بحدث ظاهر.</div>
         <table class="mini-tbl"><thead><tr><th>النوع</th><th>الباقة</th><th>المستهلك</th><th>المتبقّي</th><th>تنتهي</th></tr></thead><tbody>
         ${[...classCr.packs, ...ptCr.packs].map(p => `<tr${p.isExpired ? ' class="archived-row"' : ''}>
           <td>${U.esc(Svc.credits.KIND[p.kind])}</td><td class="num">${p.total}</td><td class="num">${p.used}</td>
@@ -6911,6 +6956,7 @@ Views.member = {
         </tbody></table></div></div>` : `<div class="card" style="margin-top:14px"><div class="card-body">
           <div class="row"><span class="t-sub">لا أرصدة حصص لهذه المشتركة.</span><div style="flex:1"></div>
           <button class="btn btn-sm" data-a="grant">إضافة رصيد حصص</button></div></div></div>`}`;
+    };
 
     /* ------------------------------ الحضور ------------------------------ */
     const paneAttendance = () => {
@@ -6946,36 +6992,72 @@ Views.member = {
       </div></div>`;
     };
 
-    /* ------------------------------ المالية ----------------------------- */
+    /* -------------------------- المالية والوصولات ------------------------
+       يجيب عن ثلاثة أسئلة وحدها: كم عليها؟ كم دفعت؟ وأين وصولاتها؟
+       فالعرض دفتر أستاذ حقيقي: كل سطر مستحقٍّ أو مقبوضٍ برصيد جارٍ بعده،
+       ومعه قبضٌ فوري وطباعة وصل — بلا مغادرة الملف.
+       والمقبوض يُقرأ من الدفعات دائماً، لا من سعر الاشتراك. */
     const paneMoney = () => {
-      const pmts = Svc.payments.ofMember(m.id);
       const receipts = Svc.receipts.ofMember(m.id);
+      const rcByPayment = {};
+      receipts.forEach(r => { if (r.paymentId) rcByPayment[r.paymentId] = r; });
+      /* سطور الدفتر: مستحقّ (مدين) ومقبوض (دائن)، مرتّبة بالتاريخ ثم بوقت التسجيل */
+      const rows = [
+        ...liveSubs.map(s => ({ date:s.startDate, seq:s.createdAt || '', kind:'owed',
+          text:`اشتراك ${Svc.subs.durationInfo(s).label}`,
+          sub:`${D.fmt(s.startDate)} ← ${D.fmt(s.endDate)}`, debit:Number(s.finalPrice) || 0, credit:0, ref:{ t:'subscription', id:s.id } })),
+        ...mySales.map(s => ({ date:s.date, seq:s.createdAt || '', kind:'owed',
+          text:`فاتورة ${s.code}`, sub:`${(s.lines || []).length} بند`, debit:Number(s.total) || 0, credit:0, ref:{ t:'sale', id:s.id } })),
+        ...myPayments.map(p => ({ date:p.date, seq:p.createdAt || '', kind:'paid',
+          text:`قبض — ${PayMethods.label(p.method)}`,
+          sub:Svc.payments.REF_LABEL[p.refType] || '', debit:0, credit:Number(p.amount) || 0,
+          payment:p, receipt:rcByPayment[p.id] || null }))
+      ].sort((a, b) => D.cmp(a.date, b.date) || String(a.seq).localeCompare(String(b.seq)) || (b.debit - a.debit));
+      let run = 0;
+      const body = rows.map(r => {
+        run = U.round2(run + r.debit - r.credit);
+        const rc = r.receipt;
+        return `<tr>
+          <td class="num">${D.fmt(r.date)}</td>
+          <td><div class="t-name">${U.esc(r.text)}</div><div class="t-sub">${U.esc(r.sub || '')}</div></td>
+          <td class="num">${r.debit ? Money.fmt(r.debit) : '—'}</td>
+          <td class="num">${r.credit ? `<strong class="money-pos">${Money.fmt(r.credit)}</strong>` : '—'}</td>
+          <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no))
+                : (r.kind === 'paid' ? '<span class="t-sub">لم يُصدَر</span>' : '')}</td>
+          <td class="num ${run > 0 ? 'money-neg' : ''}">${Money.fmt(run)}</td>
+          <td class="ta-l"><div class="t-actions">
+            ${r.kind === 'paid' ? `<button class="btn btn-sm" data-receipt="${r.payment.id}">${svg(ICON.print, 13)} وصل</button>` : ''}
+            ${r.kind === 'owed' ? (() => {
+              const paidOn = r.ref.t === 'sale' ? (saleIdx[r.ref.id] || 0) : (payIdx[r.ref.id] || 0);
+              const due = U.round2(r.debit - paidOn);
+              return `<button class="btn btn-sm btn-icon" data-pmts2="${r.ref.t}:${r.ref.id}" title="سجل الدفعات">${svg(ICON.coins, 14)}</button>
+                ${due > 0 ? `<button class="btn btn-sm btn-primary" data-paydoc="${r.ref.t}:${r.ref.id}">قبض</button>` : ''}`;
+            })() : ''}
+          </div></td></tr>`;
+      }).join('');
+
       return `<div class="stat-row">
         <div class="stat"><b>${Money.fmt(balance.total)}</b><span>إجمالي المستحق</span></div>
         <div class="stat pos"><b>${Money.fmt(balance.paid)}</b><span>إجمالي المقبوض</span></div>
-        <div class="stat ${balance.due > 0 ? 'neg' : 'pos'}"><b>${Money.fmt(balance.due)}</b><span>${balance.due > 0 ? 'متبقٍّ عليها' : 'لا مستحقات'}</span></div>
-        <div class="stat"><b>${mySales.length}</b><span>فاتورة متجر</span></div>
+        <div class="stat ${balance.due > 0 ? 'neg' : 'pos'}"><b>${Money.fmt(balance.due)}</b><span>${balance.due > 0 ? 'المتبقّي عليها' : 'لا مستحقات'}</span></div>
+        <div class="stat"><b>${receipts.length}</b><span>وصل صادر</span></div>
       </div>
-      <div class="card"><div class="card-head"><h3>كشف حساب</h3><div class="sp"></div>
+      ${balance.due > 0 ? `<div class="card" style="border-color:var(--red-600);margin-bottom:14px"><div class="card-body" style="padding:12px 15px">
+        <div class="row" style="gap:10px;align-items:center"><span>عليها متبقٍّ <strong class="money-neg">${Money.fmt(balance.due)}</strong></span>
+        <div style="flex:1"></div><button class="btn btn-sm btn-primary" data-a="collect">قبض دفعة</button></div></div></div>` : ''}
+      <div class="card"><div class="card-head"><h3>دفتر الحساب</h3><div class="sp"></div>
         <button class="btn btn-sm" data-a="statement">${svg(ICON.print, 14)} طباعة الكشف</button></div><div class="card-body">
-        ${pmts.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>البيان</th><th>المبلغ</th><th>الطريقة</th><th>الوصل</th><th></th></tr></thead><tbody>
-          ${pmts.map(p => { const rc = Svc.receipts.forPayment(p.id);
-            const doc = p.refType === 'sale' ? Repos.sales.get(p.refId) : Repos.subs.get(p.refId);
-            return `<tr><td class="num">${D.fmt(p.date)}</td>
-              <td>${U.esc(Svc.payments.REF_LABEL[p.refType] || '')}${doc ? ' — ' + U.esc(doc.code || doc.planName || '') : ''}</td>
-              <td class="num"><strong>${Money.fmt(p.amount)}</strong></td><td>${U.esc(PayMethods.label(p.method))}</td>
-              <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">—</span>'}</td>
-              <td class="ta-l"><button class="btn btn-sm" data-receipt="${p.id}">${svg(ICON.print, 13)} وصل</button></td></tr>`;
-          }).join('')}</tbody></table>` : '<div class="t-sub">لا دفعات مسجّلة.</div>'}
+        ${rows.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>البيان</th><th>مستحق</th><th>مقبوض</th><th>الوصل</th><th>الرصيد</th><th></th></tr></thead>
+          <tbody>${body}</tbody>
+          <tfoot><tr><th colspan="2">الإجمالي</th><th class="num">${Money.fmt(balance.total)}</th>
+            <th class="num">${Money.fmt(balance.paid)}</th><th></th>
+            <th class="num ${balance.due > 0 ? 'money-neg' : ''}">${Money.fmt(balance.due)}</th><th></th></tr></tfoot></table>
+          <div class="t-sub" style="margin-top:8px">«المقبوض» يُقرأ من سجل الدفعات لا من سعر الاشتراك.
+            لكل دفعة وصل واحد برقم واحد، وإعادة طباعته لا تُنشئ مالاً.</div>`
+        : '<div class="t-sub">لا حركة مالية على هذه المشتركة بعد.</div>'}
       </div></div>
-      ${mySales.length ? `<div class="card" style="margin-top:14px"><div class="card-head"><h3>فواتير المتجر</h3></div><div class="card-body">
-        <table class="mini-tbl"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الإجمالي</th><th>المتبقّي</th></tr></thead><tbody>
-        ${U.sortBy(mySales, x => x.date, -1).map(sl => { const b = Calc.payStatus(sl.total, saleIdx[sl.id] || 0);
-          return `<tr><td class="num">${U.esc(sl.code)}</td><td class="num">${D.fmt(sl.date)}</td>
-            <td class="num">${Money.fmt(sl.total)}</td><td>${b.due > 0 ? `<span class="money-neg">${Money.fmt(b.due)}</span>` : '—'}</td></tr>`;
-        }).join('')}</tbody></table></div></div>` : ''}
-      ${receipts.length ? `<div class="card" style="margin-top:14px"><div class="card-head"><h3>الوصولات الصادرة</h3></div><div class="card-body">
-        <div class="t-sub" style="margin-bottom:8px">إعادة الطباعة لا تُنشئ دفعة جديدة ولا تُضاف إلى الإيرادات.</div>
+      ${receipts.length ? `<div class="card" style="margin-top:14px"><div class="card-head"><h3>الوصولات الصادرة</h3>
+        <div class="sp"></div><span class="pill">${receipts.length}</span></div><div class="card-body">
         <table class="mini-tbl"><thead><tr><th>الرقم</th><th>التاريخ</th><th>المبلغ</th><th>النسخ</th><th></th></tr></thead><tbody>
         ${receipts.map(r => `<tr${r.voided ? ' class="archived-row"' : ''}>
           <td class="num">${U.esc(r.no)}${r.voided ? ' <span class="pill bad">مُبطَل</span>' : ''}</td>
@@ -7065,12 +7147,31 @@ Views.member = {
       Svc.docs.ofMember(m.id).forEach(d => push(String(d.createdAt).slice(0, 10), '', `مستند «${U.esc(d.title)}»`));
       Svc.goals.ofMember(m.id).forEach(g => { push(g.startDate, '', `هدف جديد: ${U.esc(g.title)}`);
         if (g.achievedAt) push(g.achievedAt, 'money', `تحقّق الهدف: ${U.esc(g.title)}`); });
+      /* ملاحظات الفريق تدخل السجل بكاتبتها: «من قال هذا؟» سؤال يُجاب لا يُخمَّن */
+      notes.forEach(n => push(n.date, 'warn',
+        `${U.esc(Svc.notes.KIND[n.kind] || 'ملاحظة')}: ${U.esc(n.text)} <span class="t-sub">— ${U.esc(n.author)}</span>`));
       const visits = Svc.attendance.ofMember(m.id);
       /* الزيارات كثيرة: تُلخَّص شهرياً حتى لا تُغرق بقية الأحداث */
       Object.entries(U.groupBy(visits, a => D.monthKey(a.date))).forEach(([k, arr]) =>
         push(D.endOfMonth(k), '', `${arr.length} زيارة في ${D.monthName(k)}`));
       const rows = U.sortBy(ev, x => x.date, -1).slice(0, 120);
-      return `<div class="card"><div class="card-head"><h3>كل ما حدث، بالترتيب</h3></div><div class="card-body">
+      return `<div class="card"><div class="card-head"><h3>ملاحظات الفريق</h3><div class="sp"></div>
+        <button class="btn btn-sm btn-primary" data-a="note">ملاحظة جديدة</button></div><div class="card-body">
+        <div class="t-sub" style="margin-top:0;margin-bottom:10px">ما يقال للاستقبال عن المشتركة يُكتب هنا بتاريخه وكاتبته،
+          فلا يضيع ولا تدهسه موظفة أخرى. المعلومات الصحّية الحسّاسة مكانها تبويب البيانات لا هنا.</div>
+        ${notes.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>النوع</th><th>الملاحظة</th><th>الكاتبة</th><th></th></tr></thead><tbody>
+          ${notes.map(n => `<tr${n.pinned ? ' style="background:var(--gold-50)"' : ''}>
+            <td class="num">${D.fmt(n.date)}<div class="t-sub">${U.esc(String(n.createdAt).slice(11, 16))}</div></td>
+            <td>${U.esc(Svc.notes.KIND[n.kind] || 'ملاحظة')}</td>
+            <td>${U.esc(n.text)}${n.editedAt ? ' <span class="t-sub">(عُدّلت)</span>' : ''}</td>
+            <td class="t-sub">${U.esc(n.author || '—')}</td>
+            <td class="ta-l"><div class="t-actions">
+              <button class="btn btn-sm" data-notepin="${n.id}">${n.pinned ? 'إلغاء التثبيت' : 'تثبيت'}</button>
+              <button class="btn btn-sm btn-icon" data-noteedit="${n.id}">${svg(ICON.edit, 14)}</button>
+              <button class="btn btn-sm btn-icon btn-danger" data-notedel="${n.id}">${svg(ICON.trash, 14)}</button></div></td></tr>`).join('')}
+          </tbody></table>` : '<div class="t-sub">لا ملاحظات بعد.</div>'}
+      </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>كل ما حدث، بالترتيب</h3></div><div class="card-body">
         ${rows.length ? `<ul class="timeline">${rows.map(x => `<li class="${x.cls}">
           <span class="when num">${D.fmt(x.date)} — ${D.dayName(x.date)}</span>${x.text}</li>`).join('')}</ul>`
         : '<div class="t-sub">لا أحداث.</div>'}</div></div>`;
@@ -7098,6 +7199,21 @@ Views.member = {
         else if (a === 'doc') Forms.document(null, m.id);
         else if (a === 'grant') Forms.creditGrant(m.id);
         else if (a === 'statement') Actions.printStatement(m.id);
+        else if (a === 'note') Forms.memberNote(null, m.id);
+        else if (a === 'lastreceipt' && lastPayment) Actions.printReceiptForPayment(lastPayment.id);
+      });
+      on('[data-unfreeze]', async b => {
+        if (!await UI.confirm({ title:'إنهاء التجميد اليوم', confirmText:'إنهاء التجميد',
+          message:'تُحتسب أيام التجميد الماضية وحدها، وتعود نهاية الاشتراك بمقدار ما بقي منه. الحدث يبقى مسجَّلاً.' })) return;
+        await guard(null, () => Svc.membership.endFreezeToday(b.dataset.unfreeze, 'أُنهي من ملف المشتركة'), 'أُنهي التجميد'); reload();
+      });
+      on('[data-paydoc]', b => { const [t, id] = b.dataset.paydoc.split(':'); Forms.payment(t, id); });
+      on('[data-pmts2]', b => { const [t, id] = b.dataset.pmts2.split(':'); Screens.paymentLedger(t, id); });
+      on('[data-notepin]', async b => { await guard(null, () => Svc.notes.togglePin(b.dataset.notepin)); reload(); });
+      on('[data-noteedit]', b => Forms.memberNote(b.dataset.noteedit, m.id));
+      on('[data-notedel]', async b => {
+        if (!await UI.confirm({ title:'حذف ملاحظة', message:'تُحذف الملاحظة نهائياً من سجل المشتركة.', danger:true, confirmText:'حذف' })) return;
+        await guard(null, () => Svc.notes.remove(b.dataset.notedel), 'حُذفت الملاحظة'); reload();
       });
       on('[data-mt]', b => go('member', { id:m.id, tab:'fitness', mt:b.dataset.mt }));
       on('[data-delm]', async b => {
@@ -11201,6 +11317,125 @@ Forms.staff = function(id){ /*v4*/
         });
         if (!res) { ov.querySelectorAll('.sect').forEach(x => { if (x.querySelector('.err:not(:empty)')) x.open = true; }); return; }
         UI.toast('تم حفظ بيانات الموظفة'); h.close(); renderRoute();
+      };
+    }
+  });
+};
+
+
+/* ===== src/app/flows/08-forms-p1.js ================================================== */
+/* ===================== نماذج المرحلة الأولى ============================= */
+
+/* ملاحظة على مشتركة: نصّ قصير بتاريخه وكاتبته. لا حقل واحد يُدهس. */
+Forms.memberNote = function(id, memberId){
+  const n = id ? Repos.notes.get(id) : null;
+  const mid = n ? n.memberId : memberId;
+  const m = Repos.members.get(mid);
+  if (!m) return UI.toast('المشتركة غير موجودة','err');
+  const h = UI.modal({
+    title: n ? `تعديل ملاحظة — ${m.name}` : `ملاحظة على ${m.name}`, size:'narrow',
+    body:`<div id="ntForm">
+      ${UI.field('kind','نوع الملاحظة', UI.select('kind', n ? n.kind : 'general',
+        Object.keys(Svc.notes.KIND).map(k => ({ v:k, t:Svc.notes.KIND[k] }))))}
+      ${n ? '' : UI.field('date','التاريخ', UI.input('date', D.today(), { type:'date' }))}
+      <div class="full">${UI.field('text','الملاحظة', UI.textarea('text', n ? n.text : ''),
+        'تُحفظ باسمك وبتاريخها، وتظهر في سجل المشتركة')}</div>
+      <div class="full field"><label class="switch"><input type="checkbox" name="pinned" ${n && n.pinned ? 'checked' : ''}>
+        تثبيتها في رأس الملف (ما يجب أن تعرفه الموظفة قبل أن تتكلّم)</label></div>
+    </div>`,
+    footer:`<button class="btn btn-primary" id="ntSave">حفظ</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){
+      const ta = ov.querySelector('[name=text]'); if (ta) setTimeout(() => ta.focus(), 60);
+      ov.querySelector('#ntSave').onclick = async () => {
+        const scope = ov.querySelector('#ntForm'), d = UI.read(scope);
+        const res = await guard(scope, () => n ? Svc.notes.update(n.id, d)
+          : Svc.notes.add(Object.assign({ memberId:mid }, d)));
+        if (!res) return;
+        UI.toast('حُفظت الملاحظة'); h.close(); renderRoute();
+      };
+    }
+  });
+};
+
+/* إقفال فترة محاسبية: يثبّت ربحها لحظتَه فيصير نصيب الشريكة رقماً لا يتحرّك */
+Forms.closePeriod = function(){
+  const open = Svc.periods.openMonths(18);
+  if (!open.length) return UI.toast('لا فترات منتهية تحتاج إقفالاً','warn');
+  const h = UI.modal({
+    title:'إقفال فترة محاسبية', size:'wide',
+    body:`<div class="t-sub" style="margin-bottom:10px">إقفال الفترة يثبّت رقم ربحها كما هو الآن، فلا يتحرّك نصيب
+      الشريكة تحت قدميها كلما سُجّل مصروف متأخر. الإقفال لا يمنع التسجيل ولا يقفل الدفاتر.</div>
+      <table class="mini-tbl"><thead><tr><th>الشهر</th><th>الإيراد</th><th>المصروف</th><th>صافي الربح</th><th></th></tr></thead><tbody>
+      ${open.map(p => `<tr><td>${U.esc(D.monthName(p.key))}</td>
+        <td class="num money-pos">${Money.fmt(p.revenue)}</td><td class="num money-neg">${Money.fmt(p.expense)}</td>
+        <td class="num"><strong>${Money.fmt(p.net)}</strong></td>
+        <td class="ta-l"><button class="btn btn-sm btn-primary" data-close-p="${p.key}">إقفال</button></td></tr>`).join('')}
+      </tbody></table>`,
+    footer:'<div class="sp"></div><button class="btn" data-close>إغلاق</button>',
+    onMount(ov){
+      ov.querySelectorAll('[data-close-p]').forEach(b => b.onclick = async () => {
+        const key = b.dataset.closeP;
+        const p = Svc.periods.profitOf(key);
+        if (!await UI.confirm({ title:`إقفال ${D.monthName(key)}`, confirmText:'إقفال',
+          message:`سيُثبَّت ربح هذه الفترة عند <strong>${Money.fmt(p.net)}</strong>، ويصبح التوزيع منها ممكناً.` })) return;
+        await guard(null, () => Svc.periods.close(key), 'أُقفلت الفترة');
+        h.close(); renderRoute();
+      });
+    }
+  });
+};
+
+/* توزيع أرباح لشريكة: نقدٌ يخرج، وربحٌ لا يتغيّر */
+Forms.distribution = function(partnerId){
+  const partners = Repos.partners.list();
+  if (!partners.length) return UI.toast('أضيفي شريكة أولاً','warn');
+  const closed = Svc.periods.list();
+  if (!closed.length){
+    UI.toast('لا فترة مقفلة بعد — أقفلي فترة قبل التوزيع','warn', 6000);
+    return Forms.closePeriod();
+  }
+  const first = closed[0], last = closed[closed.length - 1];
+  const h = UI.modal({
+    title:'توزيع أرباح', size:'narrow',
+    body:`<div id="dsForm">
+      ${UI.field('partnerId','الشريكة', UI.select('partnerId', partnerId || partners[0].id,
+        partners.map(p => ({ v:p.id, t:`${p.name} — ${p.sharePercent}%` }))))}
+      ${UI.field('periodFrom','من فترة', UI.select('periodFrom', first.key, closed.map(p => ({ v:p.key, t:D.monthName(p.key) }))))}
+      ${UI.field('periodTo','إلى فترة', UI.select('periodTo', last.key, closed.map(p => ({ v:p.key, t:D.monthName(p.key) }))))}
+      ${UI.field('amount','المبلغ الموزَّع', UI.input('amount', '', { type:'number', attrs:{ min:0, step:'any' } }))}
+      ${UI.field('date','تاريخ التوزيع', UI.input('date', D.today(), { type:'date' }))}
+      ${UI.field('method','طريقة الصرف', UI.select('method', PayMethods.CASH_KEY, payMethods()),
+        'النقدي يخرج من درج الصندوق اليوم')}
+      <div class="full">${UI.field('notes','ملاحظات', UI.input('notes', ''))}</div>
+      <div class="card" style="background:var(--surface-2);margin-top:10px"><div class="card-body" style="padding:12px 14px">
+        <div id="dsOut" class="t-sub">—</div>
+        <div class="t-sub" style="margin-top:6px">التوزيع يقلّل السيولة ولا يقلّل الربح: نادٍ يوزّع أرباحه ليس نادياً خسر.</div>
+      </div></div>
+    </div>`,
+    footer:`<button class="btn btn-primary" id="dsSave">حفظ التوزيع</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){
+      const scope = ov.querySelector('#dsForm');
+      const g = n => scope.querySelector(`[name="${n}"]`);
+      const sync = () => {
+        const from = D.startOfMonth(g('periodFrom').value), to = D.endOfMonth(g('periodTo').value);
+        const out = ov.querySelector('#dsOut');
+        if (D.cmp(to, from) < 0){ out.innerHTML = '<span class="err">نهاية الفترة قبل بدايتها</span>'; return; }
+        const ent = Svc.distributions.entitlement(g('partnerId').value, from, to);
+        const already = U.round2(U.sum(Svc.distributions.ofPartner(g('partnerId').value)
+          .filter(x => x.periodFrom === from && x.periodTo === to), x => x.amount));
+        out.innerHTML = `ربح الفترة ${Money.fmt(ent.net)} — نصيبها ${ent.percent}% = <strong>${Money.fmt(ent.share)}</strong>`
+          + (already ? ` — وُزّع منه ${Money.fmt(already)}، المتبقّي ${Money.fmt(U.round2(ent.share - already))}` : '');
+      };
+      ['partnerId','periodFrom','periodTo'].forEach(n => { g(n).onchange = sync; });
+      sync();
+      ov.querySelector('#dsSave').onclick = async () => {
+        const d = UI.read(scope);
+        d.periodFrom = D.startOfMonth(d.periodFrom);
+        d.periodTo = D.endOfMonth(d.periodTo);
+        const res = await guard(scope, () => Svc.distributions.create(d));
+        if (!res) return;
+        (res.warnings || []).forEach(w => UI.toast(w, 'warn', 7000));
+        UI.toast(`سُجّل توزيع ${Money.fmt(res.rec.amount)}`); h.close(); renderRoute();
       };
     }
   });
