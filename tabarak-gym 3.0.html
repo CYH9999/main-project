@@ -605,7 +605,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'5.0.0', schema:5, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'6.0.0', schema:6, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -784,7 +784,10 @@ const SCHEMA = {
   classSessions:     { key:'id' },   /* حصة بتاريخ ووقت محدّدين (لا قالب متكرّر) */
   bookings:          { key:'id' },   /* حجز مشتركة على حصة + قائمة الانتظار */
   cashDays:          { key:'id' },   /* إقفال الصندوق اليومي — ليس ربحاً */
-  suppliers:         { key:'id' }    /* موردو المخزون */
+  suppliers:         { key:'id' },   /* موردو المخزون */
+  /* v6: التشغيل اليومي — ملاحظات الفريق المؤرَّخة، وتوزيعات أرباح الشركاء */
+  notes:             { key:'id' },   /* ملاحظة موظفة على مشتركة: نصّ ووقت وكاتبة */
+  distributions:     { key:'id' }    /* توزيع أرباح لشريكة عن فترة مقفلة — نقد لا ربح */
 };
 const STORE_NAMES = Object.keys(SCHEMA);
 /* اسم كل جدول بلغة صاحبة النادي. مصدر واحد تقرأ منه شاشة إعادة التهيئة وغيرها،
@@ -797,7 +800,8 @@ const STORE_LABELS = {
   sales:'فاتورة بيع', attendance:'سجل حضور', roles:'دور صلاحيات', measurements:'قياس جسم',
   goals:'هدف', memberDocs:'مستند مشتركة', customFields:'حقل يعرّفه النادي', receipts:'وصل',
   subEvents:'حدث اشتراك (تجميد/تمديد)', credits:'حركة رصيد حصص', leads:'مهتمّة', tasks:'متابعة',
-  classSessions:'حصة مجدولة', bookings:'حجز حصة', cashDays:'إقفال صندوق يومي', suppliers:'مورّد'
+  classSessions:'حصة مجدولة', bookings:'حجز حصة', cashDays:'إقفال صندوق يومي', suppliers:'مورّد',
+  notes:'ملاحظة على مشتركة', distributions:'توزيع أرباح'
 };
 const storeLabel = s => STORE_LABELS[s] || s;
 
@@ -975,7 +979,9 @@ const Repos = {
   sessions:     Repo('classSessions','ses'),
   bookings:     Repo('bookings','bkg'),
   cashDays:     Repo('cashDays','csh'),
-  suppliers:    Repo('suppliers','sup')
+  suppliers:    Repo('suppliers','sup'),
+  notes:        Repo('notes','not'),
+  distributions:Repo('distributions','dst')
 };
 
 
@@ -1331,9 +1337,13 @@ const Calc = {
   withdrawals(capital, from, to){ return U.sum(this.inRange(capital, from, to).filter(c=>c.type==='withdrawal'), c=>c.amount); },
   /* رأس المال المتبقي = ما ضُخّ − ما سُحب (لا علاقة له بالإيرادات) */
   capitalBalance(capital){ return U.round2(this.capitalIn(capital) - this.withdrawals(capital)); },
-  /* السيولة = رأس المال المضخوخ + الإيرادات − المصروفات − السحوبات */
-  cash(revenues, expenses, capital){
-    return U.round2(this.capitalIn(capital) + this.revenue(revenues) - this.expenses(expenses) - this.withdrawals(capital));
+  /* السيولة = رأس المال المضخوخ + الإيرادات − المصروفات − السحوبات − توزيعات الأرباح.
+     التوزيع يخرج من الدرج فيقلّل السيولة، ولا يظهر في المصروفات فلا يقلّل الربح:
+     نادٍ يوزّع أرباحه ليس نادياً خسر. */
+  distributed(distributions, from, to){ return U.sum(this.inRange(distributions || [], from, to), d => d.amount); },
+  cash(revenues, expenses, capital, distributions){
+    return U.round2(this.capitalIn(capital) + this.revenue(revenues) - this.expenses(expenses)
+                    - this.withdrawals(capital) - this.distributed(distributions));
   },
   partnerShare(netProfit, percent){ return U.round2((Number(netProfit)||0) * (Number(percent)||0) / 100); },
   bySource(revenues, from, to){
@@ -2098,11 +2108,15 @@ Svc.subs = {
     await Audit.log('subscription','update',`تعديل اشتراك بمبلغ ${Money.fmt(finalPrice)} (مقبوض ${Money.fmt(paid)})`, id);
     return { rec, warnings:val.warnings };
   },
-  /* الأرشفة تسحب الإيراد المرتبط أيضاً حتى لا تبقى أرقام مالية معلّقة */
+  /* الأرشفة تسحب الإيراد المرتبط أيضاً حتى لا تبقى أرقام مالية معلّقة،
+     وتُسقِط الحصص المشمولة التي لم تُستهلك: باقةٌ مشمولة باشتراك أُلغي لا تبقى
+     رصيداً قابلاً للحجز. الإسقاط حدث ظاهر في دفتر الحصص لا حذفٌ صامت. */
   async archive(id, on=true){
     const s = Repos.subs.get(id);
     const rec = await Repos.subs.archive(id, on);
     await Svc.payments.setArchived('subscription', id, on);
+    if (on) await Svc.credits.expireForSub(id, 'أُرشف الاشتراك المشمولة به').catch(e => Log.warn('تعذّر إسقاط الحصص المشمولة', e));
+    else await Svc.credits.restoreForSub(id).catch(e => Log.warn('تعذّر إعادة الحصص المشمولة', e));
     /* توافق مع سجلات ما قبل v3 التي كانت تحمل revenueId مباشرة */
     if (s && s.revenueId && Repos.revenues.get(s.revenueId)) await Repos.revenues.archive(s.revenueId, on);
     await Audit.log('subscription', on?'archive':'restore', `${on?'أرشفة':'استرجاع'} اشتراك ${s?s.planName:''}`, id);
@@ -2485,7 +2499,7 @@ Svc.finance = {
     const val = Validate.capital(d);
     if (!val.ok) throw new AppError('بيانات الحركة غير صحيحة','VALIDATION', val.errors);
     if (d.type === 'withdrawal'){
-      const cash = Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list());
+      const cash = Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list(), Repos.distributions.list());
       if (Money.clean(d.amount) > cash) val.warnings.push(`السحب أكبر من السيولة المتاحة (${Money.fmt(cash)})`);
     }
     const rec = await Repos.capital.create({ date:d.date, amount:Money.clean(d.amount), type:d.type,
@@ -2509,11 +2523,14 @@ Svc.finance = {
   },
   summary(from, to){
     const rev = Repos.revenues.list(), exp = Repos.expenses.list(), cap = Repos.capital.list();
+    const dst = Repos.distributions.list();
     const revenue = Calc.revenue(rev, from, to), expense = Calc.expenses(exp, from, to);
     return {
       revenue, expense, net:U.round2(revenue-expense),
       capitalIn:Calc.capitalIn(cap, from, to), withdrawals:Calc.withdrawals(cap, from, to),
-      capitalBalance:Calc.capitalBalance(cap), cash:Calc.cash(rev, exp, cap)
+      /* التوزيعات تُعرض بجانب الربح لا داخله: صافي الربح أعلاه لا يطرحها */
+      distributions:Calc.distributed(dst, from, to),
+      capitalBalance:Calc.capitalBalance(cap), cash:Calc.cash(rev, exp, cap, dst)
     };
   }
 };
@@ -3470,6 +3487,33 @@ Svc.credits = {
     }
     return back;
   },
+  /* إسقاط حصص اشتراك بعينه (عند أرشفته). يُسجَّل حدث «إسقاط» لكل باقة
+     برصيدها المتبقّي، فيبقى تاريخ المنح والاستهلاك كاملاً وقابلاً للتدقيق. */
+  async expireForSub(subId, reason){
+    const rows = Repos.credits.list().filter(c => c.subId === subId && c.type === 'grant');
+    let n = 0;
+    for (const g of rows){
+      const pack = this.packs(g.memberId).find(p => p.grant.id === g.id);
+      if (!pack || pack.remaining <= 0) continue;
+      await Repos.credits.create({ memberId:g.memberId, subId, kind:g.kind, type:'expire',
+        qty:pack.remaining, date:D.today(), grantId:g.id, refType:'subscription', refId:subId,
+        notes:U.norm(reason) || 'أُرشف الاشتراك', isDemo:!!g.isDemo });
+      n++;
+    }
+    if (n){
+      const m = rows.length ? Repos.members.get(rows[0].memberId) : null;
+      await Audit.log('credit','expire',`إسقاط ${n} باقة حصص بأرشفة اشتراك${m ? ' — ' + m.name : ''}`, subId);
+    }
+    return n;
+  },
+  /* استرجاع الاشتراك يعيد ما أُسقط بسبب أرشفته وحده — لا ما انتهت صلاحيته بالتاريخ */
+  async restoreForSub(subId){
+    const drops = Repos.credits.list().filter(c => c.type === 'expire' && c.refType === 'subscription' && c.refId === subId);
+    let n = 0;
+    for (const d of drops){ await Repos.credits.hardDelete(d.id); n++; }
+    if (n) await Audit.log('credit','restore',`إعادة ${n} باقة حصص باسترجاع الاشتراك`, subId);
+    return n;
+  },
   /* إسقاط ما انتهت صلاحيته: يُسجَّل حدثاً ظاهراً بدل أن يختفي الرصيد بصمت */
   async expireStale(){
     const today = D.today();
@@ -3950,6 +3994,8 @@ Svc.cashbook = {
     const expensesAll = Repos.expenses.list().filter(e => e.date === date);
     const capIn = Repos.capital.list().filter(c => c.date === date && c.type === 'injection');
     const capOut = Repos.capital.list().filter(c => c.date === date && c.type === 'withdrawal');
+    /* توزيع الأرباح نقدٌ يخرج من الدرج اليوم وإن لم يكن مصروفاً في التقارير */
+    const distAll = Repos.distributions.list().filter(x => x.date === date);
 
     const isUnknown = x => x.method === PayMethods.UNKNOWN_KEY;
     const paymentsIn = paymentsAll.filter(p => this.isCash(p.method));
@@ -3959,8 +4005,9 @@ Svc.cashbook = {
     const nonCashOut = expensesAll.filter(e => !this.isCash(e.method) && !isUnknown(e));
     const nonCashIn = paymentsAll.filter(p => !this.isCash(p.method));
 
+    const distOut = distAll.filter(x => this.isCash(x.method));
     const cashIn = U.round2(U.sum(paymentsIn, p => p.amount) + U.sum(otherIn, r => r.amount) + U.sum(capIn, c => c.amount));
-    const cashOut = U.round2(U.sum(out, e => e.amount) + U.sum(capOut, c => c.amount));
+    const cashOut = U.round2(U.sum(out, e => e.amount) + U.sum(capOut, c => c.amount) + U.sum(distOut, d => d.amount));
     /* غير النقدي يُعرض ليُطمأنّ إليه، ولا يدخل حساب الدرج */
     const nonCash = U.round2(U.sum(nonCashIn, p => p.amount));
 
@@ -3977,6 +4024,7 @@ Svc.cashbook = {
     capIn.forEach(c => bump(PayMethods.CASH_KEY, 'in', c.amount));
     expensesAll.forEach(e => bump(e.method, 'out', e.amount));
     capOut.forEach(c => bump(PayMethods.CASH_KEY, 'out', c.amount));
+    distAll.forEach(x => bump(x.method, 'out', x.amount));
     const byMethod = U.sortBy(Object.values(map), m => (m.key === PayMethods.CASH_KEY ? '0' : '1') + m.label);
 
     return { date, cashIn, cashOut, nonCash, byMethod,
@@ -3984,8 +4032,10 @@ Svc.cashbook = {
              nonCashOut:U.round2(U.sum(nonCashOut, e => e.amount)),
              counts:{ payments:paymentsIn.length, otherRevenue:otherIn.length, expenses:out.length,
                       capitalIn:capIn.length, capitalOut:capOut.length, nonCash:nonCashIn.length,
-                      unknownOut:unknownOut.length, nonCashOut:nonCashOut.length },
-             rows:{ paymentsIn, otherIn, out, capIn, capOut, unknownOut, nonCashOut, nonCashIn } };
+                      unknownOut:unknownOut.length, nonCashOut:nonCashOut.length,
+                      distributions:distAll.length, distributionsCash:distOut.length },
+             distributionsOut:U.round2(U.sum(distOut, d => d.amount)),
+             rows:{ paymentsIn, otherIn, out, capIn, capOut, unknownOut, nonCashOut, nonCashIn, distributions:distAll } };
   },
   /* الافتتاحي: ما تبقّى معدوداً أمس، وإلا الرقم الذي ضبطه النادي */
   openingFor(date){
@@ -4122,6 +4172,262 @@ Svc.suppliers = {
              products:new Set(rows.map(r => r.move.productId)).size };
   }
 };
+
+/* ===== src/app/services/160-notes.js ================================================= */
+/* --------------------------- ملاحظات الفريق ----------------------------
+   «قالت إنها ستسافر شهراً» و«تشتكي من ألم في الركبة» و«وعدناها بخصم الشهر
+   القادم» — كلامٌ يقال للاستقبال فيضيع. الملاحظة هنا سجلّ مؤرَّخ بكاتبته،
+   لا خانةَ نصٍّ واحدة تُدهس كلما كتبت موظفة فوق ما كتبته زميلتها.
+
+   ولماذا جدول مستقل لا سجل الأحداث؟ لأن سجل الأحداث يوثّق ما فعله النظام
+   (أُنشئ اشتراك، قُبض مبلغ) ويُقلَّم تلقائياً حين يكبر. الملاحظة كلام إنسان
+   عن إنسانة، لا تُقلَّم ولا تُحذف مع ضجيج التشغيل. */
+Svc.notes = {
+  KIND: { general:'ملاحظة', call:'مكالمة', complaint:'شكوى', promise:'وعد', health:'ملاحظة سلامة' },
+  ofMember(memberId, inclArchived = false){
+    return U.sortBy(Repos.notes.list(inclArchived).filter(n => n.memberId === memberId), n => n.createdAt, -1);
+  },
+  recent(n = 20){ return U.sortBy(Repos.notes.list(), x => x.createdAt, -1).slice(0, n); },
+  validate(d){
+    const r = V();
+    if (!d.memberId || !Repos.members.get(d.memberId)) vErr(r, 'memberId', 'المشتركة غير موجودة');
+    if (!U.norm(d.text)) vErr(r, 'text', 'اكتبي نصّ الملاحظة');
+    else if (U.norm(d.text).length > 2000) vErr(r, 'text', 'الملاحظة أطول من اللازم — اختصريها');
+    if (d.date && !D.isISO(d.date)) vErr(r, 'date', 'التاريخ غير صحيح');
+    return r;
+  },
+  async add(d){
+    const val = this.validate(d);
+    if (!val.ok) throw new AppError('بيانات الملاحظة غير صحيحة','VALIDATION', val.errors);
+    const rec = await Repos.notes.create({
+      memberId:d.memberId, text:U.norm(d.text), kind:d.kind || 'general',
+      date:d.date || D.today(),
+      /* الكاتبة تُثبَّت وقت الكتابة: ملاحظة بلا صاحبة لا يمكن سؤال أحد عنها */
+      author:U.norm(d.author) || Auth.session.actorName || '—',
+      pinned:!!d.pinned, isDemo:!!d.isDemo
+    });
+    const m = Repos.members.get(d.memberId);
+    await Audit.log('note','create',`ملاحظة على ${m ? m.name : ''}: ${rec.text.slice(0, 60)}`, rec.id);
+    return rec;
+  },
+  async update(id, d){
+    const cur = Repos.notes.get(id);
+    if (!cur) throw new AppError('الملاحظة غير موجودة','NOT_FOUND');
+    const val = this.validate(Object.assign({}, cur, d));
+    if (!val.ok) throw new AppError('بيانات الملاحظة غير صحيحة','VALIDATION', val.errors);
+    const rec = await Repos.notes.update(id, { text:U.norm(d.text), kind:d.kind || cur.kind,
+      pinned: d.pinned === undefined ? !!cur.pinned : !!d.pinned,
+      editedAt:new Date().toISOString(), editedBy:Auth.session.actorName || '' });
+    await Audit.log('note','update','تعديل ملاحظة', id);
+    return rec;
+  },
+  async remove(id){
+    const n = Repos.notes.get(id);
+    if (!n) throw new AppError('الملاحظة غير موجودة','NOT_FOUND');
+    await Repos.notes.hardDelete(id);
+    await Audit.log('note','delete',`حذف ملاحظة: ${String(n.text).slice(0, 60)}`, id);
+    return n;
+  },
+  async togglePin(id){
+    const n = Repos.notes.get(id);
+    if (!n) throw new AppError('الملاحظة غير موجودة','NOT_FOUND');
+    return Repos.notes.update(id, { pinned: !n.pinned });
+  },
+  /* الملاحظات المثبّتة تظهر في رأس الملف: ما يجب أن تعرفه الموظفة قبل أن تتكلّم */
+  pinnedOf(memberId){ return this.ofMember(memberId).filter(n => n.pinned); }
+};
+
+
+/* ===== src/app/services/165-periods.js =============================================== */
+/* ------------------------- الفترات المحاسبية المقفلة --------------------
+   لا تُوزَّع أرباح شهرٍ ما زال يتغيّر. إقفال الفترة يثبّت رقم الربح لحظتَه،
+   فيصير نصيب الشريكة رقماً لا يتحرّك تحت قدميها كلما سُجّل مصروف متأخر.
+
+   الإقفال لا يمنع التسجيل ولا يقفل الدفاتر — يقول فقط: «هذا ما كان الربح
+   حين وزّعنا». تسجيل مصروف في شهر مقفل يبقى ممكناً ويظهر في التقارير،
+   لكنه لا يعيد كتابة نصيب وُزّع فعلاً. */
+Svc.periods = {
+  list(){ const a = Settings.get('closedPeriods'); return Array.isArray(a) ? a : []; },
+  get(key){ return this.list().find(p => p.key === key) || null; },
+  isClosed(key){ return !!this.get(key); },
+  /* أشهر فترة ممتدة: من 2026-01 إلى 2026-03 ⇒ ثلاثة أشهر */
+  monthsBetween(from, to){
+    if (!D.isISO(from) || !D.isISO(to) || D.cmp(to, from) < 0) return [];
+    const out = [];
+    let k = D.monthKey(from);
+    const last = D.monthKey(to);
+    let guard = 0;
+    while (D.cmp(k, last) <= 0 && guard++ < 600){
+      out.push(k);
+      const [y, m] = k.split('-').map(Number);
+      k = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+    }
+    return out;
+  },
+  /* ربح فترة محسوب من المصدر — يُستعمل قبل الإقفال وللمقارنة بعده */
+  profitOf(key){
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+    const revenue = Calc.revenue(Repos.revenues.list(), from, to);
+    const expense = Calc.expenses(Repos.expenses.list(), from, to);
+    return { key, from, to, revenue, expense, net:U.round2(revenue - expense) };
+  },
+  async close(key){
+    if (!/^\d{4}-\d{2}$/.test(String(key))) throw new AppError('الفترة غير صحيحة','VALIDATION', { key:'اختاري شهراً' });
+    if (D.cmp(D.endOfMonth(key), D.today()) > 0)
+      throw new AppError('لا تُقفل فترة لم تنتهِ بعد','VALIDATION', { key:'الشهر لم ينتهِ' });
+    if (this.isClosed(key)) return this.get(key);
+    const p = this.profitOf(key);
+    const rec = Object.assign({}, p, { closedAt:new Date().toISOString(), closedBy:Auth.session.actorName || '' });
+    await Settings.set({ closedPeriods:U.sortBy([...this.list(), rec], x => x.key) });
+    await Audit.log('period','close',`إقفال فترة ${D.monthName(key)} — الربح ${Money.fmt(p.net)}`, key);
+    return rec;
+  },
+  /* إعادة الفتح ممنوعة ما دام هناك توزيع مبنيّ على أرقام هذه الفترة */
+  async reopen(key, reason){
+    if (!this.isClosed(key)) throw new AppError('هذه الفترة غير مقفلة','NOT_FOUND');
+    const used = Svc.distributions.list(true).filter(d => this.monthsBetween(d.periodFrom, d.periodTo).includes(key));
+    if (used.length)
+      throw new AppError(`وُزّعت أرباح هذه الفترة في ${used.length} توزيعاً — ألغي التوزيع أولاً`,'LINKED');
+    await Settings.set({ closedPeriods:this.list().filter(p => p.key !== key) });
+    await Audit.log('period','reopen',`إعادة فتح فترة ${D.monthName(key)}${U.norm(reason) ? ' — ' + U.norm(reason) : ''}`, key);
+    return true;
+  },
+  /* أشهر انتهت ولم تُقفل بعد — ما تحتاج المالكة أن تراه قبل التوزيع */
+  openMonths(n = 12){
+    const out = [];
+    D.monthsBack(n + 1).slice(0, n).forEach(k => {
+      if (D.cmp(D.endOfMonth(k), D.today()) > 0) return;
+      if (this.isClosed(k)) return;
+      const p = this.profitOf(k);
+      if (p.revenue || p.expense) out.push(p);
+    });
+    return out.reverse();
+  }
+};
+
+
+/* ===== src/app/services/170-distributions.js ========================================= */
+/* --------------------------- توزيع أرباح الشركاء ------------------------
+   الفرق الذي يضيع في أغلب الأنظمة: توزيع الأرباح **يقلّل النقد ولا يقلّل
+   الربح**. الربح رقمُ أداءٍ عن فترة (إيراد ناقص مصروف)، والتوزيع تصرُّفٌ
+   في ربحٍ تحقّق فعلاً. لو خُصم التوزيع من المصروفات لظهر النادي خاسراً كلما
+   وزّع أرباحه — وهذا عكس الحقيقة تماماً.
+
+   لذلك التوزيع ليس مصروفاً ولا سحب رأس مال:
+     · لا يدخل Calc.expenses ولا يغيّر صافي الربح في أي تقرير.
+     · يدخل حساب السيولة بالخصم، وحساب الصندوق اليومي إن كان نقداً.
+     · سحب رأس المال يبقى معناه الوحيد: استرجاع مالٍ استُثمر.
+   ====================================================================== */
+Svc.distributions = {
+  list(inclArchived = false){ return U.sortBy(Repos.distributions.list(inclArchived), d => d.date, -1); },
+  get(id){ return Repos.distributions.get(id); },
+  ofPartner(partnerId, inclArchived = false){
+    return this.list(inclArchived).filter(d => d.partnerId === partnerId);
+  },
+  /* إجمالي ما وُزّع نقداً — يُطرح من السيولة ولا يُطرح من الربح أبداً */
+  total(from, to){
+    return U.round2(U.sum(Calc.inRange(Repos.distributions.list(), from, to), d => d.amount));
+  },
+  validate(d){
+    const r = V();
+    const partner = d.partnerId ? Repos.partners.get(d.partnerId) : null;
+    if (!partner) vErr(r, 'partnerId', 'اختاري الشريكة');
+    if (!D.isISO(d.date)) vErr(r, 'date', 'تاريخ التوزيع غير صحيح');
+    else if (D.cmp(d.date, D.today()) > 0) vErr(r, 'date', 'لا يُوزَّع مبلغ بتاريخ لم يأتِ بعد');
+    if (!D.isISO(d.periodFrom)) vErr(r, 'periodFrom', 'بداية الفترة غير صحيحة');
+    if (!D.isISO(d.periodTo)) vErr(r, 'periodTo', 'نهاية الفترة غير صحيحة');
+    if (D.isISO(d.periodFrom) && D.isISO(d.periodTo) && D.cmp(d.periodTo, d.periodFrom) < 0)
+      vErr(r, 'periodTo', 'نهاية الفترة قبل بدايتها');
+    const amt = Money.clean(d.amount);
+    if (!(isFinite(amt) && amt > 0)) vErr(r, 'amount', 'المبلغ يجب أن يكون أكبر من صفر');
+    /* الشرط الحاكم: كل شهر في الفترة مقفل. التوزيع من رقم يتحرّك وعدٌ لا التزام. */
+    if (D.isISO(d.periodFrom) && D.isISO(d.periodTo) && D.cmp(d.periodTo, d.periodFrom) >= 0){
+      const open = Svc.periods.monthsBetween(d.periodFrom, d.periodTo).filter(k => !Svc.periods.isClosed(k));
+      if (open.length)
+        vErr(r, 'periodFrom', `أقفلي هذه الفترات أولاً: ${open.map(k => D.monthName(k)).join('، ')}`);
+    }
+    if (partner && r.ok){
+      const ent = this.entitlement(partner.id, d.periodFrom, d.periodTo);
+      const already = U.round2(U.sum(this.ofPartner(partner.id).filter(x => x.id !== d.id
+        && x.periodFrom === d.periodFrom && x.periodTo === d.periodTo), x => x.amount));
+      const left = U.round2(ent.share - already);
+      /* التوزيع فوق النصيب ليس خطأً محرّماً — قد يكون سلفة على حساب الأرباح —
+         لكنه لا يمرّ صامتاً: يُحذَّر منه برقمه. */
+      if (amt > left + 0.001)
+        r.warnings.push(`نصيب ${partner.name} عن هذه الفترة ${Money.fmt(ent.share)}${already ? ` (وُزّع منه ${Money.fmt(already)})` : ''} — المتبقّي ${Money.fmt(Math.max(0, left))}`);
+    }
+    const cash = Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list(), Repos.distributions.list());
+    if (r.ok && amt > cash) r.warnings.push(`التوزيع أكبر من السيولة المتاحة (${Money.fmt(cash)})`);
+    return r;
+  },
+  /* نصيب شريكة عن فترة = ربح الفترات المقفلة × نسبتها */
+  entitlement(partnerId, from, to){
+    const partner = Repos.partners.get(partnerId);
+    const pct = Number(partner && partner.sharePercent) || 0;
+    const months = Svc.periods.monthsBetween(from, to);
+    const rows = months.map(k => {
+      const closed = Svc.periods.get(k);
+      /* الربح المثبَّت وقت الإقفال هو المرجع — لا الرقم المتحرّك اليوم */
+      const p = closed || Svc.periods.profitOf(k);
+      return { key:k, net:U.round2(p.net), closed:!!closed, share:Calc.partnerShare(p.net, pct) };
+    });
+    return { partner, percent:pct, months:rows,
+             net:U.round2(U.sum(rows, r => r.net)),
+             share:U.round2(U.sum(rows, r => r.share)),
+             allClosed:rows.every(r => r.closed) };
+  },
+  async create(d){
+    const val = this.validate(d);
+    if (!val.ok) throw new AppError('بيانات التوزيع غير صحيحة','VALIDATION', val.errors);
+    const partner = Repos.partners.get(d.partnerId);
+    const rec = await Repos.distributions.create({
+      partnerId:d.partnerId, periodFrom:d.periodFrom, periodTo:d.periodTo,
+      amount:Money.clean(d.amount), date:d.date,
+      method:PayMethods.normalize(d.method), notes:U.norm(d.notes), isDemo:!!d.isDemo
+    });
+    await Audit.log('distribution','create',
+      `توزيع أرباح ${Money.fmt(rec.amount)} لـ${partner ? partner.name : ''} عن ${D.fmt(rec.periodFrom)} ← ${D.fmt(rec.periodTo)}`, rec.id);
+    return { rec, warnings:val.warnings };
+  },
+  async remove(id){
+    const rec = Repos.distributions.get(id);
+    if (!rec) throw new AppError('التوزيع غير موجود','NOT_FOUND');
+    const partner = Repos.partners.get(rec.partnerId);
+    await Repos.distributions.hardDelete(id);
+    await Audit.log('distribution','delete',
+      `إلغاء توزيع ${Money.fmt(rec.amount)}${partner ? ' لـ' + partner.name : ''}`, id);
+    return rec;
+  },
+  /* كشف الشريكة: ما ضخّته، وما استرجعته، وما استحقّته، وما قُبض منه */
+  statement(partnerId, opts){
+    const o = opts || {};
+    const partner = Repos.partners.get(partnerId);
+    if (!partner) return null;
+    const caps = U.sortBy(Repos.capital.list().filter(c => c.partnerId === partnerId), c => c.date);
+    const contributions = U.round2(U.sum(caps.filter(c => c.type === 'injection'), c => c.amount));
+    const returns = U.round2(U.sum(caps.filter(c => c.type === 'withdrawal'), c => c.amount));
+    const dists = this.ofPartner(partnerId);
+    const paid = U.round2(U.sum(dists, d => d.amount));
+    /* الاستحقاق يُحسب على الفترات المقفلة وحدها: ما لم يُقفل لم يُثبَّت بعد */
+    const closed = Svc.periods.list();
+    const periods = closed.map(p => {
+      const share = Calc.partnerShare(p.net, partner.sharePercent);
+      const got = U.round2(U.sum(dists.filter(d => Svc.periods.monthsBetween(d.periodFrom, d.periodTo).includes(p.key))
+        .map(d => ({ d, n:Svc.periods.monthsBetween(d.periodFrom, d.periodTo).length })), x => x.d.amount / x.n));
+      return { key:p.key, label:D.monthName(p.key), net:p.net, share, paid:got, remaining:U.round2(share - got) };
+    });
+    const entitled = U.round2(U.sum(periods, p => p.share));
+    return {
+      partner, percent:Number(partner.sharePercent) || 0,
+      contributions, returns, capitalBalance:U.round2(contributions - returns),
+      capitalRows:caps, periods, entitled, paid,
+      remaining:U.round2(entitled - paid),
+      distributions:dists,
+      openPeriods:Svc.periods.openMonths(o.openMonths || 12)
+    };
+  }
+};
+
 
 
 /* ===== src/app/data/50-backup.js ===================================================== */
@@ -4620,6 +4926,7 @@ const Migrations = {
     if (from < 3){ applied.push(await this.v2_to_v3()); }
     if (from < 4){ applied.push(await this.v3_to_v4()); }
     if (from < 5){ applied.push(await this.v4_to_v5()); }
+    if (from < 6){ applied.push(await this.v5_to_v6()); }
     if (from !== APP.schema || !rec) await DB.put('meta', { k:'schema', v:APP.schema });
     /* من كان عنده بيانات قبل هذا الإصدار يُعتبر مُهيّأً حتى لا تُزرع افتراضيات فوق بياناته */
     const st = DB.get('meta','settings');
@@ -4844,6 +5151,38 @@ Migrations.v4_to_v5 = async function(){
   if (baseFixes) parts.push(`${baseFixes} نهاية اشتراك أصلية`);
   if (templates) parts.push(`${templates} قالب حصة ⇐ ${madeBookings} حجزاً${stranded ? `، ${stranded} التحاقاً بلا موعد قادم` : ''}`);
   return `v4→v5: ${parts.length ? parts.join('، ') : 'لا شيء يحتاج ترقية'}`;
+};
+
+
+/* ============================ v5 → v6 =====================================
+   ترقية «التشغيل اليومي». لا تُنشئ مالاً ولا تغيّر مبلغاً، وتشغيلها مرّتين
+   يعطي النتيجة نفسها. الجدولان الجديدان (الملاحظات والتوزيعات) يبدآن فارغين،
+   فلا شيء يُنقل إليهما.
+
+   ما تفعله فعلاً: تميّز سحوبات رأس المال القديمة بوسم صريح
+   (kind = 'capital_return') لأن كشف الشريكة الجديد يفرّق بين شيئين كانا
+   يبدوان واحداً: «استرجاع مال استثمرته» و«توزيع ربح استحقّته». المبالغ
+   والتواريخ لا تُمسّ — يُضاف وسم فقط، والسحب يبقى سحب رأس مال كما كان.
+   ========================================================================== */
+Migrations.v5_to_v6 = async function(){
+  let tagged = 0;
+  for (const c of DB.all('capital')){
+    if (c.type !== 'withdrawal' || c.kind) continue;
+    await DB.put('capital', Object.assign({}, c, { kind:'capital_return' }));
+    tagged++;
+  }
+  /* الفترات المقفلة تُحفظ في الإعدادات، والإعدادات تندمج مع الافتراضيات
+     عند التحميل — فلا حاجة لكتابة شيء هنا، ويكفي ضمان الشكل. */
+  const stRec = DB.get('meta','settings');
+  let fixedSettings = 0;
+  if (stRec && stRec.v && !Array.isArray(stRec.v.closedPeriods)){
+    await DB.put('meta', Object.assign({}, stRec, { v:Object.assign({}, stRec.v, { closedPeriods:[] }) }));
+    fixedSettings = 1;
+  }
+  const parts = [];
+  if (tagged) parts.push(`${tagged} سحب رأس مال وُسم «استرجاع رأس مال»`);
+  if (fixedSettings) parts.push('تهيئة قائمة الفترات المقفلة');
+  return `v5→v6: ${parts.length ? parts.join('، ') : 'لا شيء يحتاج ترقية'}`;
 };
 
 
