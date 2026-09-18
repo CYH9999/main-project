@@ -605,7 +605,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'3.0.0', schema:4, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'5.0.0', schema:5, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -787,6 +787,19 @@ const SCHEMA = {
   suppliers:         { key:'id' }    /* موردو المخزون */
 };
 const STORE_NAMES = Object.keys(SCHEMA);
+/* اسم كل جدول بلغة صاحبة النادي. مصدر واحد تقرأ منه شاشة إعادة التهيئة وغيرها،
+   فلا يعود ممكناً أن يُضاف جدول جديد ويختفي من قائمة «ماذا سيُحذف». */
+const STORE_LABELS = {
+  meta:'إعداد', members:'مشتركة', subscriptions:'اشتراك', plans:'مدة اشتراك', revenues:'إيراد',
+  expenses:'مصروف', expenseCategories:'تصنيف مصروف', staff:'موظفة', payrolls:'كشف راتب',
+  capital:'حركة رأس مال', partners:'شريك', trainings:'قالب حصة', exercises:'تمرين', offers:'عرض',
+  media:'ملف وسائط', audit:'حدث مسجَّل', payments:'دفعة', products:'صنف', stockMoves:'حركة مخزون',
+  sales:'فاتورة بيع', attendance:'سجل حضور', roles:'دور صلاحيات', measurements:'قياس جسم',
+  goals:'هدف', memberDocs:'مستند مشتركة', customFields:'حقل يعرّفه النادي', receipts:'وصل',
+  subEvents:'حدث اشتراك (تجميد/تمديد)', credits:'حركة رصيد حصص', leads:'مهتمّة', tasks:'متابعة',
+  classSessions:'حصة مجدولة', bookings:'حجز حصة', cashDays:'إقفال صندوق يومي', suppliers:'مورّد'
+};
+const storeLabel = s => STORE_LABELS[s] || s;
 
 class IDBAdapter {
   constructor(name, version){ this.name=name; this.version=version; this.db=null; this.kind='indexeddb'; }
@@ -1024,7 +1037,9 @@ const DEFAULT_SETTINGS = {
   birthdayWindowDays:7,
   cashOpeningFloat:0,
   /* الخصوصية: إخفاء المعلومات الحسّاسة عن الجداول العامة افتراضياً */
-  hideSensitiveInLists:true
+  hideSensitiveInLists:true,
+  /* ملاحظة تُعرض مرة واحدة بعد ترقية قوائم الالتحاق القديمة إلى حجوزات */
+  legacyEnrollmentsSeen:false
 };
 const Settings = {
   data: U.clone(DEFAULT_SETTINGS),
@@ -1035,7 +1050,21 @@ const Settings = {
     return this.data;
   },
   get(k){ return k ? this.data[k] : this.data; },
+  /* العملة تُقفل بعد أول حركة مالية. المبالغ محفوظة أرقاماً مجرّدة بلا عملة،
+     فتغيير العملة لاحقاً لا يحوّل شيئاً — بل يعيد تفسير كل مبلغ قديم بعملة
+     لم يُقبض بها، فيصير دينار اشتراكٍ قديم دولاراً في التقارير والوصولات. */
+  currencyLocked(){
+    if (!DB.loaded) return false;
+    return DB.count('payments') > 0 || DB.count('expenses') > 0 || DB.count('capital') > 0;
+  },
+  currencyLockCount(){
+    if (!DB.loaded) return 0;
+    return DB.count('payments') + DB.count('expenses') + DB.count('capital');
+  },
   async set(patch){
+    if (patch && patch.currency && patch.currency !== this.data.currency && this.currencyLocked())
+      throw new AppError('لا يمكن تغيير العملة بعد تسجيل حركات مالية — المبالغ المحفوظة لن تُحوَّل','CURRENCY_LOCKED',
+                         { currency:'العملة مقفلة: يوجد دفعات أو مصروفات أو حركات رأس مال مسجّلة' });
     this.data = Object.assign({}, this.data, patch);
     Money.setCurrency(this.data.currency);
     await DB.put('meta', { k:'settings', v:this.data });
@@ -2041,11 +2070,16 @@ Svc.subs = {
     const dur = this.durationOf(plan, d.customDuration) ;
     const price = Money.clean(d.price), discount = Money.clean(d.discount||0)||0;
     const finalPrice = U.round2(Math.max(0, price - discount));
-    const endDate = D.isISO(d.endDate) ? d.endDate : DUR.end(d.startDate, dur.value, dur.unit);
+    /* التعديل يصف الاشتراك «كما بيع»، فما يُدخَل هنا هو النهاية الأصلية.
+       أيام التجميد والتمديد أحداث مؤرَّخة لا تُلغى بتعديل السعر أو المدة،
+       فتُضاف فوق الأصل ليبقى الثابت: النهاية = الأصل + أيام الأحداث. */
+    const baseEndDate = D.isISO(d.endDate) ? d.endDate : DUR.end(d.startDate, dur.value, dur.unit);
+    const added = Svc.membership.addedDays(id);
+    const endDate = added ? D.addDays(baseEndDate, added) : baseEndDate;
     const payload = Object.assign({}, cur, {
       planId:d.planId||null, planName: plan ? plan.name : (d.planName || DUR.label(dur.value, dur.unit)),
       durationValue:dur.value, durationUnit:dur.unit, durationLabel:DUR.label(dur.value, dur.unit),
-      startDate:d.startDate, endDate,
+      startDate:d.startDate, baseEndDate, endDate,
       price, discount, discountReason:U.norm(d.discountReason), finalPrice,
       paymentMethod:PayMethods.normalize(d.paymentMethod || cur.paymentMethod), notes:U.norm(d.notes)
     });
@@ -2058,6 +2092,7 @@ Svc.subs = {
     if (paid > finalPrice + 0.001)
       val.warnings.push(`المقبوض (${Money.fmt(paid)}) أكبر من السعر الجديد (${Money.fmt(finalPrice)}) — ألغي دفعة زائدة من سجل الدفعات`);
     const rec = await Repos.subs.update(id, payload);
+    if (added) val.warnings.push(`النهاية الأصلية ${D.fmt(baseEndDate)}، وتمتد إلى ${D.fmt(endDate)} بأيام التجميد والتمديد (${added} يوماً)`);
     const after = Calc.payStatus(finalPrice, paid);
     if (after.due > 0) val.warnings.push(`المتبقي على هذا الاشتراك الآن ${Money.fmt(after.due)}`);
     await Audit.log('subscription','update',`تعديل اشتراك بمبلغ ${Money.fmt(finalPrice)} (مقبوض ${Money.fmt(paid)})`, id);
@@ -2409,6 +2444,8 @@ Svc.finance = {
   },
   async archiveRevenue(id, on=true){
     const r = Repos.revenues.get(id);
+    if (r && r.paymentId && on)
+      throw new AppError('هذا الإيراد ناتج عن دفعة — ألغي الدفعة نفسها من سجل دفعات المستند','LINKED');
     const rec = await Repos.revenues.archive(id, on);
     await Audit.log('revenue', on?'archive':'restore', `${on?'أرشفة':'استرجاع'} إيراد ${r?Money.fmt(r.amount):''}`, id);
     return rec;
@@ -2655,43 +2692,38 @@ Svc.exercises = {
 
 
 /* ===== src/app/services/100-trainings.js ============================================= */
-/* ---------------------------- التدريبات ------------------------------
-   الالتحاق علاقة صريحة بين الحصة والمشتركة: تُحترم فيها السعة ولا تُكرَّر. */
+/* ------------------------- قوالب الحصص (الجدول الثابت) -----------------
+   نموذج واحد للحصص: القالب يقول «يوغا كل ثلاثاء 5 مساءً»، ومنه تُولَّد مواعيد
+   مؤرَّخة، والحجز على الموعد هو الالتحاق الوحيد.
+
+   كانت هنا قائمة ملتحقات ثابتة على القالب نفسه، وهي نموذج ثانٍ موازٍ: لا تعرف
+   من حضرت الثلاثاء الماضي، ولا كم مقعداً بقي غداً، وتتناقض مع الحجوزات حين
+   تختلفان. فأُلغيت، ورُحّلت قوائمها إلى حجوزات على المواعيد القادمة. */
 Svc.trainings = {
-  enrolled(trainingId){
-    const t = Repos.trainings.get(trainingId);
-    return ((t && t.memberIds) || []).map(id => Repos.members.get(id)).filter(Boolean);
+  sessionsOf(trainingId, inclPast){
+    const today = D.today();
+    return U.sortBy(Repos.sessions.list().filter(s => s.trainingId === trainingId
+      && (inclPast || D.cmp(s.date, today) >= 0)), s => `${s.date} ${s.startTime}`);
   },
-  countOf(trainingId){ return this.enrolled(trainingId).length; },
-  /* الحصص التي التحقت بها مشتركة معيّنة */
-  ofMember(memberId){ return Repos.trainings.list().filter(t => (t.memberIds||[]).includes(memberId)); },
-  seatsLeft(trainingId){
-    const t = Repos.trainings.get(trainingId);
-    const cap = Number(t && t.capacity) || 0;
-    return cap > 0 ? Math.max(0, cap - this.countOf(trainingId)) : null;
+  nextSession(trainingId){
+    return this.sessionsOf(trainingId).find(s => s.status !== 'cancelled') || null;
   },
-  async enroll(trainingId, memberId){
-    const t = Repos.trainings.get(trainingId), m = Repos.members.get(memberId);
-    if (!t) throw new AppError('الحصة غير موجودة','NOT_FOUND');
-    if (!m) throw new AppError('المشتركة غير موجودة','NOT_FOUND');
-    const ids = t.memberIds || [];
-    if (ids.includes(memberId)) throw new AppError(`${m.name} ملتحقة بهذه الحصة أصلاً`,'DUPLICATE');
-    const cap = Number(t.capacity) || 0;
-    if (cap > 0 && ids.length >= cap) throw new AppError(`الحصة مكتملة (${cap} مقعداً)`,'FULL');
-    const warnings = [];
-    const st = Svc.members.status(memberId);
-    if (st.status !== STATUS.ACTIVE && st.status !== STATUS.EXPIRING)
-      warnings.push(`تنبيه: اشتراك ${m.name} ${st.status.ar}`);
-    const rec = await Repos.trainings.update(trainingId, { memberIds:[...ids, memberId] });
-    await Audit.log('training','enroll',`التحاق ${m.name} بحصة ${t.title}`, trainingId);
-    return { rec, warnings };
+  /* أرقام القالب تُقرأ من مواعيده وحجوزاتها، لا من قائمة ثابتة تشرد عن الواقع */
+  stats(trainingId){
+    const upcoming = this.sessionsOf(trainingId).filter(s => s.status !== 'cancelled');
+    const next = upcoming[0] || null;
+    const seats = next ? Svc.classes.seats(next.id) : null;
+    return { upcoming:upcoming.length, next,
+             booked: seats ? seats.booked : 0,
+             capacity: seats ? seats.capacity : (Number((Repos.trainings.get(trainingId)||{}).capacity) || 0),
+             left: seats ? seats.left : null };
   },
-  async unenroll(trainingId, memberId){
-    const t = Repos.trainings.get(trainingId), m = Repos.members.get(memberId);
-    if (!t) throw new AppError('الحصة غير موجودة','NOT_FOUND');
-    const rec = await Repos.trainings.update(trainingId, { memberIds:(t.memberIds||[]).filter(x => x !== memberId) });
-    await Audit.log('training','unenroll',`إلغاء التحاق ${m?m.name:''} من حصة ${t.title}`, trainingId);
-    return rec;
+  /* القوالب التي حجزت فيها مشتركة موعداً قادماً */
+  ofMember(memberId){
+    const ids = new Set(Svc.classes.bookingsOfMember(memberId)
+      .filter(b => b.status !== 'cancelled')
+      .map(b => (Repos.sessions.get(b.sessionId) || {}).trainingId).filter(Boolean));
+    return Repos.trainings.list().filter(t => ids.has(t.id));
   }
 };
 
@@ -2720,11 +2752,16 @@ Svc.attendance = {
   async checkIn(d){
     const member = Repos.members.get(d.memberId);
     if (!member) throw new AppError('المشتركة غير موجودة','NOT_FOUND');
-    const date = d.date || D.today();
+    /* حضور الحصة يُنسب إلى موعد مؤرَّخ لا إلى قالب متكرّر: «حضرت اليوغا» بلا تاريخ
+       لا تجيب عن «كم حضرت الثلاثاء الماضي» ولا تُطابق حجوزات ذلك الموعد. */
+    const session = d.sessionId ? Repos.sessions.get(d.sessionId) : null;
+    if (d.sessionId && !session) throw new AppError('الحصة المجدولة غير موجودة','NOT_FOUND');
+    const trainingId = session ? (session.trainingId || null) : (d.trainingId || null);
+    const date = session ? session.date : (d.date || D.today());
     if (!D.isISO(date)) throw new AppError('تاريخ غير صحيح','VALIDATION', { date:'تاريخ غير صحيح' });
     if (D.cmp(date, D.today()) > 0) throw new AppError('لا يمكن تسجيل حضور في تاريخ مستقبلي','VALIDATION', { date:'تاريخ مستقبلي' });
-    if (this.has(d.memberId, date, d.trainingId))
-      throw new AppError(`${member.name} مسجّلة حضوراً في هذا اليوم أصلاً`,'DUPLICATE');
+    if (session ? this.hasForSession(d.memberId, session.id) : this.has(d.memberId, date, trainingId))
+      throw new AppError(`${member.name} مسجّلة حضوراً في ${session ? 'هذه الحصة' : 'هذا اليوم'} أصلاً`,'DUPLICATE');
     const warnings = [];
     const st = Svc.members.status(d.memberId);
     if (st.status !== STATUS.ACTIVE && st.status !== STATUS.EXPIRING){
@@ -2735,12 +2772,20 @@ Svc.attendance = {
       warnings.push(`اشتراك ${member.name} ينتهي خلال ${st.daysLeft} يوم — ذكّريها بالتجديد`);
     }
     const rec = await Repos.attendance.create({ memberId:d.memberId, date,
-      time:d.time || new Date().toTimeString().slice(0,5), trainingId:d.trainingId||null,
-      sessionId:d.sessionId||null,
+      time:d.time || (session ? session.startTime : new Date().toTimeString().slice(0,5)),
+      trainingId, sessionId: session ? session.id : null,
       /* طريقة التسجيل تُحفظ من الآن: بلا جهاز اليوم، ومع جهاز غداً بلا هجرة بيانات */
-      method:d.method || 'staff', status:'in', checkOut:null,
-      notes:U.norm(d.notes), isDemo:!!d.isDemo });
-    await Audit.log('attendance','checkin',`حضور ${member.name} — ${D.fmt(date)}`, rec.id);
+      method:d.method || (session ? 'class' : 'staff'), status:'in', checkOut:null,
+      notes:U.norm(d.notes) || (session ? `حصة ${session.title}` : ''), isDemo:!!d.isDemo });
+    /* الحجز هو عضوية الحصة الوحيدة، فحضورها يُعلَّم عليه — لا سجلّان يتناقضان */
+    if (session){
+      const b = Svc.classes.bookingsOf(session.id).find(x => x.memberId === d.memberId && x.status !== 'cancelled');
+      if (b && b.status !== 'attended')
+        await Repos.bookings.update(b.id, { status:'attended' }).catch(e => Log.warn('تعذّر تعليم الحجز حاضرة', e));
+      else if (!b) warnings.push(`${member.name} لم تكن محجوزة في «${session.title}» — سُجّل حضورها بلا حجز`);
+    }
+    await Audit.log('attendance','checkin',
+      `حضور ${member.name} — ${D.fmt(date)}${session ? ` (حصة ${session.title})` : ''}`, rec.id);
     return { rec, warnings };
   },
   async remove(id){
@@ -4323,17 +4368,7 @@ const Seed = {
       await Repos.trainings.create({ title:'حديد وقوة', type:'حديد', coachId:null, time:'20:00',
         days:['السبت','الثلاثاء'], capacity:10, room:'قاعة الحديد', active:true, notes:'', isDemo:true });
       summary.trainings += 3;
-      /* التحاق تجريبي يجعل شاشة الملتحقات والسعة ذات معنى */
-      const demoMembers = Repos.members.list().filter(x => x.isDemo);
-      for (const tr of Repos.trainings.list().filter(x => x.isDemo)){
-        const seats = Math.min(Number(tr.capacity) || 8, Math.max(0, demoMembers.length - 2));
-        const picked = [];
-        for (let k = 0; k < seats && picked.length < seats; k++){
-          const mm = demoMembers[(k * 3 + seats) % demoMembers.length];
-          if (mm && !picked.includes(mm.id)) picked.push(mm.id);
-        }
-        if (picked.length) await Repos.trainings.update(tr.id, { memberIds:picked });
-      }
+      /* لا قوائم التحاق على القالب: المواعيد تُولَّد لاحقاً وتُحجز عليها المقاعد */
 
       step = 'أصناف المتجر';
       const catalogue = [
@@ -4591,6 +4626,7 @@ const Migrations = {
     if (from < 2){ applied.push(await this.v1_to_v2()); }
     if (from < 3){ applied.push(await this.v2_to_v3()); }
     if (from < 4){ applied.push(await this.v3_to_v4()); }
+    if (from < 5){ applied.push(await this.v4_to_v5()); }
     if (from !== APP.schema || !rec) await DB.put('meta', { k:'schema', v:APP.schema });
     /* من كان عنده بيانات قبل هذا الإصدار يُعتبر مُهيّأً حتى لا تُزرع افتراضيات فوق بياناته */
     const st = DB.get('meta','settings');
@@ -4680,6 +4716,144 @@ Migrations.v3_to_v4 = async function(){
 };
 
 
+/* ============================ v4 → v5 =====================================
+   ترقية «التوحيد»: لا تُنشئ مالاً ولا تُغيّر مبلغاً واحداً محفوظاً، وتُشغَّل مرّتين
+   فتُعطي النتيجة نفسها. ما تفعله بالضبط:
+
+     1. طرق الدفع تصير مفاتيح ثابتة بتسميات عربية قابلة للتحرير. التسمية التي
+        لا يعرفها النظام لا تُرمى — تُضاف طريقةً جديدة بمفتاح خاص بها.
+     2. كل مصروف يحمل طريقة صرف: النقد افتراضاً، والرواتب القديمة «غير معروفة»
+        لأن أحداً لم يسجّل كيف صُرفت — والتخمين في الصندوق أسوأ من الاعتراف بالجهل.
+     3. النهاية الأصلية لكل اشتراك تُصحَّح ليتحقّق الثابت:
+        النهاية الأصلية + أيام الأحداث = النهاية الفعلية.
+        النهاية الفعلية لا تتحرّك: هي ما قيل للمشتركة، والأصل هو ما يُصحَّح.
+     4. قوائم الالتحاق الثابتة على قوالب الحصص تتحوّل حجوزاتٍ على المواعيد
+        القادمة، وتُحفظ نسخة منها (legacyMemberIds) ليراها النادي مرة قبل النسيان.
+   ========================================================================== */
+Migrations.v4_to_v5 = async function(){
+  /* ---------------- 1) طرق الدفع: تسميات ⇒ مفاتيح ---------------- */
+  const stRec = DB.get('meta','settings') || { k:'settings', v:{} };
+  const sv = Object.assign({}, stRec.v || {});
+  const rawMethods = Array.isArray(sv.paymentMethods) ? sv.paymentMethods : [];
+  const list = [];
+  const nrm = s => U.normAr(s);
+  const defByLabel = {};
+  PayMethods.DEFAULTS.forEach(d => { defByLabel[nrm(d.label)] = d.key; });
+  const freeKey = () => { let i = 1; while (list.some(m => m.key === 'm' + i)) i++; return 'm' + i; };
+  const ensure = label => {
+    const n = nrm(label);
+    if (!n) return null;
+    const hit = list.find(m => nrm(m.label) === n);
+    if (hit) return hit.key;
+    const key = defByLabel[n] || freeKey();
+    list.push({ key, label:U.norm(label), active:true });
+    return key;
+  };
+  /* الشكل الجديد يُنسخ كما هو (فتكون الترقية الثانية بلا أثر)، والقديم يُحوَّل */
+  rawMethods.forEach(m => {
+    if (m && typeof m === 'object' && m.key){
+      if (!list.some(x => x.key === m.key))
+        list.push({ key:String(m.key), label:U.norm(m.label) || String(m.key), active:m.active !== false });
+    } else if (typeof m === 'string') ensure(m);
+  });
+  PayMethods.DEFAULTS.forEach(d => { if (!list.some(m => m.key === d.key)) list.push({ key:d.key, label:d.label, active:true }); });
+  const keyFor = value => {
+    const v = U.norm(value);
+    if (!v) return null;
+    if (v === PayMethods.UNKNOWN_KEY) return v;
+    if (list.some(m => m.key === v)) return v;
+    return ensure(v);
+  };
+
+  let methodFixes = 0;
+  const retag = async (store, field, fallback) => {
+    for (const r of DB.all(store)){
+      const next = keyFor(r[field]) || fallback;
+      if (next == null || r[field] === next) continue;
+      await DB.put(store, Object.assign({}, r, { [field]:next }));
+      methodFixes++;
+    }
+  };
+  await retag('payments', 'method', PayMethods.CASH_KEY);
+  await retag('revenues', 'method', PayMethods.CASH_KEY);
+  await retag('subscriptions', 'paymentMethod', PayMethods.CASH_KEY);
+  await retag('staff', 'payMethod', null);
+
+  /* ---------------- 2) طريقة صرف كل مصروف ---------------- */
+  let expFixes = 0, unknownExp = 0;
+  for (const e of DB.all('expenses')){
+    const cur = U.norm(e.method);
+    let next;
+    if (cur) next = keyFor(cur) || PayMethods.CASH_KEY;
+    else next = e.refType === 'payroll' ? PayMethods.UNKNOWN_KEY : PayMethods.CASH_KEY;
+    if (e.method === next) continue;
+    await DB.put('expenses', Object.assign({}, e, { method:next }));
+    expFixes++;
+    if (next === PayMethods.UNKNOWN_KEY) unknownExp++;
+  }
+  sv.paymentMethods = list;
+  await DB.put('meta', Object.assign({}, stRec, { k:'settings', v:sv }));
+
+  /* ---------------- 3) النهاية الأصلية للاشتراكات ---------------- */
+  const addedBySub = {};
+  DB.all('subEvents').forEach(e => {
+    if (e.cancelled) return;
+    if (e.type !== 'freeze' && e.type !== 'extend') return;
+    addedBySub[e.subId] = (addedBySub[e.subId] || 0) + (Number(e.days) || 0);
+  });
+  let baseFixes = 0;
+  for (const sb of DB.all('subscriptions')){
+    if (!D.isISO(sb.endDate)) continue;
+    const added = addedBySub[sb.id] || 0;
+    /* النهاية الفعلية لا تتحرّك — يُصحَّح الأصل تحتها */
+    const base = added ? D.addDays(sb.endDate, -added) : sb.endDate;
+    if (sb.baseEndDate === base) continue;
+    await DB.put('subscriptions', Object.assign({}, sb, { baseEndDate:base }));
+    baseFixes++;
+  }
+
+  /* ---------------- 4) قوائم الالتحاق ⇒ حجوزات ---------------- */
+  const today = D.today();
+  let madeBookings = 0, templates = 0, stranded = 0;
+  for (const t of DB.all('trainings')){
+    const ids = (t.memberIds || []).filter(id => !!DB.get('members', id));
+    if (!(t.memberIds || []).length) continue;
+    const future = DB.all('classSessions').filter(s => s.trainingId === t.id && D.isISO(s.date)
+      && D.cmp(s.date, today) >= 0 && s.status !== 'cancelled');
+    for (const s of future){
+      const rows = DB.all('bookings').filter(b => b.sessionId === s.id);
+      const cap = Math.max(0, Number(s.capacity) || 0);
+      let taken = rows.filter(b => b.status === 'booked' || b.status === 'attended').length;
+      let wait = rows.filter(b => b.status === 'waitlist').length;
+      for (const mid of ids){
+        if (rows.some(b => b.memberId === mid && b.status !== 'cancelled')) continue;
+        /* السعة تُحترم: من لا يجد مقعداً يدخل قائمة الانتظار بترتيبه لا يُطرد */
+        const full = cap > 0 && taken >= cap;
+        const now = new Date().toISOString();
+        const rec = { id:U.uid('bkg'), createdAt:now, updatedAt:now, archived:false,
+          sessionId:s.id, memberId:mid, status: full ? 'waitlist' : 'booked',
+          position: full ? ++wait : 0, creditCost:0,
+          notes:'التحاق دائم مُرحَّل من الجدول الثابت', cancelReason:'', migrated:true, isDemo:!!s.isDemo };
+        await DB.put('bookings', rec);
+        rows.push(rec);
+        if (!full) taken++;
+        madeBookings++;
+      }
+    }
+    if (!future.length) stranded += ids.length;
+    await DB.put('trainings', Object.assign({}, t, { memberIds:[], legacyMemberIds:t.memberIds }));
+    templates++;
+  }
+
+  const parts = [];
+  if (methodFixes) parts.push(`${methodFixes} سجل طريقة دفع`);
+  if (expFixes) parts.push(`${expFixes} مصروف${unknownExp ? ` (منها ${unknownExp} بلا طريقة معروفة)` : ''}`);
+  if (baseFixes) parts.push(`${baseFixes} نهاية اشتراك أصلية`);
+  if (templates) parts.push(`${templates} قالب حصة ⇐ ${madeBookings} حجزاً${stranded ? `، ${stranded} التحاقاً بلا موعد قادم` : ''}`);
+  return `v4→v5: ${parts.length ? parts.join('، ') : 'لا شيء يحتاج ترقية'}`;
+};
+
+
 /* ===== src/app/data/80-integrity.js ================================================== */
 /* ============================== Integrity ================================
    فحص العلاقات: سجلات يتيمة أو روابط مكسورة. يُستعمل في الإعدادات وفي الاختبارات. */
@@ -4732,9 +4906,15 @@ const Integrity = {
     DB.all('attendance').forEach(a => {
       if (!has('members', a.memberId)) issues.push({ type:'حضور بلا مشتركة', id:a.id, fix:'deleteAttendance' });
     });
-    DB.all('trainings').forEach(t => {
-      if ((t.memberIds||[]).some(id => !has('members', id)))
-        issues.push({ type:'حصة تضم مشتركات محذوفات', id:t.id, fix:'pruneEnrollment' });
+    /* الحصص المؤرَّخة يجب أن تجد قالبها إن نُسبت إليه — وإلا ضاع أصلها */
+    DB.all('classSessions').forEach(s => {
+      if (s.trainingId && !has('trainings', s.trainingId))
+        issues.push({ type:'حصة مجدولة بقالب محذوف', id:s.id, fix:'clearSessionTemplate' });
+    });
+    /* حضور منسوب إلى موعد لم يعد موجوداً */
+    DB.all('attendance').forEach(a => {
+      if (a.sessionId && !has('classSessions', a.sessionId))
+        issues.push({ type:'حضور بحصة محذوفة', id:a.id, fix:'clearAttendanceSession' });
     });
     /* --- جداول الإصدار الرابع: كل سجل تابع يجب أن يجد صاحبه --- */
     [['measurements','قياس'],['goals','هدف'],['memberDocs','مستند'],['credits','رصيد حصص']].forEach(([store, label]) => {
@@ -4790,10 +4970,8 @@ const Integrity = {
           await Repos.receipts.update(it.id, { voided:true, voidedAt:new Date().toISOString(), voidReason:'أُلغيت الدفعة المرتبطة' });
           fixed++;
         }
-        else if (it.fix === 'pruneEnrollment'){
-          const t = Repos.trainings.get(it.id);
-          if (t){ await Repos.trainings.update(it.id, { memberIds:(t.memberIds||[]).filter(id => !!DB.get('members', id)) }); fixed++; }
-        }
+        else if (it.fix === 'clearSessionTemplate'){ await Repos.sessions.update(it.id, { trainingId:null }); fixed++; }
+        else if (it.fix === 'clearAttendanceSession'){ await Repos.attendance.update(it.id, { sessionId:null }); fixed++; }
         /* إعادة ترحيل دفعة فقدت سطر إيرادها — يعيد المبلغ إلى المالية بلا تكرار */
         else if (it.fix === 'repostPayment'){
           const pm = Repos.payments.get(it.id);
@@ -5515,7 +5693,7 @@ const State = {
     exercises:{ q:'', cat:'', level:'' },
     sales:{ q:'', pay:'', from:'', to:'', archived:false, page:1, pageSize:25, sortFn:null, sortDir:1 },
     inventory:{ q:'', cat:'', state:'', archived:false, page:1, pageSize:25, sortFn:null, sortDir:1 },
-    attendance:{ date:'', trainingId:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
+    attendance:{ date:'', sessionId:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
     dues:{ q:'', kind:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
     audit:{ page:1, pageSize:20, sortFn:null, sortDir:1 },
     payrollPeriod: D.monthKey(D.today()),
@@ -6297,11 +6475,13 @@ Views.member = {
             <td><strong>${U.esc(Svc.subs.durationInfo(s).label)}</strong>${s.archived ? ' <span class="pill">مؤرشف</span>' : ''}
               ${s.sessionCredits ? `<div class="t-sub">${s.sessionCredits} حصة مشمولة</div>` : ''}</td>
             <td class="num">${D.fmt(s.startDate)}</td>
-            <td class="num">${D.fmt(s.endDate)}${ev.addedDays ? `<div class="t-sub">+${ev.addedDays} يوم (${ev.frozenDays ? 'تجميد' : 'تمديد'})</div>` : ''}</td>
+            <td class="num">${D.fmt(s.endDate)}${ev.addedDays
+              ? `<div class="t-sub">الأصلية ${D.fmt(ev.baseEnd)} +${ev.addedDays} يوم (${ev.frozenDays ? 'تجميد' : 'تمديد'})</div>` : ''}</td>
             <td class="num">${Money.fmt(s.finalPrice)}${s.discount ? `<div class="t-sub">خصم ${Money.fmt(s.discount)}</div>` : ''}</td>
             <td class="num">${Money.fmt(b.paid)}</td>
             <td>${UI.chip(b)}</td>
             <td class="ta-l"><div class="t-actions">
+              <button class="btn btn-sm btn-icon" data-pmts="${s.id}" title="سجل الدفعات والوصولات">${svg(ICON.coins, 15)}</button>
               ${!s.archived ? `<button class="btn btn-sm" data-freeze="${s.id}">تجميد</button>
                                <button class="btn btn-sm" data-extend="${s.id}">تمديد</button>` : ''}
               ${b.due > 0 ? `<button class="btn btn-sm btn-primary" data-pay="${s.id}">قبض</button>` : ''}
@@ -6539,6 +6719,7 @@ Views.member = {
         await guard(null, () => Svc.membership.cancelEvent(b.dataset.evcancel, 'تراجع يدوي'), 'تم التراجع'); reload();
       });
       on('[data-pay]', b => Forms.payment('subscription', b.dataset.pay));
+      on('[data-pmts]', b => Screens.paymentLedger('subscription', b.dataset.pmts));
       on('[data-receipt]', b => Actions.printReceiptForPayment(b.dataset.receipt));
       on('[data-reprint]', b => Actions.printReceipt(b.dataset.reprint));
       on('[data-docedit]', b => Forms.document(b.dataset.docedit, m.id));
@@ -6970,7 +7151,24 @@ Views.trainings = {
   sub(){ return `${Repos.trainings.list().filter(t=>t.active).length} حصة أسبوعية`; },
   render(root){
     const list = U.sortBy(Repos.trainings.list(true), t=>t.time);
+    /* قوائم الالتحاق الثابتة أُلغيت كنموذج، لكنها لا تختفي بلا أن تراها صاحبة النادي مرة */
+    const legacy = Repos.trainings.list(true).filter(t => (t.legacyMemberIds || []).length);
+    const legacyNote = (legacy.length && !Settings.get('legacyEnrollmentsSeen'))
+      ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-body">
+          <strong>قوائم الالتحاق القديمة صارت حجوزاتٍ على المواعيد.</strong>
+          <div class="t-sub" style="margin:6px 0 10px">لم يعد للقالب قائمة ملتحقات ثابتة: الالتحاق حجزٌ على موعد مؤرَّخ،
+            فيُعرف من حضرت ومن غابت وكم مقعداً بقي. رُحّلت الأسماء إلى المواعيد القادمة المولَّدة؛
+            وما لم يكن له موعد قادم يبقى هنا لتحجزيه بنفسك من شاشة الحصص.</div>
+          <table class="mini-tbl"><thead><tr><th>القالب</th><th>الأسماء كما كانت</th></tr></thead><tbody>
+          ${legacy.map(t => `<tr><td><strong>${U.esc(t.title)}</strong> <span class="t-sub num">${U.esc(t.time || '')}</span></td>
+            <td>${(t.legacyMemberIds || []).map(id => { const m = Repos.members.get(id); return m ? U.esc(m.name) : null; })
+                  .filter(Boolean).join('، ') || '<span class="t-sub">مشتركات لم تعد مسجّلة</span>'}</td></tr>`).join('')}
+          </tbody></table>
+          <button class="btn btn-sm" id="tLegacyOk" style="margin-top:10px">اطّلعتُ — أخفي هذه الملاحظة</button>
+        </div></div>`
+      : '';
     root.innerHTML = `<div class="stack">
+      ${legacyNote}
       <div class="card"><div class="card-head"><h3>الجدول الأسبوعي</h3><div class="sp"></div>
         <button class="btn btn-sm" id="tPrint">${svg(ICON.print,15)} طباعة الجدول</button>
         <button class="btn btn-sm btn-primary" id="tAdd">${svg(ICON.plus,15,2.4)} حصة جديدة</button></div>
@@ -6984,7 +7182,7 @@ Views.trainings = {
             <div class="num" style="font-weight:700;font-size:13px">${U.esc(t.time)}</div>
             <div style="font-size:12.5px">${U.esc(t.title)}</div>
             <div class="t-sub">${U.esc(coachName(t.coachId))}</div>
-            <div class="t-sub">${Svc.trainings.countOf(t.id)} ملتحقة${t.capacity?` من ${t.capacity}`:''}</div></div>`).join('')
+            <div class="t-sub">${t.capacity ? `${t.capacity} مقعداً` : 'بلا حد للسعة'}</div></div>`).join('')
           : '<div class="t-sub" style="padding:10px 0">لا حصص</div>'}</div>`;
     }).join('');
     $('tGrid').innerHTML = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:12px">${grid}</div>`;
@@ -6994,25 +7192,35 @@ Views.trainings = {
       { h:'الوقت', render:t=>`<span class="num">${U.esc(t.time)}</span>` },
       { h:'الأيام', render:t=>(t.days||[]).join('، ') },
       { h:'المدربة', render:t=>U.esc(coachName(t.coachId)) },
-      { h:'الملتحقات', render:t=>{ const n = Svc.trainings.countOf(t.id), left = Svc.trainings.seatsLeft(t.id);
-          return `<strong class="num">${n}</strong>${t.capacity?`<span class="t-sub"> / ${t.capacity}</span>` : ''}
-            ${left === 0 ? '<div class="chip chip-expired"><span class="dot"></span>مكتملة</div>'
-              : left != null ? `<div class="t-sub">${left} مقعد متاح</div>` : ''}`; } },
+      /* الالتحاق صار حجزاً على موعد مؤرَّخ، فتُقرأ الأرقام من أقرب موعد قادم */
+      { h:'أقرب موعد', render:t=>{ const st = Svc.trainings.stats(t.id);
+          if (!st.next) return `<span class="t-sub">لا مواعيد مولَّدة</span>${st.upcoming?'':''}`;
+          return `<div class="num">${D.fmt(st.next.date)} ${U.esc(st.next.startTime)}</div>
+            <div class="t-sub">${st.booked} محجوزة${st.capacity?` من ${st.capacity}`:''} — ${st.upcoming} موعداً قادماً</div>`; } },
       { h:'الحالة', render:t=>t.archived?'<span class="chip chip-none"><span class="dot"></span>مؤرشفة</span>':(t.active?UI.chip(STATUS.ACTIVE):'<span class="chip chip-none"><span class="dot"></span>متوقفة</span>') },
       { h:'', cls:'ta-l', render:t=>`<div class="t-actions">
-          <button class="btn btn-sm" data-enr="${t.id}">الملتحقات</button>
+          <button class="btn btn-sm" data-sess="${t.id}">المواعيد والحجوزات</button>
           <button class="btn btn-sm btn-icon" data-edit="${t.id}">${svg(ICON.edit,15)}</button>
           <button class="btn btn-sm btn-icon ${t.archived?'':'btn-danger'}" data-arch="${t.id}">${svg(t.archived?ICON.undo:ICON.trash,15)}</button></div>` }
     ];
     UI.table($('tTable'), { cols, rows:list, state:{page:1,pageSize:50}, rowCls:t=>t.archived?'archived-row':'',
       empty:UI.empty('لا توجد حصص','أضيفي حصة وحدّدي وقتها وأيامها لتظهر في الجدول') });
     $('tTable').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Forms.training(b.dataset.edit));
-    $('tTable').querySelectorAll('[data-enr]').forEach(b => b.onclick = () => Screens.enrollment(b.dataset.enr));
+    $('tTable').querySelectorAll('[data-sess]').forEach(b => b.onclick = () => {
+      const st = Svc.trainings.stats(b.dataset.sess);
+      if (!st.next) return UI.toast('لا مواعيد قادمة من هذا القالب — ولّديها من شاشة الحصص','warn', 5000);
+      go('classes', { date:st.next.date });
+    });
     $('tTable').querySelectorAll('[data-arch]').forEach(b => b.onclick = async () => {
       const t = Repos.trainings.get(b.dataset.arch);
       if (!t.archived && !await UI.confirm({ title:'أرشفة الحصة', message:`سيتم إخفاء «${U.esc(t.title)}» من الجدول.`, danger:true, confirmText:'أرشفة' })) return;
       await Repos.trainings.archive(t.id, !t.archived); UI.toast('تم التحديث'); renderRoute();
     });
+    const legacyOk = $('tLegacyOk');
+    if (legacyOk) legacyOk.onclick = async () => {
+      await guard(null, () => Settings.set({ legacyEnrollmentsSeen:true }));
+      renderRoute();
+    };
     $('tAdd').onclick = () => Forms.training();
     $('tPrint').onclick = () => UI.printSection('الجدول الأسبوعي', `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">${grid}</div>`);
   }
@@ -7627,9 +7835,12 @@ Views.finance = {
         { h:'الوصف', sort:r=>r.description, render:r=>`<div class="t-name">${U.esc(r.description)}</div><div class="t-sub">${U.esc(payLabel(r.method))}</div>` },
         { h:'المصدر', sort:r=>r.source, render:r=>`<span class="chip chip-none">${U.esc(sourceName(r.source))}</span>` },
         { h:'المبلغ', sort:r=>r.amount, render:r=>`<strong class="money-pos num">${Money.fmt(r.amount)}</strong>` },
+        /* سطر إيراد وُلد من دفعة ليس سطراً مستقلاً: تعديله أو أرشفته يفكّ الدفعة عن إيرادها.
+           فيُستبدل الزران برابط إلى المستند الذي وُلد منه، وهناك تُدار الدفعة. */
         { h:'', cls:'ta-l', render:r=>`<div class="t-actions">
-            ${r.source==='subscription' ? '<span class="t-sub">مرتبط باشتراك</span>' :
-              `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
+            ${r.paymentId ? `<button class="btn btn-sm" data-src="${r.paymentId}" title="سجل دفعات المستند">${svg(ICON.eye,14)} المستند</button>`
+              : r.source==='subscription' && r.refId ? `<button class="btn btn-sm" data-srcsub="${r.refId}" title="الاشتراك">${svg(ICON.eye,14)} الاشتراك</button>`
+              : `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
                <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
       ];
       UI.table($('rTable'), { cols, rows, state:f, rowCls:r=>r.archived?'archived-row':'',
@@ -7639,6 +7850,12 @@ Views.finance = {
       if (pg) pg.insertAdjacentHTML('afterbegin', `<strong>المجموع: ${Money.fmt(total)}</strong>`);
       $('rTable').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Forms.revenue(b.dataset.edit));
       $('rTable').querySelectorAll('[data-arch]').forEach(b => b.onclick = () => Actions.archiveRevenue(b.dataset.arch));
+      $('rTable').querySelectorAll('[data-src]').forEach(b => b.onclick = () => {
+        const pm = Repos.payments.get(b.dataset.src);
+        if (!pm) return UI.toast('الدفعة المرتبطة بهذا الإيراد غير موجودة','warn');
+        Screens.paymentLedger(pm.refType, pm.refId);
+      });
+      $('rTable').querySelectorAll('[data-srcsub]').forEach(b => b.onclick = () => Screens.paymentLedger('subscription', b.dataset.srcsub));
       f._rows = rows;
     };
     draw();
@@ -7681,9 +7898,12 @@ Views.finance = {
             <div class="t-sub">${U.esc([r.payee || '', payLabel(r.method)].filter(Boolean).join(' — '))}</div>` },
         { h:'التصنيف', sort:r=>catName(r.categoryId), render:r=>`<span class="chip chip-none">${U.esc(catName(r.categoryId))}</span>` },
         { h:'المبلغ', sort:r=>r.amount, render:r=>`<strong class="money-neg num">${Money.fmt(r.amount)}</strong>` },
+        /* المصروف المولَّد من راتب أو من شراء يُدار من مصدره وحده، وإلا افترقت نسخته
+           عن أصله. الزران يُستبدلان برابط إلى المصدر بدل رسالة جامدة. */
         { h:'', cls:'ta-l', render:r=>`<div class="t-actions">
-            ${r.refType==='payroll' ? '<span class="t-sub">راتب مدفوع</span>' :
-              `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
+            ${r.refType==='payroll' ? `<button class="btn btn-sm" data-srcpay="${r.refId}" title="كشف الراتب">${svg(ICON.eye,14)} كشف الراتب</button>`
+              : r.refType==='stock' ? `<button class="btn btn-sm" data-srcstk="${r.refId}" title="حركة الشراء">${svg(ICON.eye,14)} حركة الشراء</button>`
+              : `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
                <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
       ];
       UI.table($('eTable'), { cols, rows, state:f, rowCls:r=>r.archived?'archived-row':'',
@@ -7693,6 +7913,16 @@ Views.finance = {
       if (pg) pg.insertAdjacentHTML('afterbegin', `<strong>المجموع: ${Money.fmt(total)}</strong>`);
       $('eTable').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Forms.expense(b.dataset.edit));
       $('eTable').querySelectorAll('[data-arch]').forEach(b => b.onclick = () => Actions.archiveExpense(b.dataset.arch));
+      $('eTable').querySelectorAll('[data-srcpay]').forEach(b => b.onclick = () => {
+        const p = Repos.payrolls.get(b.dataset.srcpay);
+        if (!p) return UI.toast('كشف الراتب المرتبط غير موجود','warn');
+        State.f.payrollPeriod = p.period; go('payroll');
+      });
+      $('eTable').querySelectorAll('[data-srcstk]').forEach(b => b.onclick = () => {
+        const mv = Repos.stockMoves.get(b.dataset.srcstk);
+        if (!mv) return UI.toast('حركة الشراء المرتبطة غير موجودة','warn');
+        Screens.stockHistory(mv.productId);
+      });
       const byCat = Calc.byCategory(rows.filter(r=>!r.archived));
       $('eChart').innerHTML = UI.donut(byCat.map((x,i)=>({ label:catName(x.key), value:x.total, color:UI.PALETTE[i%UI.PALETTE.length] })));
       f._rows = rows;
@@ -7977,8 +8207,11 @@ Views.attendance = {
           <div style="flex:2;min-width:220px">${UI.field('attQ','ابحثي عن المشتركة بالاسم أو الكود أو الهاتف',
             '<input class="inp" id="attSearch" autocomplete="off" placeholder="اكتبي حرفين على الأقل">')}</div>
           <div style="flex:1;min-width:150px">${UI.field('attDate','التاريخ', UI.input('attDate', f.date, {type:'date'}))}</div>
-          <div style="flex:1;min-width:160px">${UI.field('attTraining','الحصة (اختياري)',
-            UI.select('attTraining', f.trainingId, [{v:'',t:'بلا حصة محددة'}, ...Repos.trainings.list().filter(t=>t.active).map(t=>({v:t.id,t:`${t.title} — ${t.time}`}))]))}</div>
+          <div style="flex:1;min-width:200px">${UI.field('attSession','الحصة (اختياري)',
+            UI.select('attSession', f.sessionId, [{v:'',t:'بلا حصة محددة'},
+              ...Svc.classes.ofDay(f.date).filter(s => s.status !== 'cancelled')
+                .map(s => ({ v:s.id, t:`${s.title} — ${s.startTime}` }))]),
+            'المواعيد المجدولة في هذا اليوم فقط — الحضور يُنسب إلى موعد لا إلى قالب متكرّر')}</div>
         </div>
         <div id="attResults" class="att-res"></div>
       </div></div>
@@ -7998,7 +8231,8 @@ Views.attendance = {
 
     const draw = () => {
       const rows = U.sortBy(Svc.attendance.ofDay(f.date).map(a => ({ a, m:Repos.members.get(a.memberId),
-        tr: a.trainingId ? Repos.trainings.get(a.trainingId) : null })), r=>r.a.time, -1);
+        /* اسم الحصة من الموعد المؤرَّخ أولاً، ومن القالب للسجلات القديمة */
+        tr: a.sessionId ? Repos.sessions.get(a.sessionId) : (a.trainingId ? Repos.trainings.get(a.trainingId) : null) })), r=>r.a.time, -1);
       const cols = [
         { h:'الوقت', sort:r=>r.a.time, render:r=>`<span class="num">${U.esc(r.a.time||'—')}</span>` },
         { h:'المشتركة', sort:r=>r.m?r.m.name:'', render:r=>r.m
@@ -8025,19 +8259,20 @@ Views.attendance = {
         (U.normAr(r.m.name).includes(q) || U.normAr(r.m.code).includes(q) || U.normAr(r.m.phone).includes(q))).slice(0, 8);
       if (!hits.length){ resBox.innerHTML = '<div class="t-sub" style="padding:10px 2px">لا نتائج مطابقة</div>'; return; }
       resBox.innerHTML = hits.map(r => {
-        const done = Svc.attendance.has(r.m.id, f.date, f.trainingId || null);
+        const done = f.sessionId ? Svc.attendance.hasForSession(r.m.id, f.sessionId)
+                                 : Svc.attendance.has(r.m.id, f.date, null);
         return `<div class="att-row"><div>${UI.avatar(r.m.name)}</div>
           <div style="flex:1;min-width:0"><div class="t-name">${U.esc(r.m.name)}</div>
             <div class="t-sub">${U.esc(r.m.code)} — ${U.esc(r.m.phone||'بلا رقم')}</div></div>
           ${UI.chip(r.st.status)}
           <button class="btn btn-sm ${done?'':'btn-primary'}" data-in="${r.m.id}" ${done?'disabled':''}>${done?'مسجّلة':'تسجيل حضور'}</button></div>`;
       }).join('');
-      resBox.querySelectorAll('[data-in]').forEach(b => b.onclick = () => Actions.checkIn(b.dataset.in, f.date, f.trainingId));
+      resBox.querySelectorAll('[data-in]').forEach(b => b.onclick = () => Actions.checkIn(b.dataset.in, f.date, f.sessionId));
     };
     $('attSearch').oninput = U.debounce(search, 200);
     $('attSearch').onkeydown = e => { if (e.key === 'Enter'){ const b = resBox.querySelector('[data-in]:not([disabled])'); if (b) b.click(); } };
-    $('f_attDate').onchange = e => { f.date = e.target.value || D.today(); renderRoute(); };
-    $('f_attTraining').onchange = e => { f.trainingId = e.target.value; search(); };
+    $('f_attDate').onchange = e => { f.date = e.target.value || D.today(); f.sessionId = ''; renderRoute(); };
+    $('f_attSession').onchange = e => { f.sessionId = e.target.value; search(); };
     $('attPrint').onclick = () => UI.printSection(`سجل الحضور — ${D.fmt(f.date)}`,
       `<table class="tbl"><thead><tr><th>الوقت</th><th>المشتركة</th><th>الكود</th><th>الحصة</th></tr></thead><tbody>
         ${(f._rows||[]).map(r=>`<tr><td>${U.esc(r.a.time||'')}</td><td>${U.esc(r.m?r.m.name:'—')}</td>
@@ -8613,8 +8848,13 @@ Views.settings = {
       box.innerHTML = `<div class="card"><div class="card-head"><h3>معلومات النادي</h3></div><div class="card-body">
         <div class="form-grid" id="gForm">
           ${UI.field('gymName','اسم النادي', UI.input('gymName', s.gymName))}
-          ${UI.field('currency','العملة', UI.select('currency', s.currency,
-            [{ v:'IQD', t:'دينار عراقي (د.ع)' }, { v:'USD', t:'دولار أمريكي ($)' }]))}
+          ${(() => { const locked = Settings.currencyLocked();
+            const sel = UI.select('currency', s.currency, [{ v:'IQD', t:'دينار عراقي (د.ع)' }, { v:'USD', t:'دولار أمريكي ($)' }]);
+            return UI.field('currency','العملة',
+              locked ? sel.replace('<select', '<select disabled') : sel,
+              locked ? `مقفلة: يوجد ${Settings.currencyLockCount()} حركة مالية مسجّلة. المبالغ المحفوظة أرقام بلا عملة،
+                        وتغييرها الآن يعيد تفسير كل مبلغ قديم بعملة لم يُقبض بها.`
+                     : 'تُقفل هذه القائمة نهائياً بعد أول دفعة أو مصروف أو حركة رأس مال'); })()}
         </div>
         <button class="btn btn-primary" id="gSave">حفظ</button>
         <div class="t-sub" style="margin-top:12px">الإصدار ${U.esc(APP.version)} — مخطط البيانات ${APP.schema} —
@@ -8622,7 +8862,11 @@ Views.settings = {
       </div></div>`;
       box.querySelector('#gSave').onclick = async () => {
         const d = UI.read(box.querySelector('#gForm'));
-        await save({ gymName:U.norm(d.gymName) || 'تبارك جيم', currency:d.currency }, 'تحديث معلومات النادي');
+        /* الحقل المعطّل لا يُقرأ: لا تُرسَل العملة أصلاً حين تكون مقفلة */
+        const patch = { gymName:U.norm(d.gymName) || 'تبارك جيم' };
+        if (!Settings.currencyLocked() && d.currency) patch.currency = d.currency;
+        const ok = await guard(box.querySelector('#gForm'), () => save(patch, 'تحديث معلومات النادي'));
+        if (ok === null) return;
         Brand.applyToShell();
       };
     };
@@ -9079,6 +9323,9 @@ Object.assign(Forms, {
     const defStart = sub ? sub.startDate : (lastEnd && D.cmp(lastEnd, D.today()) >= 0 ? D.addDays(lastEnd,1) : D.today());
     const eligible = mid ? Offers.eligibleForMember(mid) : [];
     const curDur = sub ? Svc.subs.durationInfo(sub) : null;
+    /* اشتراك عليه أحداث: النموذج يعدّل «النهاية الأصلية»، والنهاية الفعلية تُشتقّ */
+    const evAdded = sub ? Svc.membership.addedDays(sub.id) : 0;
+    const baseEnd = sub ? (sub.baseEndDate || sub.endDate) : '';
     const curPlanId = sub ? (sub.planId && Repos.plans.get(sub.planId) ? sub.planId : '__custom') : (plans[0] ? plans[0].id : '__custom');
     const h = UI.modal({
       title: sub ? 'تعديل الاشتراك' : 'اشتراك جديد',
@@ -9101,7 +9348,9 @@ Object.assign(Forms, {
           ${UI.field('price','السعر', UI.input('price', sub?sub.price:'', {type:'number', attrs:{min:0,step:'any', placeholder:'اكتبي المبلغ'}}), 'السعر حر لكل اشتراك — اكتبي 0 للاشتراك المجاني')}
           ${UI.field('discount','الخصم', UI.input('discount', sub?(sub.discount||0):0, {type:'number', attrs:{min:0,step:'any'}}))}
           ${UI.field('paymentMethod','طريقة الدفع', UI.select('paymentMethod', sub?sub.paymentMethod:PayMethods.CASH_KEY, payMethodsFor(sub?sub.paymentMethod:null)))}
-          ${UI.field('endDate','تاريخ الانتهاء', UI.input('endDate', sub?sub.endDate:'', {type:'date'}), 'محسوب تلقائياً — يمكن تعديله يدوياً')}
+          ${UI.field('endDate', evAdded ? 'نهاية الاشتراك الأصلية' : 'تاريخ الانتهاء', UI.input('endDate', sub?baseEnd:'', {type:'date'}),
+            evAdded ? `النهاية كما بيعت. أيام التجميد والتمديد (${evAdded} يوماً) تُضاف فوقها ولا تُلغى بالتعديل.`
+                    : 'محسوب تلقائياً — يمكن تعديله يدوياً')}
           ${sub ? '' : UI.field('paidAmount','المقبوض الآن', UI.input('paidAmount','', {type:'number', attrs:{min:0,step:'any', placeholder:'كامل المبلغ'}}),
             'اتركيه فارغاً للدفع الكامل، أو اكتبي المدفوع فعلاً وسجّلي الباقي لاحقاً')}
         </div>
@@ -9126,6 +9375,8 @@ Object.assign(Forms, {
             <span id="durOut" class="t-sub"></span>
           </div>
           <div id="periodOut" class="t-sub" style="margin-top:6px"></div>
+          ${evAdded ? `<div class="t-sub" style="margin-top:4px">النهاية الفعلية بعد الأحداث:
+            <strong id="effEndOut" class="num">${D.fmt(sub.endDate)}</strong> (+${evAdded} يوماً)</div>` : ''}
         </div></div>
       </div>`,
       footer:`<button class="btn btn-primary" id="subSave">${sub?'حفظ التعديلات':'تسجيل الاشتراك'}</button>
@@ -9176,6 +9427,8 @@ Object.assign(Forms, {
             ? `${DUR.label(d.value, d.unit)} — ${DUR.days(s0, e0)} يوم` : '';
           ov.querySelector('#periodOut').textContent = (D.isISO(s0) && D.isISO(e0))
             ? `من ${D.dayName(s0)} ${D.fmt(s0)} إلى ${D.dayName(e0)} ${D.fmt(e0)} (اليومان الأول والأخير محسوبان)` : '';
+          const eff = ov.querySelector('#effEndOut');
+          if (eff) eff.textContent = D.isISO(e0) ? D.fmt(D.addDays(e0, evAdded)) : '—';
         };
         g('planId').onchange = syncEnd;
         g('customValue').oninput = syncEnd;
@@ -10561,6 +10814,8 @@ Object.assign(Screens, {
     const member = sl.memberId ? Repos.members.get(sl.memberId) : null;
     const pmts = Svc.payments.forRef('sale', id, true);
     const st = Svc.sales.balance(sl);
+    /* لا وصل بلا دفعة: الفاتورة وحدها مستند مستحق، لا إثبات قبض */
+    const lastPaid = U.sortBy(pmts.filter(p => !p.archived), p => `${p.date}|${p.createdAt || ''}`, -1)[0] || null;
     const linesHtml = (sl.lines||[]).map(l=>`<tr><td>${U.esc(l.name)}</td><td class="num">${U.round2(l.qty)}</td>
       <td>${Money.fmt(l.unitPrice)}</td><td>${l.discount?Money.fmt(l.discount):'—'}</td><td><strong>${Money.fmt(l.total)}</strong></td></tr>`).join('');
     UI.modal({ title:`فاتورة ${sl.code}`, size:'wide',
@@ -10575,15 +10830,22 @@ Object.assign(Screens, {
           <tr><td colspan="4">المقبوض</td><td>${Money.fmt(st.paid)}</td></tr>
           ${st.due>0?`<tr><td colspan="4"><strong>المتبقي</strong></td><td><strong class="money-neg">${Money.fmt(st.due)}</strong></td></tr>`:''}
         </tfoot></table>
-      <h4 style="font-size:14px;margin:16px 0 8px">سجل الدفعات</h4>
-      ${pmts.length ? `<table class="tbl"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th></th></tr></thead><tbody>
-        ${pmts.map(pm=>`<tr><td class="num">${D.fmt(pm.date)}</td><td><strong>${Money.fmt(pm.amount)}</strong></td>
-          <td>${U.esc(PayMethods.label(pm.method))}</td><td class="ta-l">${pm.archived?'<span class="t-sub">ملغاة</span>':
-          `<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}" title="إلغاء الدفعة">${svg(ICON.trash,14)}</button>`}</td></tr>`).join('')}
-        </tbody></table>` : '<div class="t-sub">لم تُسجَّل أي دفعة على هذه الفاتورة</div>'}
+      <h4 style="font-size:14px;margin:16px 0 8px">سجل الدفعات والوصولات</h4>
+      ${pmts.length ? `<table class="tbl"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th>الوصل</th><th></th></tr></thead><tbody>
+        ${pmts.map(pm=>{ const rc = Svc.receipts.forPayment(pm.id);
+          return `<tr><td class="num">${D.fmt(pm.date)}</td><td><strong>${Money.fmt(pm.amount)}</strong></td>
+          <td>${U.esc(PayMethods.label(pm.method))}</td>
+          <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">لم يُصدَر</span>'}</td>
+          <td class="ta-l"><div class="t-actions">
+            <button class="btn btn-sm" data-rcp="${pm.id}">${svg(ICON.print,13)} وصل</button>
+            ${pm.archived?'<span class="t-sub">ملغاة</span>':
+            `<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}" title="إلغاء الدفعة">${svg(ICON.trash,14)}</button>`}</div></td></tr>`; }).join('')}
+        </tbody></table>
+        <div class="t-sub" style="margin-top:8px">الوصل وثيقة على دفعة وقعت: رقم واحد لكل دفعة، وإعادة الطباعة لا تُنشئ مالاً.</div>`
+        : '<div class="t-sub">لم تُسجَّل أي دفعة على هذه الفاتورة — لا يوجد ما يُطبع وصلاً.</div>'}
       ${sl.notes?`<h4 style="font-size:14px;margin:14px 0 6px">ملاحظات</h4><p style="margin:0">${U.esc(sl.notes)}</p>`:''}`,
       footer:`${!sl.archived && st.due>0?'<button class="btn btn-primary" id="slPay">قبض دفعة</button>':''}
-              <button class="btn" id="slPrint">${svg(ICON.print,15)} طباعة الإيصال</button>
+              ${lastPaid ? `<button class="btn" id="slPrint">${svg(ICON.print,15)} طباعة وصل آخر دفعة</button>` : ''}
               <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
       onMount(ov, h){
         const pay = ov.querySelector('#slPay');
@@ -10594,15 +10856,11 @@ Object.assign(Screens, {
           await guard(null, () => Svc.payments.remove(b.dataset.delpm), 'تم إلغاء الدفعة');
           h.close(); renderRoute();
         });
-        ov.querySelector('#slPrint').onclick = () => UI.printSection(`إيصال بيع ${sl.code}`,
-          `<div class="dl" style="margin-bottom:12px"><dt>رقم الفاتورة</dt><dd>${U.esc(sl.code)}</dd>
-            <dt>التاريخ</dt><dd>${D.fmt(sl.date)}</dd>
-            <dt>الزبونة</dt><dd>${U.esc(member?member.name:(sl.customerName||'زبونة عابرة'))}</dd></div>
-           <table class="tbl"><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>
-            ${(sl.lines||[]).map(l=>`<tr><td>${U.esc(l.name)}</td><td>${U.round2(l.qty)}</td><td>${Money.fmt(l.unitPrice)}</td><td>${Money.fmt(l.total)}</td></tr>`).join('')}
-           </tbody><tfoot><tr><td colspan="3">المستحق</td><td>${Money.fmt(sl.total)}</td></tr>
-           <tr><td colspan="3">المقبوض</td><td>${Money.fmt(st.paid)}</td></tr>
-           ${st.due>0?`<tr><td colspan="3">المتبقي</td><td>${Money.fmt(st.due)}</td></tr>`:''}</tfoot></table>`);
+        /* نظام وصولات واحد للمبيعات والاشتراكات: كل ورقة تحمل رقماً ولقطة دفعتها.
+           الطباعة غير المرقّمة كانت تُخرج ورقة تشبه الوصل ولا يعرفها السجل. */
+        ov.querySelectorAll('[data-rcp]').forEach(b => b.onclick = () => Actions.printReceiptForPayment(b.dataset.rcp));
+        const pr = ov.querySelector('#slPrint');
+        if (pr) pr.onclick = () => Actions.printReceiptForPayment(lastPaid.id);
       }
     });
   },
@@ -10644,80 +10902,9 @@ Object.assign(Screens, {
       }
     });
   },
-  /* إدارة الملتحقات بحصة: بحث، التحاق، إلغاء، وتسجيل حضور الحصة دفعة واحدة */
-  enrollment(trainingId){
-    const t = Repos.trainings.get(trainingId);
-    if (!t) return UI.toast('الحصة غير موجودة','err');
-    const render = (ov, h) => {
-      const enrolled = Svc.trainings.enrolled(trainingId);
-      const left = Svc.trainings.seatsLeft(trainingId);
-      const today = D.today();
-      ov.querySelector('#enBody').innerHTML = `
-        <div class="grid g-3" style="margin-bottom:14px">
-          ${kpi('الملتحقات', enrolled.length, t.capacity?`من ${t.capacity} مقعداً`:'بلا حد للسعة', 'plum')}
-          ${kpi('المقاعد المتاحة', left == null ? '—' : left, left === 0 ? 'الحصة مكتملة' : '', left === 0 ? 'neg' : 'pos')}
-          ${kpi('حضور اليوم', Svc.attendance.ofDay(today, trainingId).length, D.fmt(today), 'pos')}
-        </div>
-        <div class="field"><label>إضافة مشتركة</label>
-          <input class="inp" id="enSearch" autocomplete="off" placeholder="ابحثي بالاسم أو الكود (حرفان على الأقل)" ${left===0?'disabled':''}>
-          ${left === 0 ? '<span class="hint">الحصة مكتملة — ألغي التحاق إحداهنّ أو زيدي السعة</span>' : ''}</div>
-        <div id="enRes" class="att-res"></div>
-        <h4 style="font-size:14px;margin:16px 0 8px">قائمة الملتحقات</h4>
-        ${enrolled.length ? `<table class="tbl"><thead><tr><th>المشتركة</th><th>الكود</th><th>حالة الاشتراك</th><th>حضور اليوم</th><th></th></tr></thead><tbody>
-          ${enrolled.map(m => { const st = Svc.members.status(m.id), here = Svc.attendance.has(m.id, today, trainingId);
-            return `<tr><td class="t-name">${U.esc(m.name)}</td><td class="num">${U.esc(m.code)}</td>
-              <td>${UI.chip(st.status)}</td>
-              <td>${here ? '<span class="chip chip-active"><span class="dot"></span>حاضرة</span>'
-                : `<button class="btn btn-sm" data-in="${m.id}">تسجيل حضور</button>`}</td>
-              <td class="ta-l"><button class="btn btn-sm btn-icon btn-danger" data-out="${m.id}" title="إلغاء الالتحاق">${svg(ICON.trash,14)}</button></td></tr>`; }).join('')}
-          </tbody></table>` : UI.empty('لا ملتحقات بعد','ابحثي عن مشتركة أعلاه لإضافتها إلى الحصة')}`;
-
-      const res = ov.querySelector('#enRes');
-      const search = () => {
-        const q = U.normAr(ov.querySelector('#enSearch').value);
-        if (q.length < 2){ res.innerHTML = ''; return; }
-        const ids = new Set((Repos.trainings.get(trainingId).memberIds)||[]);
-        const hits = Repos.members.list().filter(m => !ids.has(m.id) &&
-          (U.normAr(m.name).includes(q) || U.normAr(m.code).includes(q) || U.normAr(m.phone).includes(q))).slice(0, 6);
-        res.innerHTML = hits.length ? hits.map(m => `<div class="att-row">${UI.avatar(m.name)}
-          <div style="flex:1;min-width:0"><div class="t-name">${U.esc(m.name)}</div>
-            <div class="t-sub">${U.esc(m.code)} — ${U.esc(m.phone||'بلا رقم')}</div></div>
-          ${UI.chip(Svc.members.status(m.id).status)}
-          <button class="btn btn-sm btn-primary" data-add="${m.id}">إضافة</button></div>`).join('')
-          : '<div class="t-sub" style="padding:8px 2px">لا نتائج غير ملتحقة</div>';
-        res.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
-          try {
-            const r = await Svc.trainings.enroll(trainingId, b.dataset.add);
-            UI.toast('تمت الإضافة إلى الحصة');
-            (r.warnings||[]).forEach(w => UI.toast(w,'warn',5000));
-          } catch(e){ UI.toast(e.message, e.code === 'FULL' ? 'warn' : 'err', 5000); }
-          render(ov, h);
-        });
-      };
-      const si = ov.querySelector('#enSearch');
-      if (si){ si.oninput = U.debounce(search, 200); }
-      ov.querySelectorAll('[data-out]').forEach(b => b.onclick = async () => {
-        const m = Repos.members.get(b.dataset.out);
-        if (!await UI.confirm({ title:'إلغاء الالتحاق', danger:true, confirmText:'إلغاء الالتحاق',
-          message:`سيُزال اسم ${U.esc(m?m.name:'')} من هذه الحصة. سجل حضورها السابق يبقى كما هو.` })) return;
-        await guard(null, () => Svc.trainings.unenroll(trainingId, b.dataset.out), 'تم إلغاء الالتحاق');
-        render(ov, h);
-      });
-      ov.querySelectorAll('[data-in]').forEach(b => b.onclick = async () => {
-        try {
-          const r = await Svc.attendance.checkIn({ memberId:b.dataset.in, date:today, trainingId });
-          UI.toast('تم تسجيل الحضور');
-          (r.warnings||[]).forEach(w => UI.toast(w,'warn',5000));
-        } catch(e){ UI.toast(e.message, e.code === 'DUPLICATE' ? 'warn' : 'err', 5000); }
-        render(ov, h);
-      });
-    };
-    UI.modal({ title:`الملتحقات — ${t.title} (${t.time})`, size:'wide',
-      body:'<div id="enBody"></div>',
-      footer:`<div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
-      onMount(ov, h){ render(ov, h); },
-      onClose(){ renderRoute(); } });
-  },
+  /* شاشة «الملتحقات» حُذفت مع النموذج الثاني للحصص: الالتحاق صار حجزاً على موعد
+     مؤرَّخ، ويُدار كله من شاشة الحصص (Views.classes). القوائم القديمة رُحّلت حجوزاتٍ
+     على المواعيد القادمة في ترقية v4→v5. */
   /* سجل دفعات أي مستند — يُستدعى من الاشتراكات وملف المشتركة */
   paymentLedger(refType, refId){
     const doc = refType === 'sale' ? Repos.sales.get(refId) : Repos.subs.get(refId);
@@ -10732,17 +10919,24 @@ Object.assign(Screens, {
           ${kpi('المقبوض', Money.fmt(st.paid), `${pmts.filter(x=>!x.archived).length} دفعة`, 'pos')}
           ${kpi('المتبقي', Money.fmt(st.due), st.ar, st.due>0?'neg':'pos')}
         </div>
-        ${pmts.length ? `<table class="tbl"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th>ملاحظات</th><th></th></tr></thead><tbody>
-          ${pmts.map(pm=>`<tr class="${pm.archived?'archived-row':''}"><td class="num">${D.fmt(pm.date)}</td>
+        ${pmts.length ? `<table class="tbl"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th>الوصل</th><th>ملاحظات</th><th></th></tr></thead><tbody>
+          ${pmts.map(pm=>{ const rc = Svc.receipts.forPayment(pm.id);
+            return `<tr class="${pm.archived?'archived-row':''}"><td class="num">${D.fmt(pm.date)}</td>
             <td><strong>${Money.fmt(pm.amount)}</strong></td><td>${U.esc(PayMethods.label(pm.method))}</td>
+            <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">لم يُصدَر</span>'}</td>
             <td class="t-sub">${U.esc(pm.notes||'')}${pm.migrated?' <span class="chip chip-none">مرحّلة</span>':''}</td>
-            <td class="ta-l">${pm.archived?'<span class="t-sub">ملغاة</span>':`<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}">${svg(ICON.trash,14)}</button>`}</td></tr>`).join('')}
-          </tbody></table>` : UI.empty('لا دفعات مسجّلة','هذا المستند غير مدفوع بعد')}`,
+            <td class="ta-l"><div class="t-actions">
+              <button class="btn btn-sm" data-rcp="${pm.id}">${svg(ICON.print,13)} وصل</button>
+              ${pm.archived?'<span class="t-sub">ملغاة</span>':`<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}">${svg(ICON.trash,14)}</button>`}</div></td></tr>`; }).join('')}
+          </tbody></table>
+          <div class="t-sub" style="margin-top:8px">لكل دفعة وصل واحد برقم واحد. إعادة الطباعة تزيد عدّاد النسخ ولا تُنشئ مالاً.</div>`
+          : UI.empty('لا دفعات مسجّلة','هذا المستند غير مدفوع بعد')}`,
       footer:`${st.due>0?'<button class="btn btn-primary" id="plAdd">قبض دفعة</button>':''}
               <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
       onMount(ov, h){
         const add = ov.querySelector('#plAdd');
         if (add) add.onclick = () => { h.close(); Forms.payment(refType, refId); };
+        ov.querySelectorAll('[data-rcp]').forEach(b => b.onclick = () => Actions.printReceiptForPayment(b.dataset.rcp));
         ov.querySelectorAll('[data-delpm]').forEach(b => b.onclick = async () => {
           if (!await UI.confirm({ title:'إلغاء دفعة', danger:true, confirmText:'إلغاء الدفعة',
             message:'سيُحذف سطر الإيراد المقابل لها من المالية ويعود المبلغ مستحقاً.' })) return;
@@ -11056,11 +11250,10 @@ Object.assign(Actions, {
   async wipe(){
     Auth.require('settings.danger');
     const counts = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
-    const labels = { members:'مشتركة', subscriptions:'اشتراك', revenues:'إيراد', expenses:'مصروف', staff:'موظفة',
-      payrolls:'كشف راتب', capital:'حركة رأس مال', partners:'شريك', trainings:'حصة', exercises:'تمرين',
-      media:'ملف وسائط', offers:'عرض', plans:'مدة اشتراك', expenseCategories:'تصنيف', audit:'حدث',
-      payments:'دفعة', products:'صنف', stockMoves:'حركة مخزون', sales:'فاتورة بيع', attendance:'سجل حضور', roles:'دور' };
-    const rows = Object.keys(labels).filter(k => counts[k]).map(k => `<tr><td>${labels[k]}</td><td class="num">${counts[k]}</td></tr>`).join('');
+    /* القائمة تُبنى من كل الجداول لا من قائمة مكتوبة يدوياً: جدول جديد يظهر هنا
+       تلقائياً، ولا يُحذف شيء دون أن تراه صاحبة النادي قبل الحذف. */
+    const rows = STORE_NAMES.filter(k => k !== 'meta' && counts[k])
+      .map(k => `<tr><td>${U.esc(storeLabel(k))}</td><td class="num">${counts[k]}</td></tr>`).join('');
     const total = Object.entries(counts).filter(([k]) => k !== 'meta').reduce((a,[,v]) => a+v, 0);
     if (!total){ UI.toast('البرنامج فارغ أصلاً','warn'); return; }
     const ok1 = await UI.confirm({ title:'إعادة تهيئة كاملة', danger:true, confirmText:'متابعة',
@@ -11109,9 +11302,10 @@ Object.assign(Actions, {
       message:`سيُخفى «${U.esc(p.name)}» من شاشة البيع${qty?` مع بقاء رصيده (${U.round2(qty)} ${U.esc(p.unit||'')}) وحركاته في السجل`:''}. يمكن استرجاعه لاحقاً.` })) return;
     await Svc.inventory.archiveProduct(id, true); UI.toast('تمت أرشفة الصنف'); renderRoute();
   },
-  async checkIn(memberId, date, trainingId){
+  /* الوسيط الثالث موعد مؤرَّخ (sessionId) لا قالب: حضور الحصة يُنسب إلى يومها */
+  async checkIn(memberId, date, sessionId){
     try {
-      const res = await Svc.attendance.checkIn({ memberId, date, trainingId: trainingId || null });
+      const res = await Svc.attendance.checkIn({ memberId, date, sessionId: sessionId || null });
       const m = Repos.members.get(memberId);
       UI.toast(`تم تسجيل حضور ${m?m.name:''}`);
       (res.warnings||[]).forEach(w => UI.toast(w,'warn',6000));
@@ -11496,7 +11690,8 @@ async function bootSafely(){
 }
 
 /* واجهة مكشوفة للاختبار الآلي وللصيانة من Console */
-window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, Backup, Seed, Audit, Migrations, Integrity, Exporter,
+window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, PayMethods, Backup, Seed, Audit, Migrations, Integrity, Exporter,
+              STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
