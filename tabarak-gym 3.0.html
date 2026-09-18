@@ -558,6 +558,27 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
   .card-head .sp{flex-basis:100%;height:0}
 }
 
+/* ------------------------- مساحة اللمس على الشاشات اللمسية -------------------
+   سطح المكتب يبقى كما هو بالضبط: هذه القاعدة لا تنطبق إلا على مؤشّر خشن
+   (إصبع أو قلم). الأزرار الصغيرة في الجداول كانت 27–29 بكسل ارتفاعاً — يكفي
+   للفأرة ولا يكفي للإصبع، وخطؤه ليس ضغطة ضائعة بل ضغطة على الزر المجاور:
+   «حذف» بدل «تعديل» في صفٍّ مالي. الحدّ الأدنى المريح 32 بكسل، فتُمنح
+   الأزرار إيّاه بالحشو لا بتكبير الخط، فلا يتغيّر شكل الجدول على المكتب. */
+@media (pointer: coarse){
+  .btn{min-height:40px}
+  .btn-sm{min-height:34px;padding:7px 12px}
+  .btn-icon{min-height:34px;min-width:34px;padding:8px}
+  .btn-sm.btn-icon{min-height:34px;min-width:34px}
+  /* أزرار الصفوف تتباعد قليلاً حتى لا تتلامس مساحات اللمس */
+  .t-actions{gap:8px}
+  .side-foot button{min-height:32px;padding:6px 8px}
+  /* حقول النماذج نفسها: الكتابة على اللمس تبدأ بضغطة على الحقل */
+  .inp{min-height:38px}
+  select.inp{min-height:38px}
+  /* خانة الاختيار في قوائم المراجعة والإقرار */
+  .switch input[type=checkbox]{width:18px;height:18px}
+}
+
 </style>
 </head>
 <body>
@@ -5022,20 +5043,25 @@ Svc.distributions = {
     const partner = Repos.partners.get(partnerId);
     const pct = Number(partner && partner.sharePercent) || 0;
     const rows = months.map(k => {
-      const p = Svc.periods.get(k) || Svc.periods.profitOf(k);
-      return { key:k, net:U.round2(p.net), share:U.round2(Math.max(0, Calc.partnerShare(p.net, pct))) };
+      const closed = Svc.periods.get(k);
+      const p = closed || Svc.periods.profitOf(k);
+      /* الشهر غير المقفل يُعلَّم: التوزيع منه ممنوع أصلاً، فيُقال ذلك في مكانه
+         بدل أن يظهر سطراً عادياً تُكتب فيه أرقام ثم يُرفض الحفظ كله. */
+      return { key:k, net:U.round2(p.net), closed:!!closed,
+               share:U.round2(Math.max(0, Calc.partnerShare(p.net, pct))) };
     });
     const base = U.sum(rows, r => r.share);
     /* لا نصيب موجب في أي شهر (خسارة أو صفر)؟ لا نسبة يُقاس عليها، فيُقسم بالتساوي */
     const weights = base > 0 ? rows.map(r => r.share / base) : rows.map(() => 1 / rows.length);
-    const out = rows.map((r, i) => ({ key:r.key, net:r.net, share:U.round2(Calc.partnerShare(r.net, pct)),
-      amount:U.round2(total * weights[i]) }));
-    return this.balanceAllocations(out, total);
+    const out = rows.map((r, i) => ({ key:r.key, net:r.net, closed:r.closed,
+      share:U.round2(Calc.partnerShare(r.net, pct)), amount:U.round2(total * weights[i]) }));
+    return this.balanceAllocations(out, total).map((a, i) => Object.assign(a, { closed:rows[i].closed }));
   },
   /* يجعل المجموع مطابقاً للمبلغ تماماً: الباقي يُضاف إلى أكبر سطر (أو أوّله) */
   balanceAllocations(rows, total){
     const list = (rows || []).map(x => ({ key:String(x.key), net:U.round2(Number(x.net) || 0),
       share:U.round2(Number(x.share) || 0), amount:U.round2(Math.max(0, Money.clean(x.amount) || 0)) }));
+    /* الحفظ لا يحمل إلا ما يلزم: المفتاح والمبلغ ورقما الفترة — لا أعلام عرض */
     if (!list.length) return list;
     const t = U.round2(Number(total) || 0);
     const sum = U.round2(U.sum(list, x => x.amount));
@@ -12890,17 +12916,22 @@ Forms.distribution = function(partnerId){
         if (rows.length <= 1){ box.innerHTML = ''; return; }
         const sum = U.round2(U.sum(rows, r => r.amount));
         const diff = U.round2((Number(amount) || 0) - sum);
+        const open = rows.filter(r => r.closed === false);
         box.innerHTML = `<div class="card" style="background:var(--surface-2)"><div class="card-body" style="padding:12px 14px">
           <h4 style="font-size:13px;margin:0 0 8px">كم من هذا المبلغ يخصّ كل شهر؟</h4>
           <table class="mini-tbl"><thead><tr><th>الشهر</th><th>نصيبها فيه</th><th>المخصَّص</th></tr></thead><tbody>
-          ${rows.map(r => `<tr><td>${U.esc(D.monthName(r.key))}</td>
+          ${rows.map(r => `<tr><td>${U.esc(D.monthName(r.key))}
+              ${r.closed === false ? ' <span class="pill warn">غير مقفلة</span>' : ''}</td>
             <td class="num t-sub">${Money.fmt(r.share || 0)}</td>
-            <td><input class="inp num" data-alk="${U.esc(r.key)}" type="number" min="0" step="any" value="${U.esc(r.amount)}"></td></tr>`).join('')}
+            <td><input class="inp num" data-alk="${U.esc(r.key)}" type="number" min="0" step="any"
+              value="${U.esc(r.amount)}" ${r.closed === false ? 'disabled' : ''}></td></tr>`).join('')}
           </tbody><tfoot><tr><th colspan="2">المجموع</th>
             <th class="num ${Math.abs(diff) > 0.01 ? 'money-neg' : 'money-pos'}" id="dsAllocSum">${Money.fmt(sum)}</th></tr></tfoot></table>
-          <div class="t-sub" style="margin-top:6px" id="dsAllocNote">${Math.abs(diff) > 0.01
-            ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
-            : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.'}</div>
+          <div class="t-sub" style="margin-top:6px" id="dsAllocNote">${open.length
+            ? `<span class="err">${open.map(r => D.monthName(r.key)).join('، ')} داخل الفترة ولم تُقفل بعد — أقفليها أولاً، فلا يُوزَّع من رقم ما زال يتحرّك.</span>`
+            : Math.abs(diff) > 0.01
+              ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
+              : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.'}</div>
         </div></div>`;
         box.querySelectorAll('[data-alk]').forEach(inp => inp.oninput = () => { manual = true; refresh(true); });
       };
@@ -12927,12 +12958,15 @@ Forms.distribution = function(partnerId){
         const sum = U.round2(U.sum(rows, r => r.amount));
         const diff = U.round2(amount - sum);
         const sumEl = box.querySelector('#dsAllocSum'), noteEl = box.querySelector('#dsAllocNote');
+        const open = proposed.filter(r => r.closed === false);
         if (sumEl){
           sumEl.textContent = Money.fmt(sum);
           sumEl.className = 'num ' + (Math.abs(diff) > 0.01 ? 'money-neg' : 'money-pos');
-          noteEl.innerHTML = Math.abs(diff) > 0.01
-            ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
-            : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.';
+          noteEl.innerHTML = open.length
+            ? `<span class="err">${open.map(r => D.monthName(r.key)).join('، ')} داخل الفترة ولم تُقفل بعد — أقفليها أولاً، فلا يُوزَّع من رقم ما زال يتحرّك.</span>`
+            : Math.abs(diff) > 0.01
+              ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
+              : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.';
         }
       };
       ['partnerId','periodFrom','periodTo'].forEach(n => { g(n).onchange = () => { manual = false; refresh(false); }; });
@@ -12944,6 +12978,8 @@ Forms.distribution = function(partnerId){
         d.periodTo = D.endOfMonth(d.periodTo);
         const rows = readAlloc();
         if (rows.length > 1) d.allocations = rows;
+        /* شهر غير مقفل داخل الفترة: الرسالة تُقال هنا بلغة الشاشة قبل أن يردّها
+           التحقّق برسالة أعمّ — والمستخدمة تعرف بالضبط أي شهر توقفها. */
         const res = await guard(scope, () => Svc.distributions.create(d));
         if (!res) return;
         (res.warnings || []).forEach(w => UI.toast(w, 'warn', 7000));

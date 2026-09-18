@@ -1061,7 +1061,31 @@ window.TGTests = (() => {
     ok('الكشف المطبوع يشرح التوزيع القديم',
        T().Print.partnerStatementHtml(partner.id).includes('لم يُقسَم تخميناً'));
 
-    /* 9) ثابت عام: لا توزيع في القاعدة كلها مجموع تفصيله يخالف مبلغه */
+    /* 9) الشهر غير المقفل داخل فترة ممتدّة: يُعلَّم في الاقتراح ولا يُوزَّع منه.
+       (وُجد في مراجعة المتصفح: الاقتراح كان يعرضه سطراً عادياً تُكتب فيه أرقام
+        ثم يُرفض الحفظ كله برسالة أعمّ من أن تقول أي شهر أوقفها.) */
+    const openKey = D.monthsBack(13)[0];
+    if (Svc.periods.isClosed(openKey)) await Svc.periods.reopen(openKey, 'اختبار').catch(() => {});
+    const spanned = Svc.distributions.proposeAllocations(partner.id,
+      D.startOfMonth(openKey), D.endOfMonth(keys[2]), 50000);
+    ok('الاقتراح يعلّم الشهر غير المقفل',
+       spanned.some(a => a.key === openKey && a.closed === false),
+       JSON.stringify(spanned.map(a => [a.key, a.closed])));
+    ok('الاقتراح يعلّم الأشهر المقفلة كذلك',
+       spanned.filter(a => keys.includes(a.key)).every(a => a.closed === true));
+    eq('اقتراح الفترة الممتدّة يبقى مجموعه = المبلغ',
+       U.round2(U.sum(spanned, a => a.amount)), 50000);
+    let openBlocked = false;
+    try { await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(openKey),
+      periodTo:D.endOfMonth(keys[2]), amount:50000, date:D.today(), method:'cash' }); }
+    catch(e){ openBlocked = e.code === 'VALIDATION'; }
+    ok('لا يُوزَّع من فترة فيها شهر غير مقفل', openBlocked);
+    /* وعلم العرض لا يُخزَّن: السجل يحمل ما يلزم وحده */
+    ok('التفصيل المحفوظ لا يحمل أعلام عرض',
+       Svc.distributions.allocationsOf(Repos.distributions.list(true)
+         .find(d => Svc.distributions.allocationsOf(d).length)).every(a => !('closed' in a)));
+
+    /* 10) ثابت عام: لا توزيع في القاعدة كلها مجموع تفصيله يخالف مبلغه */
     const drift = Repos.distributions.list(true).filter(d => {
       const al = Svc.distributions.allocationsOf(d);
       return al.length && Math.abs(U.round2(U.sum(al, a => a.amount) - d.amount)) > 0.009;

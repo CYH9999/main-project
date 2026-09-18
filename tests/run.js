@@ -1269,6 +1269,72 @@ group('قبول الواجهة والخصوصية', async (browser, url) => {
   record('قبول الواجهة والخصوصية', rows, errors);
 });
 
+/* شاشة لمس: المؤشّر خشن، فيجب أن تبلغ مساحات الضغط حدّها المريح.
+   وخطأ الإصبع على زرٍّ صغير في صفٍّ مالي ليس ضغطة ضائعة — بل ضغطة على
+   الزر المجاور: «حذف» بدل «تعديل». وفي الوقت نفسه: المكتب لا يتغيّر. */
+group('مساحة اللمس', async (browser, url) => {
+  const rows = [];
+  const touchCtx = await browser.newContext({ viewport:{ width:820, height:1180 }, hasTouch:true });
+  const tp = await touchCtx.newPage();
+  const errors = [];
+  tp.on('pageerror', e => errors.push(String(e.message)));
+  await tp.goto(url, { waitUntil:'domcontentloaded' });
+  await tp.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await tp.evaluate(() => window.TG.ready);
+  await tp.evaluate(() => window.TG.Seed.loadDemo(20));
+  const touch = await tp.evaluate(async () => {
+    const small = [];
+    const routes = [['الاستقبال','desk'], ['المشتركات','members'], ['المبيعات','pos'],
+      ['المخزون','inventory'], ['المشتريات','inventory',{tab:'purchases'}],
+      ['الموردون','inventory',{tab:'suppliers'}], ['الصندوق اليومي','finance',{tab:'cash'}],
+      ['رأس المال','finance',{tab:'capital'}], ['الشركاء','finance',{tab:'partners'}],
+      ['المستحقات','finance',{tab:'dues'}]];
+    for (const [label, r, p] of routes){
+      if (p && p.tab && r === 'finance') window.TG.State.f.financeTab = p.tab;
+      window.TG.go(r, p || undefined); window.TG.renderRoute();
+      await new Promise(x => setTimeout(x, 120));
+      document.querySelectorAll('#viewRoot button, #viewRoot .btn, .topbar button, .side-foot button').forEach(b => {
+        const rc = b.getBoundingClientRect();
+        if (!rc.height || !rc.width) return;
+        if (rc.height < 32) small.push({ label, t:b.textContent.trim().slice(0, 16), h:Math.round(rc.height) });
+      });
+    }
+    /* نماذج المرحلة الثانية أيضاً: الحقول تُضغط بالإصبع قبل أن تُملأ */
+    window.TG.Forms.capital();
+    await new Promise(x => setTimeout(x, 200));
+    const ov = document.querySelector('.ov,.modal,.overlay');
+    const fields = [...ov.querySelectorAll('.inp')].filter(i => i.getBoundingClientRect().height < 34)
+      .map(i => i.name || i.id);
+    return { coarse:matchMedia('(pointer: coarse)').matches, small:small.slice(0, 10),
+             count:small.length, fields:fields.slice(0, 6), fieldCount:fields.length };
+  });
+  rows.push({ name:'الشاشة اللمسية تُعرَّف مؤشّراً خشناً', pass:touch.coarse, detail:String(touch.coarse) });
+  rows.push({ name:'لا زر تحت 32 بكسل على اللمس', pass:touch.count === 0,
+              detail:JSON.stringify(touch.small) });
+  rows.push({ name:'حقول النماذج تبلغ مساحة اللمس', pass:touch.fieldCount === 0,
+              detail:JSON.stringify(touch.fields) });
+  await touchCtx.close();
+
+  /* المكتب لا يتغيّر: القاعدة كلها داخل (pointer: coarse) */
+  const deskCtx = await browser.newContext({ viewport:{ width:1440, height:960 } });
+  const dp = await deskCtx.newPage();
+  await dp.goto(url, { waitUntil:'domcontentloaded' });
+  await dp.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await dp.evaluate(() => window.TG.ready);
+  await dp.evaluate(() => window.TG.Seed.loadDemo(15));
+  const desk = await dp.evaluate(() => {
+    window.TG.go('members'); window.TG.renderRoute();
+    const b = document.querySelector('#viewRoot .btn.btn-sm');
+    return { coarse:matchMedia('(pointer: coarse)').matches,
+             h: b ? Math.round(b.getBoundingClientRect().height) : null };
+  });
+  rows.push({ name:'المكتب يبقى بمؤشّر دقيق', pass:desk.coarse === false, detail:String(desk.coarse) });
+  rows.push({ name:'زر الجدول على المكتب لم يتضخّم', pass:desk.h != null && desk.h < 32,
+              detail:`ارتفاع=${desk.h}` });
+  await deskCtx.close();
+  record('مساحة اللمس', rows, errors);
+});
+
 group('العرض الضيّق', async (browser, url) => {
   const ctx0 = await browser.newContext({ viewport:{ width:390, height:844 } });
   const page = await ctx0.newPage();
@@ -1283,8 +1349,11 @@ group('العرض الضيّق', async (browser, url) => {
     const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const screens = [['الاستقبال','desk'], ['المشتركات','members'], ['لوحة التحكم','dashboard'],
       ['الحسابات','finance',{tab:'revenues'}], ['الصندوق اليومي','finance',{tab:'cash'}],
-      ['الشركاء والأرباح','finance',{tab:'partners'}], ['التقارير','reports'], ['الإعدادات','settings']];
+      ['الشركاء والأرباح','finance',{tab:'partners'}], ['المستحقات','finance',{tab:'dues'}],
+      ['رأس المال','finance',{tab:'capital'}], ['المشتريات','inventory',{tab:'purchases'}],
+      ['الموردون','inventory',{tab:'suppliers'}], ['التقارير','reports'], ['الإعدادات','settings']];
     for (const [name, r, p] of screens){
+      if (p && p.tab && r === 'finance') window.TG.State.f.financeTab = p.tab;
       window.TG.go(r, p || undefined); window.TG.renderRoute();
       await new Promise(x => setTimeout(x, 140));
       const de = document.documentElement;
