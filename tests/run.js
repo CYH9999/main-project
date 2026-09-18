@@ -193,6 +193,18 @@ group('الإقفال المُعان', async (browser, url) => {
   record('الإقفال المُعان', rows, errors);
 });
 
+group('سلامة بيانات دورة الشراء', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.integrityP2();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('سلامة بيانات دورة الشراء', rows, errors);
+});
+
 group('نموذج الحصص', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {

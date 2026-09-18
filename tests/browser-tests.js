@@ -380,17 +380,117 @@ window.TGTests = (() => {
 
   /* ========================= 5) البيانات التجريبية ========================= */
   async function demo(){
-    const { Seed, DB, STORE_NAMES, Settings } = T();
+    const { Seed, DB, STORE_NAMES, Settings, Repos, Svc, U, Integrity, PayMethods } = T();
     await Seed.loadDemo(20);
     const after = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
     ok('البيانات التجريبية تُحمَّل', after.members > 0 && after.payments > 0, JSON.stringify({ m:after.members, p:after.payments }));
     ok('البيانات التجريبية تملأ جداول الإصدار الرابع أيضاً',
        after.classSessions > 0 && after.bookings > 0 && after.receipts >= 0,
        JSON.stringify({ s:after.classSessions, b:after.bookings }));
+    /* البيانات التجريبية تُري القواعد بعينها لا بشرحها: طرق مختلفة لرأس المال،
+       ومستند مسدَّد بالكامل وآخر جزئياً، وفترة مقفلة عليها توزيع مفصَّل. */
+    const caps = Repos.capital.list();
+    ok('البيانات التجريبية تعرض رأس مال بطرق مختلفة',
+       new Set(caps.map(c => c.method)).size >= 2, JSON.stringify(caps.map(c => c.method)));
+    ok('كل حركة رأس مال تجريبية تحمل طريقة معروفة',
+       caps.every(c => c.method && c.method !== PayMethods.UNKNOWN_KEY));
+    const purs = Svc.purchases.posted();
+    ok('البيانات التجريبية تعرض مستندات شراء مُرحَّلة', purs.length >= 2, purs.length);
+    ok('البيانات التجريبية تعرض مستنداً مسدَّداً بالكامل وآخر جزئياً',
+       purs.some(p => Svc.purchases.balance(p).due <= 0.009)
+       && purs.some(p => Svc.purchases.balance(p).due > 0.009),
+       JSON.stringify(purs.map(p => Svc.purchases.balance(p).due)));
+    ok('مشتريات البيانات التجريبية دخلت المخزن',
+       Repos.stockMoves.list().some(m => m.refType === 'purchase'));
+    ok('لكل مستند تجريبي مُرحَّل مصروف واحد لا أكثر',
+       purs.every(p => Repos.expenses.list(true).filter(e => e.refType === 'purchase' && e.refId === p.id).length === 1));
+    const dists = Repos.distributions.list();
+    ok('توزيعات البيانات التجريبية مفصَّلة بالأشهر',
+       !dists.length || dists.every(d => U.round2(U.sum(Svc.distributions.allocationsOf(d), a => a.amount)) === U.round2(d.amount)),
+       dists.length);
+    ok('البيانات التجريبية لا تترك خللاً في سلامة البيانات',
+       Integrity.scan().filter(x => !/وسائط غير مستعملة/.test(x.type)).length === 0,
+       JSON.stringify(Integrity.scan().filter(x => !/وسائط غير مستعملة/.test(x.type)).slice(0, 4)));
+
     await Seed.clearDemo();
     const left = STORE_NAMES.filter(s => DB.all(s).some(r => r.isDemo));
     ok('حذف البيانات التجريبية لا يترك سجلاً تجريبياً في أي جدول', !left.length, left.join('، '));
+    ok('حذف البيانات التجريبية يمسح مستندات الشراء ودفعاتها',
+       DB.count('purchases') === 0 && DB.count('purchasePayments') === 0,
+       `${DB.count('purchases')}/${DB.count('purchasePayments')}`);
+    ok('لا يبقى مصروف لمستند شراء محذوف',
+       !Repos.expenses.list(true).some(e => e.refType === 'purchase'));
+    ok('لا تبقى حركة مخزون لمستند شراء محذوف',
+       !Repos.stockMoves.list(true).some(m => m.refType === 'purchase'));
+    ok('حذف البيانات التجريبية لا يترك سجلاً يتيماً',
+       Integrity.scan().filter(x => /بلا |يتيم|محذوف/.test(x.type)).length === 0,
+       JSON.stringify(Integrity.scan().slice(0, 4)));
     ok('علم البيانات التجريبية يعود صفراً', Settings.get('demoLoaded') === false);
+    return results;
+  }
+
+  /* ============ سلامة البيانات: يتامى دورة الشراء والتوزيع ============
+     الميزة الجديدة لا تكتمل إن تركت مراجع مكسورة. هنا تُكسَر عمداً ثم يُتحقّق
+     من أن الفحص يراها وأن الإصلاح لا يمسّ سليماً. */
+  async function integrityP2(){
+    const { Svc, Repos, DB, Integrity, D, U } = T();
+    const sup = await Svc.suppliers.save(null, { name:'مورّد السلامة' });
+    const { rec: prod } = await Svc.inventory.saveProduct(null, { name:'صنف السلامة', price:2000, cost:800 });
+    const a = await Svc.purchases.save(null, { supplierId:sup.id, date:D.today(),
+      lines:[{ productId:prod.id, qty:4, unitCost:800 }] });
+    await Svc.purchases.post(a.rec.id);
+    await Svc.purchases.addPayment({ purchaseId:a.rec.id, date:D.today(), amount:1000, method:'cash' });
+    ok('القاعدة سليمة قبل الكسر',
+       Integrity.scan().filter(x => /شراء|مورّد|توزيع/.test(x.type)).length === 0);
+
+    /* 1) دفعة مورّد بلا مستند */
+    const orphanPay = await Repos.purchasePayments.create({ purchaseId:'pur_missing', supplierId:sup.id,
+      date:D.today(), amount:500, method:'cash', notes:'' });
+    ok('الفحص يكشف دفعة مورّد بلا مستند',
+       Integrity.scan().some(x => x.type === 'دفعة مورّد بلا مستند شراء' && x.id === orphanPay.id));
+
+    /* 2) مستند بلا مورّد */
+    const noSup = await Repos.purchases.create({ code:'ش99999', supplierId:'sup_missing', date:D.today(),
+      lines:[], subtotal:0, discount:0, total:0, items:0, status:'draft', expenseId:null, notes:'' });
+    ok('الفحص يكشف مستند شراء بلا مورّد',
+       Integrity.scan().some(x => x.type === 'مستند شراء بلا مورّد' && x.id === noSup.id));
+
+    /* 3) مصروف مستند بلا مستند */
+    const posted = Repos.purchases.get(a.rec.id);
+    await DB.remove('purchases', posted.id);
+    const sc = Integrity.scan();
+    ok('الفحص يكشف مصروف مستند شراء بلا مستند',
+       sc.some(x => x.type === 'مصروف مستند شراء بلا مستند' && x.id === posted.expenseId));
+    ok('الفحص يكشف حركة مخزون لمستند محذوف',
+       sc.some(x => x.type === 'حركة مخزون لمستند شراء محذوف'));
+
+    /* 4) تفصيل توزيع يخالف مبلغه — والإصلاح يعيد ضبطه بلا مسّ الإجمالي */
+    const partner = await Repos.partners.create({ name:'شريكة السلامة', sharePercent:40 });
+    const k = D.monthsBack(10)[0];
+    if (!Svc.periods.isClosed(k)) await Svc.periods.close(k).catch(() => {});
+    const bad = await Repos.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(k),
+      periodTo:D.endOfMonth(k), amount:30000, date:D.today(), method:'cash',
+      allocations:[{ key:k, net:0, share:0, amount:11111 }] });
+    ok('الفحص يكشف تفصيلاً لا يساوي مبلغه',
+       Integrity.scan().some(x => x.type === 'تفصيل توزيع لا يساوي مبلغه' && x.id === bad.id));
+    await Integrity.repair();
+    const fixed = Repos.distributions.get(bad.id);
+    ok('الإصلاح لا يمسّ مبلغ التوزيع', fixed && U.round2(fixed.amount) === 30000, fixed && fixed.amount);
+    ok('الإصلاح يُغلق ثابت التفصيل',
+       U.round2(U.sum(Svc.distributions.allocationsOf(fixed), x => x.amount)) === 30000,
+       JSON.stringify(Svc.distributions.allocationsOf(fixed)));
+    ok('الإصلاح يزيل اليتامى', !Integrity.scan().some(x => x.type === 'دفعة مورّد بلا مستند شراء'));
+    ok('الإصلاح يفكّ رابط مصروف المستند المحذوف',
+       !Integrity.scan().some(x => x.type === 'مصروف مستند شراء بلا مستند'));
+    /* الحدّ الذي لا يتجاوزه الإصلاح التلقائي: مستند الشراء نفسه لا يُحذف.
+       قد يكون مُرحَّلاً بمخزونٍ ومصروفٍ خلفه، وحذفه صامتاً يمحو تاريخاً مالياً
+       أكبر من الخلل. يبقى معروضاً للمراجعة بقرار إنسان — كما «اشتراك مقبوض
+       أكثر من سعره» تماماً. */
+    const left = Integrity.scan().filter(x => /شراء|مورّد|توزيع/.test(x.type));
+    ok('الإصلاح لا يحذف مستند شراء صامتاً — يُعرض للمراجعة',
+       left.length === 1 && left[0].type === 'مستند شراء بلا مورّد' && left[0].fix === 'none',
+       JSON.stringify(left.slice(0, 3)));
+    ok('المستند المعروض للمراجعة ما زال موجوداً لم يُمحَ', !!Repos.purchases.get(noSup.id));
     return results;
   }
 
@@ -1323,7 +1423,7 @@ window.TGTests = (() => {
     reset(){ results = []; },
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
-    capitalMethods, purchases, allocations, periodClose,
+    capitalMethods, purchases, allocations, periodClose, integrityP2,
     writeProbe, probeExists, totals, endDates, downgrade
   };
 })();
