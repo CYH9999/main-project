@@ -601,6 +601,236 @@ group('المسار الحرج الكامل للمرحلة الأولى', async 
   record('المسار الحرج الكامل للمرحلة الأولى', rows, errors);
 });
 
+/* =================== المسار الحرج الكامل للمرحلة الثانية ===================
+   يومٌ حقيقي من أوّله: مشتركة تدفع وتتمرّن، وبضاعة تُشترى من مورّد وتُسدَّد
+   جزئياً، ورأس مال يدخل نقداً ثم بتحويل، وفترة تُراجَع وتُقفَل، وأرباح تُوزَّع
+   بتفصيل الأشهر. ثم نسخة احتياطية وإعادة تحميل حقيقية واستعادة وفحص سلامة.
+   كل خطوة تُقاس بأثرها في الأرقام لا بنجاح استدعائها.
+   ======================================================================== */
+group('المسار الحرج الكامل للمرحلة الثانية', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+
+  const state = await runIn(page, async () => {
+    const { Svc, Repos, D, U, Calc, Actions, PayMethods } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const eq = (name, got, want, note) => ok(name, U.round2(got) === U.round2(want),
+      `got=${got} want=${want}${note ? ' — ' + note : ''}`);
+    const today = D.today();
+
+    /* 1-5) المشتركة: اشتراك ⇐ قبض ⇐ وصل */
+    const { rec: m } = await Svc.members.create({ name:'سما الجبوري', phone:'07701239876' });
+    ok('1. مشتركة تُنشأ بكودها', !!m.id && !!m.code, m.code);
+    const { rec: sub } = await Svc.subs.create({ memberId:m.id, startDate:today,
+      customDuration:{ value:3, unit:'month' }, price:300000, paidAmount:0 });
+    ok('2. اشتراك ثلاثة أشهر بمستحقّه كاملاً', Svc.subs.balance(sub).total === 300000);
+    const pm = await Svc.payments.add({ refType:'subscription', refId:sub.id, memberId:m.id,
+      date:today, amount:180000, method:'cash' });
+    const sbal = Svc.subs.balance(Repos.subs.get(sub.id));
+    ok('3. قبض جزئي: المقبوض 180 والمتبقّي 120', sbal.paid === 180000 && sbal.due === 120000, JSON.stringify(sbal));
+    const realOpen = window.open; window.open = () => null;
+    const rc = await Actions.saveAndPrintReceipt(pm.id, 'تم القبض');
+    window.open = realOpen;
+    ok('4. وصل مرقّم يُصدَر للدفعة', !!rc && !!rc.no, rc && rc.no);
+    const att = await Svc.attendance.checkIn({ memberId:m.id, method:'staff' });
+    ok('5. حضور المشتركة يُسجَّل', !!(att.rec || att).id);
+
+    /* 6-11) المورّد: مستند شراء بسطور ⇐ مخزون ⇐ تكلفة ⇐ تسديد جزئي ⇐ متبقٍّ */
+    const sup = await Svc.suppliers.save(null, { name:'مورّد المسار الحرج', phone:'07811223344',
+      contact:'أبو زينب', email:'m@example.com' });
+    ok('6. المورّد يُنشأ ببياناته', !!sup.id, sup.name);
+    const { rec: pa } = await Svc.inventory.saveProduct(null, { name:'بروتين المسار', price:40000, cost:20000, openingQty:5 });
+    const { rec: pb } = await Svc.inventory.saveProduct(null, { name:'شيكر المسار', price:8000, cost:3000 });
+    const qa0 = Svc.inventory.onHand(pa.id), qb0 = Svc.inventory.onHand(pb.id);
+    const costA0 = Repos.products.get(pa.id).cost;
+    const expBefore = Calc.expenses(Repos.expenses.list(), today, today);
+    const drawerBefore = Svc.cashbook.expected(today).expected;
+    const liqBefore = Svc.finance.liquidity();
+
+    const pur = await Svc.purchases.save(null, { supplierId:sup.id, date:today, invoiceNo:'CR-7',
+      lines:[{ productId:pa.id, qty:10, unitCost:22000 }, { productId:pb.id, qty:20, unitCost:3500 }] });
+    eq('7. إجمالي مستند الشراء = مجموع سطوره', pur.rec.total, 290000);
+    await Svc.purchases.post(pur.rec.id);
+    eq('8. الترحيل يُدخل الصنف الأول للمخزن', Svc.inventory.onHand(pa.id), U.round2(qa0 + 10));
+    eq('8ب. الترحيل يُدخل الصنف الثاني للمخزن', Svc.inventory.onHand(pb.id), U.round2(qb0 + 20));
+    eq('9. رصيد المخزن = مجموع حركاته', Svc.inventory.onHand(pa.id),
+       Calc.onHand(Repos.stockMoves.list().filter(x => x.productId === pa.id)));
+    eq('10. التكلفة تُسجَّل مرة واحدة بكامل المستند',
+       U.round2(Calc.expenses(Repos.expenses.list(), today, today) - expBefore), 290000);
+    eq('10ب. متوسط التكلفة المرجّح يُحدَّث', Repos.products.get(pa.id).cost,
+       U.round2((qa0 * costA0 + 10 * 22000) / (qa0 + 10)));
+    eq('11. الترحيل وحده لا يخرج من الدرج', Svc.cashbook.expected(today).expected, drawerBefore);
+    eq('11ب. ما لم يُدفع يعود إلى السيولة', Svc.finance.liquidity(), liqBefore);
+
+    await Svc.purchases.addPayment({ purchaseId:pur.rec.id, date:today, amount:100000, method:'cash' });
+    const pbal = Svc.purchases.balance(Repos.purchases.get(pur.rec.id));
+    eq('12. التسديد الجزئي: المدفوع 100', pbal.paid, 100000);
+    eq('12ب. المتبقّي للمورّد 190', pbal.due, 190000);
+    eq('12ج. النقد يخرج من الدرج بالمدفوع فقط', Svc.cashbook.expected(today).expected,
+       U.round2(drawerBefore - 100000));
+    eq('12د. التسديد لا يُنشئ مصروفاً ثانياً',
+       U.round2(Calc.expenses(Repos.expenses.list(), today, today) - expBefore), 290000);
+    const sst = Svc.purchases.statement(sup.id);
+    eq('13. كشف المورّد: المتبقّي يطابق المستند', sst.due, 190000);
+
+    /* 14-17) رأس المال: نقد ثم تحويل، والدرج يفرّق بينهما */
+    const d0 = Svc.cashbook.expected(today).expected, l0 = Svc.finance.liquidity();
+    const rev0 = Calc.revenue(Repos.revenues.list(), today, today);
+    await Svc.finance.addCapital({ date:today, amount:400000, type:'injection',
+      method:'cash', description:'ضخّ نقدي — المسار الحرج' });
+    eq('14. الضخّ النقدي يزيد الدرج', Svc.cashbook.expected(today).expected, U.round2(d0 + 400000));
+    eq('14ب. الضخّ ليس إيراداً', Calc.revenue(Repos.revenues.list(), today, today), rev0);
+    const d1 = Svc.cashbook.expected(today).expected;
+    await Svc.finance.addCapital({ date:today, amount:600000, type:'injection',
+      method:'transfer', description:'ضخّ بتحويل — المسار الحرج' });
+    eq('15. الضخّ بتحويل لا يمسّ الدرج', Svc.cashbook.expected(today).expected, d1);
+    eq('15ب. الضخّ بتحويل يزيد السيولة', Svc.finance.liquidity(), U.round2(l0 + 1000000));
+    const prev = Svc.cashbook.preview(today);
+    eq('16. المتوقّع = الافتتاحي + الداخل − الخارج', prev.expected,
+       U.round2(prev.opening + prev.cashIn - prev.cashOut));
+    ok('17. كشف اليوم المطبوع يُولَّد', (window.TG.Print.cashDayHtml(today) || '').includes('كشف الصندوق اليومي'));
+
+    /* 18-21) الفترة: مراجعة ⇐ إقفال ⇐ تفصيل توزيع */
+    const key = D.monthsBack(4)[0];
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+    if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'تهيئة المسار').catch(() => {});
+    const cat = Repos.expCats.list()[0];
+    await Svc.finance.addRevenue({ date:from, amount:800000, source:'service',
+      description:'إيراد المسار الحرج', method:'cash' });
+    await Svc.finance.addExpense({ date:from, amount:300000, categoryId:cat.id,
+      description:'مصروف المسار الحرج', method:'cash' });
+    const ck = Svc.periods.checklist(key);
+    ok('18. قائمة ما قبل الإقفال تُبنى بأقسامها الثلاثة',
+       Array.isArray(ck.blocking) && Array.isArray(ck.warnings) && Array.isArray(ck.info));
+    eq('18ب. الملخّص: صافي الربح = الإيراد − المصروف', ck.summary.net,
+       U.round2(ck.summary.revenue - ck.summary.expense));
+    const closed = await Svc.periods.close(key);
+    ok('19. الفترة تُقفل ويُثبَّت ربحها', Svc.periods.isClosed(key) && typeof closed.net === 'number', closed.net);
+
+    const partner = Repos.partners.list()[0] || await Repos.partners.create({ name:'شريكة المسار', sharePercent:50 });
+    const ent = Svc.distributions.entitlement(partner.id, from, to);
+    const cashB = Svc.finance.liquidity();
+    const profitB = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to);
+    const amount = Math.max(1000, U.round2(ent.share / 2));
+    const dist = await Svc.distributions.create({ partnerId:partner.id, periodFrom:from, periodTo:to,
+      amount, date:today, method:'cash' });
+    const alloc = Svc.distributions.allocationsOf(dist.rec);
+    eq('20. مجموع تفصيل التوزيع = مبلغه', U.round2(U.sum(alloc, a => a.amount)), amount);
+    eq('20ب. التوزيع يقلّل السيولة بمقداره', Svc.finance.liquidity(), U.round2(cashB - amount));
+    eq('21. التوزيع لا يقلّل الربح',
+       Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to), profitB);
+    eq('21ب. الربح المثبَّت لم يتحرّك', Svc.periods.get(key).net, closed.net);
+    ok('21ج. التوزيع ليس مصروفاً', !Repos.expenses.list(true).some(e => e.refId === dist.rec.id));
+
+    /* 22-25) الكشوف تُقرأ وتُطبع */
+    const pstmt = Svc.distributions.statement(partner.id);
+    eq('22. كشف الشريكة: المقبوض = مجموع توزيعاتها', pstmt.paid,
+       U.round2(U.sum(Svc.distributions.ofPartner(partner.id), x => x.amount)));
+    eq('22ب. ما فُصِّل + ما بلا تفصيل = المقبوض',
+       U.round2(pstmt.allocatedTotal + pstmt.unallocatedTotal), pstmt.paid);
+    ok('23. كشف الشريكة يُطبع', (window.TG.Print.partnerStatementHtml(partner.id) || '').includes('كشف حساب شريكة'));
+    ok('24. كشف المورّد يُطبع', (window.TG.Print.supplierStatementHtml(sup.id) || '').includes('كشف حساب مورّد'));
+    const s2 = Svc.purchases.statement(sup.id);
+    eq('25. سجل المورّد يحفظ الشراء والتسديد', s2.purchased, 290000);
+    eq('25ب. سجل المورّد يحفظ المدفوع', s2.paid, 100000);
+    ok('25ج. مستند الشراء يُطبع', (window.TG.Print.purchaseHtml(pur.rec.id) || '').includes(pur.rec.code));
+
+    /* لقطة الأرقام قبل النسخة — تُقارَن بعد إعادة التحميل والاستعادة */
+    const snapshot = {
+      liquidity:Svc.finance.liquidity(), payables:Svc.purchases.payables().due,
+      drawer:Svc.cashbook.expected(today).expected,
+      periodNet:Svc.periods.get(key).net, partnerPaid:pstmt.paid,
+      stockA:Svc.inventory.onHand(pa.id), costA:Repos.products.get(pa.id).cost,
+      revenue:U.round2(U.sum(Repos.revenues.list(true), x => x.amount)),
+      expense:U.round2(U.sum(Repos.expenses.list(true), x => x.amount)),
+      counts:Object.fromEntries(window.TG.STORE_NAMES.map(x => [x, window.TG.DB.count(x)]))
+    };
+    const backup = window.TG.Backup.build(false);
+    ok('26. النسخة الاحتياطية تُبنى وتشمل الجديد',
+       Array.isArray(backup.data.purchases) && backup.data.purchases.length > 0);
+    return { out, snapshot, backup, ids:{ member:m.id, sup:sup.id, pur:pur.rec.id,
+      partner:partner.id, key, prodA:pa.id, dist:dist.rec.id } };
+  });
+
+  /* 27) إعادة تحميل حقيقية: هل نجا كل ذلك القرصَ فعلاً؟ */
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
+  await page.evaluate(() => window.TG.ready);
+  await page.addScriptTag({ content: TESTS_JS });
+
+  const after = await page.evaluate(async ({ snapshot, backup, ids }) => {
+    const { Svc, Repos, U, D, Integrity } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const eq = (name, got, want) => ok(name, U.round2(got) === U.round2(want), `got=${got} want=${want}`);
+    const today = D.today();
+
+    ok('27. مستند الشراء نجا من إعادة التحميل', !!Repos.purchases.get(ids.pur));
+    ok('27ب. دفعات المورّد نجت', Svc.purchases.paymentsOf(ids.pur).length > 0);
+    eq('27ج. المتبقّي للمورّد كما كان', Svc.purchases.payables().due, snapshot.payables);
+    eq('27د. السيولة كما كانت', Svc.finance.liquidity(), snapshot.liquidity);
+    eq('27هـ. المتوقّع في الدرج كما كان', Svc.cashbook.expected(today).expected, snapshot.drawer);
+    eq('27و. رصيد الصنف كما كان', Svc.inventory.onHand(ids.prodA), snapshot.stockA);
+    eq('27ز. متوسط التكلفة كما كان', Repos.products.get(ids.prodA).cost, snapshot.costA);
+    ok('27ح. الفترة المقفلة نجت', Svc.periods.isClosed(ids.key));
+    eq('27ط. الربح المثبَّت كما كان', Svc.periods.get(ids.key).net, snapshot.periodNet);
+    const dist = Repos.distributions.get(ids.dist);
+    ok('27ي. تفصيل التوزيع نجا كما كُتب',
+       U.round2(U.sum(Svc.distributions.allocationsOf(dist), a => a.amount)) === U.round2(dist.amount));
+
+    /* 28) تخريب متعمّد ثم استعادة */
+    await Svc.members.create({ name:'سجل بعد النسخة' });
+    await Svc.purchases.save(null, { supplierId:ids.sup, date:today,
+      lines:[{ productId:ids.prodA, qty:1, unitCost:1 }] });
+    await window.TG.Backup.restore(backup);
+    const counts = Object.fromEntries(window.TG.STORE_NAMES.map(x => [x, window.TG.DB.count(x)]));
+    const diff = window.TG.STORE_NAMES.filter(x => x !== 'audit' && counts[x] !== snapshot.counts[x]);
+    ok('28. الاستعادة تُرجع كل الجداول كما كانت', !diff.length,
+       diff.map(x => `${x}:${snapshot.counts[x]}→${counts[x]}`).join('، '));
+    ok('28ب. ما أُضيف بعد النسخة لم يعد', !Repos.members.list(true).some(x => x.name === 'سجل بعد النسخة'));
+    eq('28ج. السيولة بعد الاستعادة', Svc.finance.liquidity(), snapshot.liquidity);
+    eq('28د. المتبقّي للموردين بعد الاستعادة', Svc.purchases.payables().due, snapshot.payables);
+    eq('28هـ. الإيرادات بعد الاستعادة',
+       U.round2(U.sum(Repos.revenues.list(true), x => x.amount)), snapshot.revenue);
+    eq('28و. المصروفات بعد الاستعادة',
+       U.round2(U.sum(Repos.expenses.list(true), x => x.amount)), snapshot.expense);
+    eq('28ز. الربح المثبَّت بعد الاستعادة', Svc.periods.get(ids.key).net, snapshot.periodNet);
+
+    /* 29) فحص سلامة البيانات بعد كل ذلك */
+    const issues = Integrity.scan();
+    const financial = issues.filter(x => /شراء|مورّد|توزيع|دفعة|إيراد|مخزون/.test(x.type));
+    ok('29. لا خلل مالي بعد المسار كاملاً', financial.length === 0,
+       JSON.stringify(financial.slice(0, 5)));
+
+    /* 30) الثوابت المالية الكبرى تبقى صحيحة على القاعدة كلها */
+    const fromPayments = Repos.revenues.list(true).filter(r => r.paymentId);
+    eq('30. Σ إيرادات الدفعات = Σ الدفعات',
+       U.round2(U.sum(fromPayments, r => r.amount)),
+       U.round2(U.sum(Repos.payments.list(true), p => p.amount)));
+    const badStock = Repos.products.list(true).filter(p => p.stockTracked !== false
+      && Svc.inventory.onHand(p.id) < -0.001);
+    ok('30ب. لا رصيد سالب لصنف متتبَّع', badStock.length === 0, badStock.length);
+    const drift = Repos.distributions.list(true).filter(d => {
+      const a = Svc.distributions.allocationsOf(d);
+      return a.length && Math.abs(U.round2(U.sum(a, x => x.amount) - d.amount)) > 0.009;
+    });
+    ok('30ج. مجموع تفصيل كل توزيع = مبلغه', drift.length === 0, drift.length);
+    const doubleCount = Repos.expenses.list(true).filter(e => e.refType === 'purchase');
+    const posted = Repos.purchases.list(true).filter(p => p.status === 'posted');
+    ok('30د. لكل مستند مُرحَّل مصروف واحد لا أكثر',
+       doubleCount.length === new Set(doubleCount.map(e => e.refId)).size
+       && posted.every(p => doubleCount.some(e => e.refId === p.id)),
+       `${doubleCount.length} مصروف / ${posted.length} مستند`);
+    const p = Svc.cashbook.preview(today);
+    eq('30هـ. المتوقّع = الافتتاحي + الداخل − الخارج', p.expected,
+       U.round2(p.opening + p.cashIn - p.cashOut));
+    return out;
+  }, state);
+
+  await ctx.close();
+  record('المسار الحرج الكامل للمرحلة الثانية', [...state.out, ...after], errors);
+});
+
 group('النسخ الاحتياطي والاستعادة', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
@@ -612,13 +842,38 @@ group('النسخ الاحتياطي والاستعادة', async (browser, url)
     const m = Repos.members.list()[0];
     await Svc.notes.add({ memberId:m.id, text:'ملاحظة قبل النسخة', author:'المالكة' });
 
+    /* كيانات المرحلة الثانية تُبنى فعلاً قبل النسخة: لا يُختبر جدول فارغ */
+    const sup = await Svc.suppliers.save(null, { name:'مورّد النسخة', phone:'07700001111' });
+    const prod = Repos.products.list()[0];
+    let purCode = null, purDue = 0;
+    if (prod){
+      const d = await Svc.purchases.save(null, { supplierId:sup.id, date:window.TG.D.today(),
+        invoiceNo:'BK-1', lines:[{ productId:prod.id, qty:5, unitCost:3000 }] });
+      await Svc.purchases.post(d.rec.id);
+      await Svc.purchases.addPayment({ purchaseId:d.rec.id, date:window.TG.D.today(),
+        amount:5000, method:'cash' });
+      purCode = d.rec.code;
+      purDue = Svc.purchases.balance(Repos.purchases.get(d.rec.id)).due;
+    }
+    await Svc.finance.addCapital({ date:window.TG.D.today(), amount:250000, type:'injection',
+      method:'transfer', description:'ضخّ للنسخة' });
+
     const before = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
     const periodsBefore = Svc.periods.list().length;
+    const payablesBefore = Svc.purchases.payables().due;
+    const liquidityBefore = Svc.finance.liquidity();
     const b = Backup.build(false);
     ok('النسخة تشمل كل الجداول', STORE_NAMES.every(s => Array.isArray(b.data[s])),
        STORE_NAMES.filter(s => !Array.isArray(b.data[s])).join('، '));
     ok('النسخة تشمل جدول الملاحظات', (b.data.notes || []).length > 0, (b.data.notes || []).length);
     ok('النسخة تشمل جدول التوزيعات', Array.isArray(b.data.distributions));
+    ok('النسخة تشمل مستندات الشراء', (b.data.purchases || []).length > 0, (b.data.purchases || []).length);
+    ok('النسخة تشمل دفعات الموردين', (b.data.purchasePayments || []).length > 0, (b.data.purchasePayments || []).length);
+    ok('النسخة تحفظ طريقة حركة رأس المال',
+       (b.data.capital || []).every(c => !!c.method), (b.data.capital || []).filter(c => !c.method).length);
+    ok('النسخة تحفظ تفصيل التوزيعات',
+       (b.data.distributions || []).every(d => Array.isArray(d.allocations) || d.allocationUnavailable),
+       (b.data.distributions || []).length);
     ok('النسخة تحمل رقم المخطط الحالي', b.schema === window.TG.APP.schema, b.schema);
 
     /* تخريب متعمّد ثم استعادة */
@@ -633,6 +888,16 @@ group('النسخ الاحتياطي والاستعادة', async (browser, url)
     ok('الاستعادة تُرجع الملاحظات', Repos.notes.list().some(n => n.text === 'ملاحظة قبل النسخة'));
     ok('الاستعادة تُرجع الفترات المقفلة', Svc.periods.list().length === periodsBefore,
        `${periodsBefore} → ${Svc.periods.list().length}`);
+    ok('الاستعادة تُرجع مستندات الشراء',
+       !purCode || Repos.purchases.list(true).some(p => p.code === purCode), purCode);
+    ok('الاستعادة تُرجع المتبقّي للموردين كما كان',
+       Svc.purchases.payables().due === payablesBefore,
+       `${payablesBefore} → ${Svc.purchases.payables().due}`);
+    ok('الاستعادة تُرجع السيولة كما كانت', Svc.finance.liquidity() === liquidityBefore,
+       `${liquidityBefore} → ${Svc.finance.liquidity()}`);
+    ok('كشف المورّد بعد الاستعادة يطابق نفسه',
+       !purCode || Svc.purchases.statement(Repos.suppliers.list().find(x => x.name === 'مورّد النسخة').id).due === purDue,
+       purDue);
     ok('السجل المضاف بعد النسخة لم يعد', !Repos.members.list(true).some(x => x.name === 'بعد النسخة'));
 
     /* إعادة التهيئة تمسح الجداول الجديدة أيضاً */
@@ -708,10 +973,26 @@ group('الطباعة الفعلية', async (browser, url) => {
     }
     const partner = Repos.partners.list()[0];
     const key = D.monthsBack(3)[0];
-    if (partner && !Svc.periods.isClosed(key)) await Svc.periods.close(key);
+    if (partner && !Svc.periods.isClosed(key)) await Svc.periods.close(key).catch(() => {});
     if (partner) await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(key),
       periodTo:D.endOfMonth(key), amount:120000, date:D.today(), method:'cash' }).catch(() => {});
-    return { memberId:m.id, receiptId:rc.id, saleRcId, partnerId:partner && partner.id };
+    /* مستند شراء بسطور متعدّدة وأرقام كبيرة: أقسى ما يُطبع في دورة الشراء */
+    const sup = await Svc.suppliers.save(null, { name:'شركة التجهيزات الرياضية المتكاملة المحدودة',
+      phone:'07811112222', contact:'السيد أبو محمد', email:'sales@example.com', address:'بغداد — شارع فلسطين' });
+    const buyables = Repos.products.list().slice(0, 4);
+    let purId = null;
+    if (buyables.length){
+      const d = await Svc.purchases.save(null, { supplierId:sup.id, date:D.today(), invoiceNo:'INV-99881',
+        notes:'طلبية كبيرة لاختبار الطباعة',
+        lines:buyables.map((p, i) => ({ productId:p.id, qty:12 + i * 7, unitCost:1250000 + i * 137000 })) });
+      await Svc.purchases.post(d.rec.id);
+      await Svc.purchases.addPayment({ purchaseId:d.rec.id, date:D.today(),
+        amount:Math.round(d.rec.total / 3), method:'transfer', notes:'دفعة أولى' });
+      purId = d.rec.id;
+    }
+    const closedKey = (Svc.periods.list()[0] || {}).key || key;
+    return { memberId:m.id, receiptId:rc.id, saleRcId, partnerId:partner && partner.id,
+             supId:sup.id, purId, closedKey };
   });
 
   /* التقاط ما تكتبه نافذة الطباعة فعلاً بدل الاكتفاء بأن الدالة لم ترمِ */
@@ -735,7 +1016,11 @@ group('الطباعة الفعلية', async (browser, url) => {
     'قائمة المشتركات': await capture(() => { TG.go('members'); TG.renderRoute();
       const b = document.getElementById('mPrint'); if (b) b.click(); }, ids),
     'كشف المستحقات': await capture(() => { TG.State.f.financeTab = 'dues'; TG.go('finance'); TG.renderRoute();
-      const b = document.getElementById('duPrint'); if (b) b.click(); }, ids)
+      const b = document.getElementById('duPrint'); if (b) b.click(); }, ids),
+    'مستند شراء':    ids.purId ? await capture(a => TG.Print.open('ش', TG.Print.purchaseHtml(a.purId), {}), ids) : '',
+    'كشف مورّد':     await capture(a => TG.Print.open('م', TG.Print.supplierStatementHtml(a.supId), {}), ids),
+    'مستحقات الموردين': await capture(() => TG.Print.open('ذ', TG.Print.payablesHtml(), {}), ids),
+    'ملخّص إقفال فترة': await capture(a => TG.Print.open('ف', TG.Print.periodCloseHtml(a.closedKey), {}), ids)
   };
 
   const rows = [];
@@ -753,7 +1038,11 @@ group('الطباعة الفعلية', async (browser, url) => {
       /* محاذاة الأعمدة: رأس الجدول وجسمه يجب أن يبدآ عند النقطة نفسها */
       const tables = [...document.querySelectorAll('table')].map(t => {
         const head = [...t.querySelectorAll('thead th')];
-        const row = t.querySelector('tbody tr');
+        /* صف «لا بيانات» خلية واحدة بـcolspan على كل الأعمدة — صحيح لا مختلّ */
+        const spans = c => Number(c.getAttribute('colspan') || 1);
+        const rows = [...t.querySelectorAll('tbody tr')].filter(tr =>
+          !(tr.children.length === 1 && spans(tr.children[0]) >= head.length));
+        const row = rows[0];
         if (!head.length || !row) return null;
         const body = [...row.children];
         if (head.length !== body.length) return { cells:`${head.length}/${body.length}`, bad:head.length };
@@ -794,6 +1083,43 @@ group('الطباعة الفعلية', async (browser, url) => {
   Object.entries({ no:'رقم الوصل', amount:'المبلغ', method:'طريقة الدفع', date:'التاريخ',
                    member:'اسم المشتركة', gym:'اسم النادي' })
     .forEach(([k, label]) => rows.push({ name:`الوصل المطبوع يحمل ${label}`, pass:rc[k], detail:'' }));
+
+  /* مستند الشراء المطبوع يحمل ما يجعله مستنداً، ويفصل المستحق عن المدفوع */
+  if (ids.purId){
+    const pd = await page.evaluate(a => {
+      const p = TG.Repos.purchases.get(a.purId);
+      const st = TG.Svc.purchases.balance(p);
+      const h = TG.Print.purchaseHtml(a.purId);
+      return { code:h.includes(p.code), supplier:h.includes(TG.Repos.suppliers.get(p.supplierId).name),
+               invoice:h.includes(p.invoiceNo), total:h.includes(TG.Money.fmt(p.total)),
+               paid:h.includes(TG.Money.fmt(st.paid)), due:h.includes(TG.Money.fmt(st.due)),
+               lines:(p.lines || []).every(l => h.includes(l.name)),
+               noDouble:!h.includes('مصروف ثانٍ') };
+    }, ids);
+    Object.entries({ code:'رقم المستند', supplier:'اسم المورّد', invoice:'رقم فاتورة المورّد',
+                     total:'الإجمالي', paid:'المدفوع', due:'المتبقّي', lines:'كل سطوره' })
+      .forEach(([k, label]) => rows.push({ name:`مستند الشراء المطبوع يحمل ${label}`, pass:pd[k], detail:'' }));
+  }
+  /* كشف المورّد يجيب الأسئلة الثلاثة على الورق كما على الشاشة */
+  const sd = await page.evaluate(a => {
+    const st = TG.Svc.purchases.statement(a.supId);
+    const h = TG.Print.supplierStatementHtml(a.supId);
+    return { purchased:h.includes(TG.Money.fmt(st.purchased)), paid:h.includes(TG.Money.fmt(st.paid)),
+             due:h.includes(TG.Money.fmt(st.due)), name:h.includes(st.supplier.name) };
+  }, ids);
+  Object.entries({ name:'اسم المورّد', purchased:'كم اشترينا', paid:'كم دفعنا', due:'كم بقي عليه' })
+    .forEach(([k, label]) => rows.push({ name:`كشف المورّد المطبوع يحمل ${label}`, pass:sd[k], detail:'' }));
+  /* ملخّص الإقفال يعرض ما يُقفَل عليه بالضبط */
+  const cd = await page.evaluate(a => {
+    const sm = TG.Svc.periods.summary(a.closedKey);
+    const h = TG.Print.periodCloseHtml(a.closedKey);
+    return { net:h.includes(TG.Money.fmt(sm.net)), rev:h.includes(TG.Money.fmt(sm.revenue)),
+             exp:h.includes(TG.Money.fmt(sm.expense)), cash:h.includes(TG.Money.fmt(sm.endingExpectedCash)),
+             capital:h.includes('ضخّ رأس مال'), dist:h.includes('توزيعات أرباح') };
+  }, ids);
+  Object.entries({ rev:'الإيرادات', exp:'المصروفات', net:'صافي الربح المثبَّت',
+                   cash:'المتوقّع في الدرج', capital:'رأس المال', dist:'التوزيعات' })
+    .forEach(([k, label]) => rows.push({ name:`ملخّص الإقفال المطبوع يحمل ${label}`, pass:cd[k], detail:'' }));
 
   await ctx0.close();
   record('الطباعة الفعلية', rows, errors);
@@ -1016,16 +1342,67 @@ group('رسم كل الشاشات', async (browser, url) => {
     rows.push({ name: `شاشة ${r} تُرسم بلا خطأ`, pass: !drawn && !fresh.length,
                 detail: [drawn, ...fresh].filter(Boolean).join(' | ') });
   }
-  /* الموردون مدخل ثانٍ لشاشة المخزون */
-  {
+  /* الموردون والمشتريات مدخلان آخران لشاشة المخزون */
+  for (const [tab, label] of [['suppliers','الموردون'], ['purchases','المشتريات']]){
     const mark = errors.length;
-    const bad = await page.evaluate(() => {
-      try { window.TG.go('inventory', { tab:'suppliers' }); window.TG.renderRoute(); return ''; }
+    const bad = await page.evaluate(t => {
+      try { window.TG.go('inventory', { tab:t }); window.TG.renderRoute(); return ''; }
       catch(e){ return 'THROW: ' + (e && e.message); }
-    });
+    }, tab);
     await page.waitForTimeout(80);
-    rows.push({ name:'شاشة الموردون تُرسم بلا خطأ', pass: !bad && errors.length === mark,
+    rows.push({ name:`شاشة ${label} تُرسم بلا خطأ`, pass: !bad && errors.length === mark,
                 detail: [bad, ...errors.slice(mark)].filter(Boolean).join(' | ') });
+  }
+  /* الشاشات المنبثقة الجديدة: مستند شراء، كشف مورّد، مراجعة إقفال، ونماذجها */
+  {
+    const prepared = await page.evaluate(async () => {
+      const { Svc, Repos, D } = window.TG;
+      const sup = Repos.suppliers.list()[0] || await Svc.suppliers.save(null, { name:'مورّد الرسم' });
+      const prod = Repos.products.list()[0];
+      let purId = (Repos.purchases.list()[0] || {}).id || null;
+      if (!purId && prod){
+        const d = await Svc.purchases.save(null, { supplierId:sup.id, date:D.today(),
+          lines:[{ productId:prod.id, qty:2, unitCost:1000 }] });
+        await Svc.purchases.post(d.rec.id);
+        purId = d.rec.id;
+      }
+      /* نموذج التسديد لا يُفتح لمستند مسدَّد بالكامل — وهذا صواب، فيُختار
+         مستند عليه متبقٍّ، أو يُنشأ واحد إن لم يوجد */
+      let dueId = (Svc.purchases.payables().rows[0] || {}).p;
+      dueId = dueId ? dueId.id : null;
+      if (!dueId && prod){
+        const d2 = await Svc.purchases.save(null, { supplierId:sup.id, date:D.today(),
+          lines:[{ productId:prod.id, qty:3, unitCost:2500 }] });
+        await Svc.purchases.post(d2.rec.id);
+        dueId = d2.rec.id;
+      }
+      const open = Svc.periods.openMonths(12);
+      return { supId:sup.id, purId, dueId, periodKey:open.length ? open[0].key : D.monthsBack(2)[0],
+               partnerId:(Repos.partners.list()[0] || {}).id || null };
+    });
+    const overlays = [
+      ['مستند شراء', a => window.TG.Screens.purchase(a.purId)],
+      ['كشف المورّد', a => window.TG.Screens.supplierStatement(a.supId)],
+      ['مراجعة الإقفال', a => window.TG.Screens.periodClose(a.periodKey)],
+      ['نموذج مستند شراء', () => window.TG.Forms.purchase()],
+      ['نموذج تسديد مورّد', a => window.TG.Forms.purchasePayment(a.dueId)],
+      ['نموذج حركة رأس مال', () => window.TG.Forms.capital()],
+      ['نموذج توزيع أرباح', a => window.TG.Forms.distribution(a.partnerId)]
+    ];
+    for (const [label, fn] of overlays){
+      const mark = errors.length;
+      const bad = await page.evaluate(([code, a]) => {
+        try { (new Function('a', 'return (' + code + ')(a)'))(a); }
+        catch(e){ return 'THROW: ' + (e && e.message); }
+        const ov = document.querySelector('.overlay, .modal, [data-overlay]');
+        return ov ? '' : 'لم تُفتح الشاشة';
+      }, [fn.toString(), prepared]);
+      await page.waitForTimeout(80);
+      rows.push({ name:`${label} يُرسم بلا خطأ`, pass: !bad && errors.length === mark,
+                  detail: [bad, ...errors.slice(mark)].filter(Boolean).join(' | ') });
+      await page.evaluate(() => document.querySelectorAll('.overlay, .modal, [data-overlay]')
+        .forEach(o => o.remove()));
+    }
   }
   /* تبويبات المالية والإعدادات: أكثر ما تغيّر في هذه المرحلة */
   for (const tab of ['revenues','expenses','dues','capital','partners','cash']){
@@ -1071,7 +1448,9 @@ group('الأداء على قاعدة كبيرة', async (browser, url) => {
     const F = ['زهراء','فاطمة','نور','سجى','رقية','مريم','آية','هبة','دعاء','لينا'];
     const L = ['الموسوي','الحسيني','الزبيدي','الجابري','العبادي','الساعدي','الربيعي','التميمي'];
     const members = [], subs = [], payments = [], revenues = [], attendance = [],
-          sales = [], stock = [], products = [], audit = [], receipts = [], notes = [];
+          sales = [], stock = [], products = [], audit = [], receipts = [], notes = [],
+          suppliers = [], purchases = [], purchasePayments = [], expenses = [],
+          partners = [], distributions = [], capital = [];
     for (let i = 0; i < 500; i++)
       members.push(base({ id:uid('mem'), name:`${pick(F)} ${pick(L)}`, code:'ت' + String(i + 1).padStart(4, '0'),
         phone:'0770' + String(1000000 + i), joinDate:D.addDays(today, -(i % 900)), suspended:false, custom:{} }));
@@ -1114,14 +1493,72 @@ group('الأداء على قاعدة كبيرة', async (browser, url) => {
       stock.push(base({ id:uid('stk'), productId:p.id, date:D.addDays(today, -(i % 300)), type:'sale',
         qty:-1, unitCost:p.cost, refType:'sale', refId:sid, expenseId:null }));
     }
+    /* ---- كيانات المرحلة الثانية بحجم واقعي: نادٍ يشتري من عشرين مورّداً ----
+       800 مستند شراء بسطورها ودفعاتها، ومصروف واحد لكل مستند بطريقة «على
+       الحساب» كما يفعل الترحيل تماماً — فالقياس على بنية حقيقية لا مصطنعة. */
+    for (let i = 0; i < 20; i++)
+      suppliers.push(base({ id:uid('sup'), name:`مورّد ${i}`, phone:'0781' + String(2000000 + i),
+        contact:'المسؤول', email:'', address:'', notes:'' }));
+    for (let i = 0; i < 800; i++){
+      const sup = suppliers[i % suppliers.length];
+      const date = D.addDays(today, -(i % 700));
+      const lines = [];
+      for (let k = 0; k < 3; k++){
+        const p = products[(i * 3 + k) % products.length];
+        const qty = 5 + (k * 2), unitCost = p.cost;
+        lines.push({ productId:p.id, name:p.name, unit:'قطعة', qty, unitCost,
+                     total: Math.round(qty * unitCost * 100) / 100 });
+      }
+      const subtotal = lines.reduce((a, l) => a + l.total, 0);
+      const pid = uid('pur'), eid = uid('exp');
+      purchases.push(base({ id:pid, code:'ش' + String(i + 1).padStart(5, '0'), supplierId:sup.id,
+        date, invoiceNo:'INV' + i, lines, subtotal, discount:0, total:subtotal,
+        items:lines.reduce((a, l) => a + l.qty, 0), status:'posted', expenseId:eid,
+        postedAt:now, cancelledAt:null, cancelReason:'', notes:'' }));
+      expenses.push(base({ id:eid, date, amount:subtotal, categoryId:null,
+        description:`شراء ش${String(i + 1).padStart(5, '0')}`, payee:sup.name, notes:'',
+        method:'credit', refType:'purchase', refId:pid }));
+      lines.forEach(l => stock.push(base({ id:uid('stk'), productId:l.productId, date, type:'purchase',
+        qty:l.qty, unitCost:l.unitCost, refType:'purchase', refId:pid, expenseId:null })));
+      /* ثلثا المستندات مسدَّدة بالكامل والثلث الباقي جزئياً — كما يقع فعلاً */
+      const pay = i % 3 === 0 ? Math.round(subtotal / 2) : subtotal;
+      purchasePayments.push(base({ id:uid('ppm'), purchaseId:pid, supplierId:sup.id, date,
+        amount:pay, method: i % 2 ? 'cash' : 'transfer', notes:'' }));
+    }
+    /* شريكتان وسنتان من التوزيعات المفصَّلة شهراً شهراً */
+    for (let i = 0; i < 2; i++)
+      partners.push(base({ id:uid('prt'), name:`شريكة ${i}`, sharePercent:50, notes:'' }));
+    for (let i = 0; i < 240; i++){
+      const prt = partners[i % partners.length];
+      const k = D.monthsBack(24)[i % 24];
+      distributions.push(base({ id:uid('dst'), partnerId:prt.id, periodFrom:D.startOfMonth(k),
+        periodTo:D.endOfMonth(k), amount:100000, date:D.endOfMonth(k), method:'cash',
+        allocations:[{ key:k, net:0, share:0, amount:100000 }], allocationSource:'migrated', notes:'' }));
+    }
+    for (let i = 0; i < 40; i++)
+      capital.push(base({ id:uid('cap'), date:D.addDays(today, -(i * 17)), amount:500000,
+        type: i % 4 === 3 ? 'withdrawal' : 'injection',
+        kind: i % 4 === 3 ? 'capital_return' : 'capital_injection',
+        method:['cash','transfer','card'][i % 3], partnerId:partners[i % partners.length].id,
+        description:'حركة رأس مال', notes:'' }));
     for (let i = 0; i < 3000; i++)
       audit.push(base({ id:uid('aud'), ts:now, entity:'payment', action:'create', summary:'قبض', entityId:null }));
     for (let i = 0; i < 300; i++)
       notes.push(base({ id:uid('not'), memberId:members[i].id, text:'ملاحظة', kind:'general',
         date:today, author:'المالكة', pinned:false }));
+    /* 24 فترة مقفلة: الإقفال والكشوف تُقاس على تاريخ حقيقي لا على جدول فارغ */
+    const closedPeriods = D.monthsBack(25).slice(0, 24).map(k => ({ key:k,
+      from:D.startOfMonth(k), to:D.endOfMonth(k), revenue:0, expense:0, net:0,
+      closedAt:now, closedBy:'المالكة', acknowledged:[] }));
     for (const [st, rows] of [['members',members],['products',products],['subscriptions',subs],
       ['payments',payments],['revenues',revenues],['receipts',receipts],['attendance',attendance],
-      ['sales',sales],['stockMoves',stock],['audit',audit],['notes',notes]]) await DB.putMany(st, rows);
+      ['sales',sales],['stockMoves',stock],['audit',audit],['notes',notes],
+      ['suppliers',suppliers],['purchases',purchases],['purchasePayments',purchasePayments],
+      ['expenses',expenses],['partners',partners],['distributions',distributions],
+      ['capital',capital]]) await DB.putMany(st, rows);
+    const stRec = DB.get('meta','settings') || { k:'settings', v:{} };
+    await DB.put('meta', Object.assign({}, stRec, { k:'settings',
+      v:Object.assign({}, stRec.v || {}, { closedPeriods, purchaseSeq:800 }) }));
     return Object.fromEntries(window.TG.STORE_NAMES.map(s => [s, DB.count(s)]).filter(([, n]) => n));
   });
 
@@ -1141,6 +1578,8 @@ group('الأداء على قاعدة كبيرة', async (browser, url) => {
   }, [code.toString(), arg]);
 
   const mid = await page.evaluate(() => window.TG.Repos.members.list()[10].id);
+  const supId = await page.evaluate(() => (window.TG.Repos.suppliers.list()[0] || {}).id || null);
+  const prtId = await page.evaluate(() => (window.TG.Repos.partners.list()[0] || {}).id || null);
   const rows = [];
   /* العتبات فضفاضة عمداً: الغرض كشف انهيار في التوسّع لا قياس دقيق يتذبذب */
   const cases = [
@@ -1156,6 +1595,11 @@ group('الأداء على قاعدة كبيرة', async (browser, url) => {
     ['المستحقات', () => { TG.State.f.financeTab='dues'; TG.go('finance'); TG.renderRoute(); }, null, 2000],
     ['الصندوق اليومي', () => { TG.State.f.financeTab='cash'; TG.go('finance'); TG.renderRoute(); }, null, 1500],
     ['الشركاء والأرباح', () => { TG.State.f.financeTab='partners'; TG.go('finance'); TG.renderRoute(); }, null, 1500],
+    ['قائمة الموردين', () => { TG.go('inventory', { tab:'suppliers' }); TG.renderRoute(); }, null, 2500],
+    ['سجل 800 مستند شراء', () => { TG.go('inventory', { tab:'purchases' }); TG.renderRoute(); }, null, 2500],
+    ['كشف حساب مورّد', a => { TG.Svc.purchases.statement(a); }, supId, 1500],
+    ['كشف الشريكة بالتفصيل', a => { TG.Svc.distributions.statement(a); }, prtId, 1500],
+    ['قائمة ما قبل الإقفال', () => { TG.Svc.periods.checklist(TG.D.monthsBack(2)[0]); }, null, 3000],
     ['بناء التقرير الشهري', () => { TG.Reports.build(TG.D.monthKey(TG.D.today())); }, null, 2000],
     ['سجل 5000 حضور', () => { TG.go('attendance'); TG.renderRoute(); }, null, 1500],
     ['بناء نسخة احتياطية', () => { TG.Backup.build(false); }, null, 2000],
