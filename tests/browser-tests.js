@@ -63,6 +63,21 @@ window.TGTests = (() => {
     }
     const sch = (b.data.meta || []).find(x => x.k === 'schema');
     if (sch) sch.v = schema;
+    if (schema < 7){
+      /* v6: لا مستندات شراء، ولا طريقة لحركة رأس مال، ولا تفصيل للتوزيعات.
+         مستندات الشراء المُرحَّلة في القاعدة الحيّة ليس لها مقابل في v6،
+         فتُنزع هي وكل ما ولّدته حتى تُشبه النسخةُ إصدارَها فعلاً. */
+      const purIds = new Set((b.data.purchases || []).map(p => p.id));
+      const purExp = new Set((b.data.purchases || []).map(p => p.expenseId).filter(Boolean));
+      b.data.purchases = [];
+      b.data.purchasePayments = [];
+      b.data.expenses = (b.data.expenses || []).filter(e => !purExp.has(e.id) && e.refType !== 'purchase');
+      b.data.stockMoves = (b.data.stockMoves || []).filter(m => !(m.refType === 'purchase' && purIds.has(m.refId)));
+      (b.data.capital || []).forEach(c => { delete c.method; });
+      (b.data.distributions || []).forEach(d => { delete d.allocations; delete d.allocationSource;
+        delete d.allocationUnavailable; });
+      (b.data.meta || []).forEach(x => { if (x.k === 'settings' && x.v) delete x.v.purchaseSeq; });
+    }
     if (schema < 6){
       /* v5: لا ملاحظات ولا توزيعات ولا فترات مقفلة، والسحوبات بلا وسم */
       b.data.notes = [];
@@ -279,54 +294,87 @@ window.TGTests = (() => {
     const applied1 = await Migrations.run();       /* تشغيل ثانٍ: يجب ألا يغيّر شيئاً */
     const second = totals();
 
-    eq(`v${from}→v6: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
-    eq(`v${from}→v6: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
-    eq(`v${from}→v6: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
-    eq(`v${from}→v6: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
+    eq(`v${from}→v7: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
+    eq(`v${from}→v7: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
+    eq(`v${from}→v7: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
+    eq(`v${from}→v7: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
     const ends2 = endDates();
     const moved = Object.keys(ends1).filter(k => ends1[k] !== ends2[k]);
-    ok(`v${from}→v6: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
-    ok(`v${from}→v6: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
+    ok(`v${from}→v7: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
+    ok(`v${from}→v7: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
        JSON.stringify(first.counts) === JSON.stringify(second.counts),
        (applied1.applied || []).join(' | '));
 
     /* أثر الترقية نفسه */
     const badMethod = Repos.payments.list(true).filter(p => !PayMethods.resolve(p.method) || PayMethods.label(p.method) === p.method && !PayMethods.get(p.method));
-    ok(`v${from}→v6: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
+    ok(`v${from}→v7: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
        badMethod.slice(0, 3).map(p => p.method).join(','));
     const custom = PayMethods.all().find(m => m.label === 'زين كاش');
-    ok(`v${from}→v6: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from !== 4 || !!custom,
+    ok(`v${from}→v7: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from !== 4 || !!custom,
        JSON.stringify(PayMethods.all().map(m => m.key + ':' + m.label)));
     const noMethod = Repos.expenses.list(true).filter(e => !e.method);
-    ok(`v${from}→v6: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
+    ok(`v${from}→v7: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
     const payrollExp = Repos.expenses.list(true).filter(e => e.refType === 'payroll');
-    ok(`v${from}→v6: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
+    ok(`v${from}→v7: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
        !payrollExp.length || payrollExp.every(e => e.method === 'unknown'),
        payrollExp.slice(0, 3).map(e => e.method).join(','));
     let badBase = 0;
     Repos.subs.list(true).forEach(s => {
       if (D.addDays(s.baseEndDate || s.endDate, T().Svc.membership.addedDays(s.id)) !== s.endDate) badBase++;
     });
-    ok(`v${from}→v6: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
+    ok(`v${from}→v7: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
     const stillListed = Repos.trainings.list(true).filter(t => (t.memberIds || []).length);
-    ok(`v${from}→v6: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
+    ok(`v${from}→v7: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
     /* القوائم القديمة موجودة في نسخ ما قبل v5 وحدها */
     if (from < 5){
       const archivedLists = Repos.trainings.list(true).filter(t => (t.legacyMemberIds || []).length);
-      ok(`v${from}→v6: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
+      ok(`v${from}→v7: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
     }
 
     /* ---- أثر ترقية v6 ---- */
     const withdrawals = Repos.capital.list(true).filter(c => c.type === 'withdrawal');
-    ok(`v${from}→v6: كل سحب رأس مال موسوم «استرجاع رأس مال»`,
+    ok(`v${from}→v7: كل سحب رأس مال موسوم «استرجاع رأس مال»`,
        !withdrawals.length || withdrawals.every(c => c.kind === 'capital_return'),
        withdrawals.slice(0, 3).map(c => c.kind).join(','));
-    ok(`v${from}→v6: قائمة الفترات المقفلة مهيّأة`, Array.isArray(T().Settings.get('closedPeriods')),
+    ok(`v${from}→v7: قائمة الفترات المقفلة مهيّأة`, Array.isArray(T().Settings.get('closedPeriods')),
        typeof T().Settings.get('closedPeriods'));
-    ok(`v${from}→v6: الجدولان الجديدان موجودان وقابلان للقراءة`,
+    ok(`v${from}→v7: الجدولان الجديدان موجودان وقابلان للقراءة`,
        Array.isArray(Repos.notes.list(true)) && Array.isArray(Repos.distributions.list(true)));
-    ok(`v${from}→v6: الشاشة الافتتاحية لها قيمة افتراضية`,
+    ok(`v${from}→v7: الشاشة الافتتاحية لها قيمة افتراضية`,
        ['desk','dashboard'].includes(T().Settings.get('startScreen') || 'desk'), T().Settings.get('startScreen'));
+
+    /* ---- أثر ترقية v7: طرق رأس المال وتفصيل التوزيعات ---- */
+    const { Svc, Calc } = T();
+    const caps = Repos.capital.list(true);
+    ok(`v${from}→v7: كل حركة رأس مال تحمل طريقة`, caps.every(c => !!c.method),
+       caps.filter(c => !c.method).length);
+    ok(`v${from}→v7: الحركات القديمة «غير معروفة» لا مخمَّنة نقداً`,
+       !caps.length || caps.every(c => c.method === PayMethods.UNKNOWN_KEY || c.method === 'cash'
+         || PayMethods.all().some(m => m.key === c.method)),
+       caps.slice(0, 3).map(c => c.method).join(','));
+    ok(`v${from}→v7: كل حركة رأس مال موسومة بصنفها`,
+       caps.every(c => c.kind === 'capital_return' || c.kind === 'capital_injection'),
+       caps.filter(c => !c.kind).length);
+    ok(`v${from}→v7: مجهول الطريقة خارج حساب الدرج`,
+       Svc.cashbook.movement(D.today()).capitalUnknown >= 0);
+    const dists = Repos.distributions.list(true);
+    const drift = dists.filter(x => {
+      const al = Svc.distributions.allocationsOf(x);
+      return al.length && Math.abs(U.round2(U.sum(al, a => a.amount) - x.amount)) > 0.009;
+    });
+    ok(`v${from}→v7: لا توزيع مجموع تفصيله يخالف مبلغه`, !drift.length, drift.length);
+    const oneMonth = dists.filter(x => Svc.periods.monthsBetween(x.periodFrom, x.periodTo).length === 1);
+    ok(`v${from}→v7: توزيع الشهر الواحد فُصّل بالضبط`,
+       !oneMonth.length || oneMonth.every(x => Svc.distributions.allocationsOf(x).length === 1),
+       oneMonth.length);
+    const spread = dists.filter(x => Svc.periods.monthsBetween(x.periodFrom, x.periodTo).length > 1);
+    ok(`v${from}→v7: التوزيع الممتدّ القديم لم يُخترع له تفصيل`,
+       !spread.length || spread.every(x => Svc.distributions.allocationsOf(x).length
+         || x.allocationUnavailable),
+       spread.length);
+    ok(`v${from}→v7: جدولا الشراء موجودان وقابلان للقراءة`,
+       Array.isArray(Repos.purchases.list(true)) && Array.isArray(Repos.purchasePayments.list(true)));
+    eq(`v${from}→v7: رأس المال المحفوظ لم يتغيّر مبلغه`, second.capital, first.capital);
     return results;
   }
 
@@ -674,10 +722,18 @@ window.TGTests = (() => {
        JSON.stringify(got) === JSON.stringify(expected), `${got} مقابل ${expected}`);
     ok('الشهر الخاسر لا يأخذ شيئاً من التوزيع',
        shares.every((sh, i) => sh > 0 || got[i] === 0), `${shares} / ${got}`);
-    ok('التقسيم معلَّم في الكشف بأنه تقديري',
-       stAfter.periods.filter(p => keys.includes(p.key)).some(p => p.apportioned));
-    ok('كشف الطباعة يشرح التقسيم',
-       T().Print.partnerStatementHtml(partner.id).includes('التفصيل الشهري تقديري'));
+    /* المرحلة الثانية: لم يعد التقسيم تقديراً يُحسب وقت العرض — صار تفصيلاً
+       محفوظاً مع التوزيع نفسه. فيُختبر ما هو أقوى من «وسم التقدير»: أن التفصيل
+       مكتوب في السجل، وأن مجموعه يساوي المبلغ بالضبط بلا باقٍ مخفي. */
+    const spreadRec = U.sortBy(Svc.distributions.ofPartner(partner.id).filter(x => x.amount === spread),
+      x => x.createdAt, -1)[0];
+    const spreadAlloc = Svc.distributions.allocationsOf(spreadRec);
+    ok('التوزيع الممتدّ يحمل تفصيلاً محفوظاً لكل شهر',
+       spreadAlloc.length === keys.length, `${spreadAlloc.length} من ${keys.length}`);
+    eq('مجموع تفصيل الأشهر = مبلغ التوزيع بالضبط',
+       U.round2(U.sum(spreadAlloc, a => a.amount)), spread);
+    ok('كشف الطباعة يقول إن المقبوض الشهري مأخوذ من التفصيل المحفوظ',
+       T().Print.partnerStatementHtml(partner.id).includes('لا تُقدَّر عند الطباعة'));
     eq('إجمالي المقبوض في الكشف يبقى مضبوطاً', stAfter.paid,
        U.round2(U.sum(Svc.distributions.ofPartner(partner.id), d => d.amount)));
 
@@ -687,6 +743,441 @@ window.TGTests = (() => {
       ok('الكشف المطبوع يُعلن القبض الزائد بدل إظهار صفر',
          T().Print.partnerStatementHtml(partner.id).includes('قُبض مقدماً فوق الاستحقاق'));
 
+    return results;
+  }
+
+  /* ==================== المرحلة الثانية: طرق رأس المال ====================
+     السؤال الذي يجيب عنه هذا القسم: هل يفرّق النظام بين السيولة ودرج الصندوق؟
+     التحويل يزيد السيولة ولا يزيد ما في الدرج، والنقد يزيدهما معاً، وما لم
+     تُسجَّل طريقته لا يُخمَّن. وفي الحالات كلها: رأس المال ليس إيراداً. */
+  async function capitalMethods(){
+    const { Svc, Repos, Calc, U, D, PayMethods } = T();
+    const today = D.today();
+    const before = {
+      cash: Svc.cashbook.expected(today).expected,
+      liquidity: Svc.finance.liquidity(),
+      profit: Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), today, today),
+      capital: Calc.capitalBalance(Repos.capital.list()),
+      revenue: Calc.revenue(Repos.revenues.list(), today, today)
+    };
+
+    /* 1) ضخّ نقدي: الدرج والسيولة ورأس المال — ولا إيراد ولا ربح */
+    const cashIn = await Svc.finance.addCapital({ date:today, amount:300000, type:'injection',
+      method:'cash', description:'ضخّ نقدي — اختبار' });
+    ok('حركة رأس المال تحفظ طريقتها', cashIn.rec.method === 'cash', cashIn.rec.method);
+    eq('الضخّ النقدي يزيد الدرج بمقداره', Svc.cashbook.expected(today).expected, U.round2(before.cash + 300000));
+    eq('الضخّ النقدي يزيد السيولة بمقداره', Svc.finance.liquidity(), U.round2(before.liquidity + 300000));
+    eq('الضخّ النقدي يزيد رأس المال', Calc.capitalBalance(Repos.capital.list()), U.round2(before.capital + 300000));
+    eq('الضخّ ليس إيراداً', Calc.revenue(Repos.revenues.list(), today, today), before.revenue);
+    eq('الضخّ لا يغيّر الربح', Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), today, today), before.profit);
+
+    /* 2) ضخّ بتحويل: سيولة بلا درج — وهو الفرق الذي كان ضائعاً قبل المرحلة الثانية */
+    const afterCash = Svc.cashbook.expected(today).expected;
+    /* البيانات التجريبية قد تكون ضخّت بتحويل اليوم أيضاً، فيُقاس الفرق لا الرقم المطلق */
+    const nonCashCapBefore = Svc.cashbook.movement(today).capitalNonCashIn;
+    const trIn = await Svc.finance.addCapital({ date:today, amount:500000, type:'injection',
+      method:'transfer', description:'ضخّ بتحويل — اختبار' });
+    eq('الضخّ بتحويل لا يزيد درج الصندوق', Svc.cashbook.expected(today).expected, afterCash);
+    eq('الضخّ بتحويل يزيد السيولة', Svc.finance.liquidity(), U.round2(before.liquidity + 800000));
+    const mvT = Svc.cashbook.movement(today);
+    eq('التحويل يظهر في رأس المال غير النقدي',
+       U.round2(mvT.capitalNonCashIn - nonCashCapBefore), 500000);
+    ok('جدول الطرق يعرض التحويل داخلاً',
+       (mvT.byMethod.find(m => m.key === 'transfer') || {}).in >= 500000,
+       JSON.stringify(mvT.byMethod.map(m => [m.key, m.in])));
+
+    /* 3) ضخّ ببطاقة: مثل التحويل تماماً — غير نقدي */
+    const beforeCard = Svc.cashbook.expected(today).expected;
+    await Svc.finance.addCapital({ date:today, amount:120000, type:'injection',
+      method:'card', description:'ضخّ ببطاقة — اختبار' });
+    eq('الضخّ ببطاقة لا يمسّ الدرج', Svc.cashbook.expected(today).expected, beforeCard);
+
+    /* 4) استرجاع نقدي: يخرج من الدرج ولا يصير مصروفاً تشغيلياً */
+    const expBefore = Calc.expenses(Repos.expenses.list(), today, today);
+    const drawerBefore = Svc.cashbook.expected(today).expected;
+    await Svc.finance.addCapital({ date:today, amount:100000, type:'withdrawal',
+      method:'cash', description:'استرجاع نقدي — اختبار' });
+    eq('الاسترجاع النقدي يخصم من الدرج', Svc.cashbook.expected(today).expected, U.round2(drawerBefore - 100000));
+    eq('الاسترجاع ليس مصروفاً تشغيلياً', Calc.expenses(Repos.expenses.list(), today, today), expBefore);
+    eq('الاسترجاع لا يقلّل الربح', Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), today, today), before.profit);
+
+    /* 5) استرجاع بتحويل: سيولة تنقص ودرج لا يُمسّ */
+    const d2 = Svc.cashbook.expected(today).expected, l2 = Svc.finance.liquidity();
+    await Svc.finance.addCapital({ date:today, amount:200000, type:'withdrawal',
+      method:'transfer', description:'استرجاع بتحويل — اختبار' });
+    eq('الاسترجاع بتحويل لا يخصم من الدرج', Svc.cashbook.expected(today).expected, d2);
+    eq('الاسترجاع بتحويل يقلّل السيولة', Svc.finance.liquidity(), U.round2(l2 - 200000));
+
+    /* 6) مجهول الطريقة: خارج الدرج، داخل السيولة، معروضٌ للمراجعة لا مخمَّن */
+    const unknownRec = await Repos.capital.create({ date:today, amount:77000, type:'injection',
+      method:PayMethods.UNKNOWN_KEY, kind:'capital_injection', description:'حركة قديمة بلا طريقة' });
+    const d3 = Svc.cashbook.expected(today);
+    eq('مجهول الطريقة لا يدخل الدرج', d3.expected, Svc.cashbook.expected(today).expected);
+    ok('مجهول الطريقة معروضٌ على حدة', d3.capitalUnknown >= 77000, d3.capitalUnknown);
+    ok('مجهول الطريقة يظهر في قائمة المراجعة',
+       PayMethods.unknownRecords().some(x => x.id === unknownRec.id));
+    const beforeFix = Svc.cashbook.expected(today).expected;
+    await Svc.finance.setCapitalMethod(unknownRec.id, 'cash');
+    eq('تحديد الطريقة يُدخل المبلغ حساب الدرج', Svc.cashbook.expected(today).expected, U.round2(beforeFix + 77000));
+    ok('لا تُقبل طريقة محجوزة لحركة رأس مال',
+       await (async () => { try { await Svc.finance.setCapitalMethod(unknownRec.id, PayMethods.CREDIT_KEY); return false; }
+                            catch(e){ return e.code === 'VALIDATION'; } })());
+
+    /* 7) الثابت الحاكم للدرج يبقى صحيحاً بعد كل ما سبق */
+    const p = Svc.cashbook.preview(today);
+    eq('المتوقّع = الافتتاحي + الداخل − الخارج', p.expected, U.round2(p.opening + p.cashIn - p.cashOut));
+    return results;
+  }
+
+  /* ==================== المرحلة الثانية: دورة الشراء ====================
+     الخطأ الذي يُختبر هنا تحديداً: أن يُحسب الشراء مرتين — مرة بمستنده ومرة
+     بدفعته. وأن يُخصم من الدرج ما لم يخرج منه. وأن يبقى رصيد المخزن حقيقة
+     مجموعِ حركاته مهما رُحّل وأُلغي. */
+  async function purchases(){
+    const { Svc, Repos, Calc, U, D, Money } = T();
+    const today = D.today();
+    const sup = await Svc.suppliers.save(null, { name:'مورّد اختبار الشراء', phone:'07700000001',
+      email:'sup@test.com', contact:'أبو علي' });
+    ok('المورّد يُحفظ ببياناته', !!sup.id && sup.email === 'sup@test.com', sup.email);
+    let dupe = false;
+    try { await Svc.suppliers.save(null, { name:'مورّد اختبار الشراء' }); } catch(e){ dupe = e.code === 'VALIDATION'; }
+    ok('لا يُكرَّر مورّد بالاسم نفسه', dupe);
+
+    const { rec: p1 } = await Svc.inventory.saveProduct(null, { name:'صنف شراء أ', price:5000, cost:2000, openingQty:10 });
+    const { rec: p2 } = await Svc.inventory.saveProduct(null, { name:'صنف شراء ب', price:9000, cost:4000 });
+    const stockA0 = Svc.inventory.onHand(p1.id), stockB0 = Svc.inventory.onHand(p2.id);
+    const costA0 = Repos.products.get(p1.id).cost;
+
+    /* الإجماليات تُحسب من السطور — لا يُكتب رقمٌ يدوي فوقها */
+    const draft = await Svc.purchases.save(null, { supplierId:sup.id, date:today, invoiceNo:'T-1',
+      lines:[{ productId:p1.id, qty:10, unitCost:3000 }, { productId:p2.id, qty:5, unitCost:4000 }] });
+    eq('إجمالي المستند = مجموع سطوره', draft.rec.total, 50000);
+    ok('المستند يبدأ مسودة', draft.rec.status === 'draft', draft.rec.status);
+    ok('المستند يحمل رقماً متسلسلاً', /^ش\d{5}$/.test(draft.rec.code), draft.rec.code);
+    eq('المسودة لا تلمس المخزون', Svc.inventory.onHand(p1.id), stockA0);
+    const expBefore = Calc.expenses(Repos.expenses.list(), today, today);
+    eq('المسودة لا تُسجَّل مصروفاً', Calc.expenses(Repos.expenses.list(), today, today), expBefore);
+
+    /* الترحيل: بضاعة تدخل، ومصروف واحد يُسجَّل، وطريقته «على الحساب» */
+    const cashBefore = Svc.cashbook.expected(today).expected;
+    const liqBefore = Svc.finance.liquidity();
+    const posted = await Svc.purchases.post(draft.rec.id);
+    ok('المستند يصير مُرحَّلاً', posted.status === 'posted', posted.status);
+    eq('الترحيل يُدخل الكمية الأولى للمخزن', Svc.inventory.onHand(p1.id), U.round2(stockA0 + 10));
+    eq('الترحيل يُدخل الكمية الثانية للمخزن', Svc.inventory.onHand(p2.id), U.round2(stockB0 + 5));
+    eq('رصيد الصنف = مجموع حركاته بعد الترحيل', Svc.inventory.onHand(p1.id),
+       Calc.onHand(Repos.stockMoves.list().filter(m => m.productId === p1.id)));
+    eq('الشراء يُسجَّل مصروفاً مرة واحدة بكامل المستند',
+       U.round2(Calc.expenses(Repos.expenses.list(), today, today) - expBefore), 50000);
+    eq('عدد مصروفات المستند واحد',
+       Repos.expenses.list(true).filter(e => e.refType === 'purchase' && e.refId === posted.id).length, 1);
+    const pexp = Repos.expenses.get(posted.expenseId);
+    ok('مصروف المستند بطريقة «على الحساب»', pexp.method === T().PayMethods.CREDIT_KEY, pexp.method);
+    eq('الترحيل وحده لا يخرج من الدرج', Svc.cashbook.expected(today).expected, cashBefore);
+    eq('ما لم يُدفع يعود إلى السيولة', Svc.finance.liquidity(), liqBefore);
+    /* متوسط التكلفة المرجّح: 10 بـ2000 ثم 10 بـ3000 ⇒ 2500 */
+    eq('متوسط التكلفة المرجّح يُحدَّث بالشراء', Repos.products.get(p1.id).cost,
+       U.round2((stockA0 * costA0 + 10 * 3000) / (stockA0 + 10)));
+
+    /* الدفع الجزئي: نقدٌ يخرج، ومتبقٍّ يظهر، وبلا مصروف ثانٍ */
+    const st0 = Svc.purchases.balance(posted);
+    eq('قبل الدفع: المتبقّي كامل المستند', st0.due, 50000);
+    const pay1 = await Svc.purchases.addPayment({ purchaseId:posted.id, date:today, amount:20000, method:'cash' });
+    eq('الدفع النقدي يخرج من الدرج', Svc.cashbook.expected(today).expected, U.round2(cashBefore - 20000));
+    eq('الدفع لا يُنشئ مصروفاً ثانياً',
+       U.round2(Calc.expenses(Repos.expenses.list(), today, today) - expBefore), 50000);
+    eq('الدفع لا يُنشئ سطر إيراد', Repos.revenues.list(true).filter(r => r.refId === pay1.rec.id).length, 0);
+    const st1 = Svc.purchases.balance(Repos.purchases.get(posted.id));
+    eq('المدفوع 20 والمتبقّي 30', st1.paid, 20000);
+    eq('المتبقّي للمورّد صحيح', st1.due, 30000);
+    ok('حالة المستند «مدفوع جزئياً»', st1.key === 'PARTIAL', st1.key);
+    eq('السيولة تنقص بما دُفع فقط', Svc.finance.liquidity(), U.round2(liqBefore - 20000));
+
+    /* الدفع بتحويل: يقلّل المتبقّي ولا يمسّ الدرج */
+    const drawer1 = Svc.cashbook.expected(today).expected;
+    await Svc.purchases.addPayment({ purchaseId:posted.id, date:today, amount:10000, method:'transfer' });
+    eq('الدفع بتحويل لا يمسّ الدرج', Svc.cashbook.expected(today).expected, drawer1);
+    eq('المتبقّي بعد التحويل', Svc.purchases.balance(Repos.purchases.get(posted.id)).due, 20000);
+
+    /* لا يُدفع أكثر من المتبقّي */
+    let over = false;
+    try { await Svc.purchases.addPayment({ purchaseId:posted.id, date:today, amount:25000, method:'cash' }); }
+    catch(e){ over = e.code === 'VALIDATION'; }
+    ok('لا يُدفع للمورّد أكثر من المتبقّي', over);
+
+    /* كشف المورّد يجيب الأسئلة الثلاثة */
+    const stmt = Svc.purchases.statement(sup.id);
+    eq('كشف المورّد: كم اشترينا', stmt.purchased, 50000);
+    eq('كشف المورّد: كم دفعنا', stmt.paid, 30000);
+    eq('كشف المورّد: كم بقي عليه', stmt.due, 20000);
+    eq('المستحق للموردين رقم واحد في كل الشاشات', Svc.purchases.payables().due,
+       U.round2(U.sum(Svc.purchases.posted(), x => Svc.purchases.balance(x).due)));
+    eq('السيولة تُعيد ما لم يُدفع', Calc.payables(Repos.purchases.list(), Repos.purchasePayments.list()),
+       U.round2(U.sum(Svc.purchases.posted(), x => Svc.purchases.balance(x).due)));
+
+    /* لا يُلغى مستند دُفع عليه، ولا يُرحَّل مرتين */
+    let twice = false;
+    try { await Svc.purchases.post(posted.id); } catch(e){ twice = e.code === 'ALREADY_POSTED'; }
+    ok('لا يُرحَّل المستند مرتين', twice);
+    let paidCancel = false;
+    try { await Svc.purchases.cancel(posted.id, 'اختبار'); } catch(e){ paidCancel = e.code === 'LINKED'; }
+    ok('لا يُلغى مستند سُدّد عليه قبل حذف دفعاته', paidCancel);
+    let editPosted = false;
+    try { await Svc.purchases.save(posted.id, { supplierId:sup.id, date:today, lines:[{ productId:p1.id, qty:1, unitCost:1 }] }); }
+    catch(e){ editPosted = e.code === 'LOCKED'; }
+    ok('لا يُعدَّل مستند مُرحَّل', editPosted);
+    let mvLocked = false;
+    const pmv = Repos.stockMoves.list().filter(m => m.refType === 'purchase' && m.refId === posted.id)[0];
+    try { await Svc.inventory.removeMove(pmv.id); } catch(e){ mvLocked = e.code === 'LINKED'; }
+    ok('لا تُحذف حركة مخزون يملكها مستند شراء', mvLocked);
+    let expLocked = false;
+    try { await Svc.finance.archiveExpense(posted.expenseId, true); } catch(e){ expLocked = e.code === 'LINKED'; }
+    ok('لا يُؤرشف مصروف المستند مباشرة', expLocked);
+
+    /* الإلغاء بعد حذف الدفعات: يعكس الأثر ولا يمحو التاريخ */
+    for (const pp of Svc.purchases.paymentsOf(posted.id)) await Svc.purchases.removePayment(pp.id);
+    eq('حذف الدفعات يعيد النقد للدرج', Svc.cashbook.expected(today).expected, cashBefore);
+    const stockBeforeCancel = Svc.inventory.onHand(p1.id);
+    const cancelled = await Svc.purchases.cancel(posted.id, 'بضاعة مرتجعة');
+    ok('المستند يبقى في السجل بحالة ملغى', cancelled.status === 'cancelled' && !!Repos.purchases.get(posted.id));
+    eq('الإلغاء يعيد المخزون كما كان', Svc.inventory.onHand(p1.id), U.round2(stockBeforeCancel - 10));
+    eq('رصيد الصنف بعد الإلغاء = مجموع حركاته', Svc.inventory.onHand(p1.id),
+       Calc.onHand(Repos.stockMoves.list().filter(m => m.productId === p1.id)));
+    eq('الإلغاء يسحب المصروف من الربح',
+       U.round2(Calc.expenses(Repos.expenses.list(), today, today)), expBefore);
+    eq('الإلغاء يعيد متوسط التكلفة إلى ما تسنده الحركات الباقية',
+       Repos.products.get(p1.id).cost, costA0);
+    eq('المستند الملغى لا يبقى مستحقاً للمورّد', Svc.purchases.statement(sup.id).due, 0);
+    ok('سجل الأحداث يوثّق الترحيل والإلغاء',
+       T().Audit.recent(200).filter(a => a.entity === 'purchase' && ['post','cancel','pay'].includes(a.action)).length >= 3);
+
+    /* لا يُلغى شراءٌ بيعت بضاعته: الرصيد سيصير كذباً */
+    const d3 = await Svc.purchases.save(null, { supplierId:sup.id, date:today,
+      lines:[{ productId:p2.id, qty:3, unitCost:4500 }] });
+    await Svc.purchases.post(d3.rec.id);
+    await Svc.inventory.addMove({ productId:p2.id, date:today, type:'adjust_out',
+      qty:Svc.inventory.onHand(p2.id), notes:'تفريغ الرصيد للاختبار' });
+    let stockGuard = false;
+    try { await Svc.purchases.cancel(d3.rec.id, 'اختبار'); } catch(e){ stockGuard = e.code === 'STOCK'; }
+    ok('لا يُلغى مستند لا يحتمل المخزون إرجاعه', stockGuard);
+
+    /* سلامة البيانات لا ترى خللاً بعد كل هذا */
+    const bad = T().Integrity.scan().filter(x => /شراء|مورّد/.test(x.type));
+    ok('لا خلل في روابط دورة الشراء', bad.length === 0, JSON.stringify(bad.slice(0, 5)));
+    return results;
+  }
+
+  /* ============ المرحلة الثانية: تفصيل توزيعات الشركاء بالضبط ============
+     الثابت الوحيد الذي يحرس هذا القسم: مجموع ما خُصّص للأشهر = مبلغ التوزيع.
+     دائماً، بلا باقٍ مخفي ولا انحراف تقريب. */
+  async function allocations(){
+    const { Svc, Repos, Calc, U, D } = T();
+    const partner = await Repos.partners.create({ name:'شريكة التفصيل', sharePercent:50 });
+    const keys = D.monthsBack(12).slice(0, 3);          /* ثلاثة أشهر لم تلمسها البيانات التجريبية */
+    const amounts = [400000, 100000, 300000];
+    for (let i = 0; i < keys.length; i++)
+      await Svc.finance.addRevenue({ date:D.startOfMonth(keys[i]), amount:amounts[i],
+        source:'service', description:'إيراد اختبار التفصيل', method:'cash' });
+    for (const k of keys){ if (Svc.periods.isClosed(k)) await Svc.periods.reopen(k, 'تهيئة').catch(() => {});
+      await Svc.periods.close(k); }
+
+    /* 1) شهر واحد: التفصيل بديهي وكامل */
+    const one = await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(keys[0]),
+      periodTo:D.endOfMonth(keys[0]), amount:50000, date:D.today(), method:'cash' });
+    const oneAl = Svc.distributions.allocationsOf(one.rec);
+    ok('توزيع شهر واحد يُفصَّل على شهره', oneAl.length === 1 && oneAl[0].key === keys[0], JSON.stringify(oneAl));
+    eq('تفصيل الشهر الواحد = المبلغ كله', oneAl[0].amount, 50000);
+
+    /* 2) عدة أشهر بتفصيل صريح: يُحفظ كما كُتب لا كما يُقترح */
+    const manual = [{ key:keys[0], amount:60000 }, { key:keys[1], amount:30000 }, { key:keys[2], amount:10000 }];
+    const multi = await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(keys[0]),
+      periodTo:D.endOfMonth(keys[2]), amount:100000, date:D.today(), method:'cash', allocations:manual });
+    const mAl = Svc.distributions.allocationsOf(multi.rec);
+    eq('مجموع التفصيل = مبلغ التوزيع', U.round2(U.sum(mAl, a => a.amount)), 100000);
+    ok('التفصيل الصريح يُحفظ كما كُتب',
+       JSON.stringify(mAl.map(a => [a.key, a.amount])) === JSON.stringify(manual.map(a => [a.key, a.amount])),
+       JSON.stringify(mAl.map(a => [a.key, a.amount])));
+    ok('مصدر التفصيل مسجَّل', multi.rec.allocationSource === 'manual', multi.rec.allocationSource);
+
+    /* 3) التفصيل المقترح: بنسبة النصيب، ومجموعه مضبوط تماماً */
+    const prop = Svc.distributions.proposeAllocations(partner.id, D.startOfMonth(keys[0]), D.endOfMonth(keys[2]), 99999);
+    eq('التفصيل المقترح مجموعه = المبلغ بلا باقٍ', U.round2(U.sum(prop, a => a.amount)), 99999);
+    const shares = keys.map(k => Calc.partnerShare(Svc.periods.get(k).net, partner.sharePercent));
+    ok('الشهر الأكثر ربحاً يُقترح له النصيب الأكبر',
+       prop[shares.indexOf(Math.max(...shares))].amount === Math.max(...prop.map(a => a.amount)),
+       JSON.stringify(prop.map(a => [a.key, a.amount])));
+
+    /* 4) التفصيل الخاطئ يُرفض: لا يُحفظ مجموعٌ يخالف مبلغه */
+    let badSum = false;
+    try { await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(keys[0]),
+      periodTo:D.endOfMonth(keys[2]), amount:100000, date:D.today(), method:'cash',
+      allocations:[{ key:keys[0], amount:60000 }, { key:keys[1], amount:10000 }] }); }
+    catch(e){ badSum = e.code === 'VALIDATION' && !!e.details.allocations; }
+    ok('يُرفض تفصيل مجموعه لا يساوي المبلغ', badSum);
+    let stray = false;
+    try { await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(keys[0]),
+      periodTo:D.endOfMonth(keys[0]), amount:1000, date:D.today(), method:'cash',
+      allocations:[{ key:keys[2], amount:1000 }] }); }
+    catch(e){ stray = e.code === 'VALIDATION'; }
+    ok('يُرفض تفصيل بشهر خارج الفترة', stray);
+
+    /* 5) الكشف يقرأ التفصيل المحفوظ لا تقديراً */
+    const st = Svc.distributions.statement(partner.id);
+    const got = Object.fromEntries(st.periods.filter(p => keys.includes(p.key)).map(p => [p.key, p.paid]));
+    eq('كشف الشريكة: الشهر الأول', got[keys[0]], U.round2(50000 + 60000));
+    eq('كشف الشريكة: الشهر الثاني', got[keys[1]], 30000);
+    eq('كشف الشريكة: الشهر الثالث', got[keys[2]], 10000);
+    eq('مجموع ما فُصِّل = مجموع ما وُزّع', st.allocatedTotal, st.paid);
+    eq('إجمالي المقبوض = مجموع التوزيعات', st.paid,
+       U.round2(U.sum(Svc.distributions.ofPartner(partner.id), d => d.amount)));
+
+    /* 6) التعديل: المبلغ والتفصيل يتحرّكان معاً */
+    const upd = await Svc.distributions.update(multi.rec.id, { amount:120000,
+      allocations:[{ key:keys[0], amount:70000 }, { key:keys[1], amount:30000 }, { key:keys[2], amount:20000 }] });
+    eq('بعد التعديل: المجموع = المبلغ الجديد',
+       U.round2(U.sum(Svc.distributions.allocationsOf(upd.rec), a => a.amount)), 120000);
+    const upd2 = await Svc.distributions.update(multi.rec.id, { amount:60000 });
+    eq('تعديل المبلغ وحده يُعيد ضبط التفصيل تحته',
+       U.round2(U.sum(Svc.distributions.allocationsOf(upd2.rec), a => a.amount)), 60000);
+
+    /* 7) الإلغاء يُطابق من جديد */
+    const paidBefore = Svc.distributions.statement(partner.id).paid;
+    await Svc.distributions.remove(multi.rec.id);
+    const stAfter = Svc.distributions.statement(partner.id);
+    eq('الإلغاء يُنقص المقبوض بمقدار التوزيع', stAfter.paid, U.round2(paidBefore - 60000));
+    eq('بعد الإلغاء: ما فُصِّل = ما وُزّع', stAfter.allocatedTotal, stAfter.paid);
+
+    /* 8) التوزيع القديم بلا تفصيل: يُقال عنه ذلك ولا يُخمَّن */
+    const legacy = await Repos.distributions.create({ partnerId:partner.id,
+      periodFrom:D.startOfMonth(keys[0]), periodTo:D.endOfMonth(keys[2]), amount:45000,
+      date:D.today(), method:'cash', notes:'توزيع قديم', allocations:[], allocationUnavailable:true });
+    const stL = Svc.distributions.statement(partner.id);
+    ok('التوزيع القديم يُعدّ بلا تفصيل', Svc.distributions.isUnallocated(legacy));
+    eq('مجموع ما بلا تفصيل يُعرض على حدة', stL.unallocatedTotal, 45000);
+    eq('التوزيع القديم لا يُوزَّع تخميناً على الأشهر',
+       U.round2(U.sum(keys, k => Svc.distributions.allocatedTo(legacy, k))), 0);
+    eq('إجمالي المقبوض يبقى مضبوطاً رغم غياب التفصيل', stL.paid,
+       U.round2(stL.allocatedTotal + stL.unallocatedTotal));
+    ok('الكشف المطبوع يشرح التوزيع القديم',
+       T().Print.partnerStatementHtml(partner.id).includes('لم يُقسَم تخميناً'));
+
+    /* 9) ثابت عام: لا توزيع في القاعدة كلها مجموع تفصيله يخالف مبلغه */
+    const drift = Repos.distributions.list(true).filter(d => {
+      const al = Svc.distributions.allocationsOf(d);
+      return al.length && Math.abs(U.round2(U.sum(al, a => a.amount) - d.amount)) > 0.009;
+    });
+    ok('لا انحراف بين التفصيل والمبلغ في أي توزيع', drift.length === 0, drift.length);
+    ok('فحص السلامة لا يرى خللاً في التفصيل',
+       T().Integrity.scan().filter(x => /تفصيل توزيع/.test(x.type)).length === 0);
+    return results;
+  }
+
+  /* ============ المرحلة الثانية: الإقفال المُعان بقائمة مراجعة ============ */
+  async function periodClose(){
+    const { Svc, Repos, Calc, U, D, PayMethods } = T();
+    const key = D.monthsBack(7)[0];
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+    if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'تهيئة الاختبار').catch(() => {});
+    const cat = Repos.expCats.list()[0];
+    await Svc.finance.addRevenue({ date:from, amount:600000, source:'service',
+      description:'إيراد فترة الإقفال', method:'cash' });
+    await Svc.finance.addExpense({ date:from, amount:200000, categoryId:cat.id,
+      description:'مصروف فترة الإقفال', method:'cash' });
+
+    /* الملخّص يقول ما الذي يُقفَل عليه */
+    const sum = Svc.periods.summary(key);
+    eq('ملخّص الإقفال: الإيراد', sum.revenue, Calc.revenue(Repos.revenues.list(), from, to));
+    eq('ملخّص الإقفال: المصروف', sum.expense, Calc.expenses(Repos.expenses.list(), from, to));
+    eq('ملخّص الإقفال: صافي الربح', sum.net, U.round2(sum.revenue - sum.expense));
+    ok('الملخّص يفصل النقدي عن غيره',
+       typeof sum.cashIn === 'number' && typeof sum.nonCashIn === 'number'
+       && typeof sum.cashOut === 'number' && typeof sum.nonCashOut === 'number');
+    ok('الملخّص يعرض رأس المال والتوزيعات خارج الربح',
+       typeof sum.capitalIn === 'number' && typeof sum.distributions === 'number');
+    ok('الملخّص يعرض المتوقّع في الدرج آخر الفترة', typeof sum.endingExpectedCash === 'number');
+
+    /* مانع: طريقة دفع غير معروفة داخل الفترة */
+    const ghost = await Repos.expenses.create({ date:from, amount:33000, categoryId:cat.id,
+      description:'مصروف بلا طريقة', method:PayMethods.UNKNOWN_KEY });
+    const ck1 = Svc.periods.checklist(key);
+    ok('القائمة تكشف السجل مجهول الطريقة',
+       ck1.blocking.some(b => b.code === 'UNKNOWN_METHOD'), JSON.stringify(ck1.blocking.map(b => b.code)));
+    ok('القائمة تقول إن الفترة غير جاهزة', ck1.ok === false);
+    let blocked = false;
+    try { await Svc.periods.close(key); } catch(e){ blocked = e.code === 'PERIOD_BLOCKED'; }
+    ok('المانع يمنع الإقفال فعلاً', blocked);
+    ok('الفترة لم تُقفل رغم المحاولة', !Svc.periods.isClosed(key));
+    await Svc.finance.updateExpense(ghost.id, { date:from, amount:33000, categoryId:cat.id,
+      description:'مصروف بلا طريقة', method:'cash' });
+    ok('حلّ المانع يُخرجه من القائمة',
+       !Svc.periods.checklist(key).blocking.some(b => b.code === 'UNKNOWN_METHOD'));
+
+    /* مانع: مستند شراء مسودة داخل الفترة */
+    const sup = await Svc.suppliers.save(null, { name:'مورّد الإقفال' });
+    const { rec: prod } = await Svc.inventory.saveProduct(null, { name:'صنف الإقفال', price:3000, cost:1000 });
+    const dr = await Svc.purchases.save(null, { supplierId:sup.id, date:from,
+      lines:[{ productId:prod.id, qty:4, unitCost:1000 }] });
+    ok('القائمة تكشف مستند الشراء المسودة',
+       Svc.periods.checklist(key).blocking.some(b => b.code === 'DRAFT_PURCHASE'));
+    let blocked2 = false;
+    try { await Svc.periods.close(key); } catch(e){ blocked2 = e.code === 'PERIOD_BLOCKED'; }
+    ok('المسودة تمنع الإقفال', blocked2);
+    await Svc.purchases.post(dr.rec.id);
+    const ck2 = Svc.periods.checklist(key);
+    ok('ترحيل المسودة يرفع المانع', !ck2.blocking.some(b => b.code === 'DRAFT_PURCHASE'));
+
+    /* تنبيه يُقَرّ ولا يمنع */
+    ok('المستحق للموردين تنبيه لا مانع',
+       ck2.warnings.some(w => w.code === 'PAYABLES') && !ck2.blocking.some(b => b.code === 'PAYABLES'),
+       JSON.stringify({ w:ck2.warnings.map(w => w.code), b:ck2.blocking.map(b => b.code) }));
+    ok('القائمة تفصل المانع عن التنبيه عن المعلومة',
+       Array.isArray(ck2.blocking) && Array.isArray(ck2.warnings) && Array.isArray(ck2.info));
+
+    /* الإقفال الناجح يحفظ ما أُقرّ */
+    const closed = await Svc.periods.close(key);
+    ok('الفترة أُقفلت', Svc.periods.isClosed(key));
+    eq('الربح المثبَّت = إيراد الفترة − مصروفها', closed.net, U.round2(closed.revenue - closed.expense));
+    ok('الإقفال يحفظ لقطة الملخّص', !!closed.snapshot && closed.snapshot.key === key);
+    ok('الإقفال يحفظ التنبيهات التي أُقرّت', Array.isArray(closed.acknowledged) && closed.acknowledged.length > 0,
+       JSON.stringify((closed.acknowledged || []).map(a => a.code)));
+    ok('ملخّص الإقفال يُطبع', (T().Print.periodCloseHtml(key) || '').includes('ملخّص إقفال فترة'));
+
+    /* الفترة المقفلة لا تتحرّك صامتة */
+    const netAfter = closed.net;
+    let guarded = false;
+    try { await Svc.finance.addExpense({ date:from, amount:9999, categoryId:cat.id,
+      description:'مصروف متأخر', method:'cash' }); }
+    catch(e){ guarded = e.code === 'PERIOD_CLOSED'; }
+    ok('لا يُسجَّل مصروف في فترة مقفلة بلا تصحيح مُعلَّل', guarded);
+    let guardedRev = false;
+    try { await Svc.finance.addRevenue({ date:from, amount:9999, source:'service',
+      description:'إيراد متأخر', method:'cash' }); }
+    catch(e){ guardedRev = e.code === 'PERIOD_CLOSED'; }
+    ok('لا يُسجَّل إيراد في فترة مقفلة بلا تصحيح مُعلَّل', guardedRev);
+    eq('الربح المثبَّت لم يتحرّك', Svc.periods.get(key).net, netAfter);
+
+    /* التصحيح ممكن لكنه مُعلَّل ومسجَّل */
+    const corrected = await Svc.finance.addExpense({ date:from, amount:5000, categoryId:cat.id,
+      description:'فاتورة وصلت متأخرة', method:'cash', correctionReason:'فاتورة كهرباء وصلت بعد الإقفال' });
+    ok('التصحيح المُعلَّل يمرّ', !!corrected.id);
+    ok('التصحيح يُسجَّل في سجل الأحداث',
+       T().Audit.recent(60).some(a => a.entity === 'period' && a.action === 'correction'));
+    eq('التصحيح لا يعيد كتابة الربح المثبَّت', Svc.periods.get(key).net, netAfter);
+    ok('الرقم المثبَّت يختلف عن الرقم المتحرّك بعد التصحيح',
+       Svc.periods.profitOf(key).net !== Svc.periods.get(key).net,
+       `${Svc.periods.profitOf(key).net} / ${Svc.periods.get(key).net}`);
+
+    /* التوزيع بعد الإقفال يعمل على الرقم المثبَّت */
+    const partner = await Repos.partners.create({ name:'شريكة الإقفال', sharePercent:25 });
+    const ent = Svc.distributions.entitlement(partner.id, from, to);
+    eq('النصيب محسوب على الربح المثبَّت', ent.share, Calc.partnerShare(netAfter, 25));
+    const dist = await Svc.distributions.create({ partnerId:partner.id, periodFrom:from, periodTo:to,
+      amount:U.round2(ent.share / 2), date:D.today(), method:'cash' });
+    ok('التوزيع بعد الإقفال ممكن', !!dist.rec.id);
+    eq('التوزيع لا يقلّل الربح المثبَّت', Svc.periods.get(key).net, netAfter);
+    let reopenBlocked = false;
+    try { await Svc.periods.reopen(key, 'اختبار'); } catch(e){ reopenBlocked = e.code === 'LINKED'; }
+    ok('لا تُعاد فتح فترة وُزّعت أرباحها', reopenBlocked);
     return results;
   }
 
@@ -808,6 +1299,7 @@ window.TGTests = (() => {
     reset(){ results = []; },
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
+    capitalMethods, purchases, allocations, periodClose,
     writeProbe, probeExists, totals, endDates, downgrade
   };
 })();

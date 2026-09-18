@@ -96,7 +96,7 @@ group('ثوابت الاشتراك', async (browser, url) => {
   record('ثوابت الاشتراك', rows, errors);
 });
 
-group('الترقية v4 ⇐ v6', async (browser, url) => {
+group('الترقية v4 ⇐ v7', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -105,10 +105,10 @@ group('الترقية v4 ⇐ v6', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v4 ⇐ v6', rows, errors);
+  record('الترقية v4 ⇐ v7', rows, errors);
 });
 
-group('الترقية v5 ⇐ v6', async (browser, url) => {
+group('الترقية v5 ⇐ v7', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -117,10 +117,10 @@ group('الترقية v5 ⇐ v6', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v5 ⇐ v6', rows, errors);
+  record('الترقية v5 ⇐ v7', rows, errors);
 });
 
-group('الترقية v3 ⇐ v6', async (browser, url) => {
+group('الترقية v3 ⇐ v7', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -129,7 +129,68 @@ group('الترقية v3 ⇐ v6', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v3 ⇐ v6', rows, errors);
+  record('الترقية v3 ⇐ v7', rows, errors);
+});
+
+group('الترقية v6 ⇐ v7', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.migrations(6);
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الترقية v6 ⇐ v7', rows, errors);
+});
+
+/* ---------------------- مجموعات المرحلة الثانية ---------------------- */
+group('طرق رأس المال', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.capitalMethods();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('طرق رأس المال', rows, errors);
+});
+
+group('دورة الشراء من المورّد', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.purchases();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('دورة الشراء من المورّد', rows, errors);
+});
+
+group('تفصيل توزيعات الشركاء', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.allocations();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('تفصيل توزيعات الشركاء', rows, errors);
+});
+
+group('الإقفال المُعان', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.periodClose();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الإقفال المُعان', rows, errors);
 });
 
 group('نموذج الحصص', async (browser, url) => {
