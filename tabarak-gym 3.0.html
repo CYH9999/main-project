@@ -627,7 +627,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'6.0.0', schema:6, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.0.0', schema:7, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -809,7 +809,10 @@ const SCHEMA = {
   suppliers:         { key:'id' },   /* موردو المخزون */
   /* v6: التشغيل اليومي — ملاحظات الفريق المؤرَّخة، وتوزيعات أرباح الشركاء */
   notes:             { key:'id' },   /* ملاحظة موظفة على مشتركة: نصّ ووقت وكاتبة */
-  distributions:     { key:'id' }    /* توزيع أرباح لشريكة عن فترة مقفلة — نقد لا ربح */
+  distributions:     { key:'id' },   /* توزيع أرباح لشريكة عن فترة مقفلة — نقد لا ربح */
+  /* v7: دورة الشراء الكاملة — مستند شراء بسطوره، ودفعاته للمورّد */
+  purchases:         { key:'id' },   /* مستند شراء من مورّد: سطوره ومستحقّه وحالته */
+  purchasePayments:  { key:'id' }    /* دفعة تُسدَّد لمورّد على مستند شراء */
 };
 const STORE_NAMES = Object.keys(SCHEMA);
 /* اسم كل جدول بلغة صاحبة النادي. مصدر واحد تقرأ منه شاشة إعادة التهيئة وغيرها،
@@ -823,7 +826,8 @@ const STORE_LABELS = {
   goals:'هدف', memberDocs:'مستند مشتركة', customFields:'حقل يعرّفه النادي', receipts:'وصل',
   subEvents:'حدث اشتراك (تجميد/تمديد)', credits:'حركة رصيد حصص', leads:'مهتمّة', tasks:'متابعة',
   classSessions:'حصة مجدولة', bookings:'حجز حصة', cashDays:'إقفال صندوق يومي', suppliers:'مورّد',
-  notes:'ملاحظة على مشتركة', distributions:'توزيع أرباح'
+  notes:'ملاحظة على مشتركة', distributions:'توزيع أرباح',
+  purchases:'مستند شراء', purchasePayments:'دفعة مورّد'
 };
 const storeLabel = s => STORE_LABELS[s] || s;
 
@@ -1003,7 +1007,9 @@ const Repos = {
   cashDays:     Repo('cashDays','csh'),
   suppliers:    Repo('suppliers','sup'),
   notes:        Repo('notes','not'),
-  distributions:Repo('distributions','dst')
+  distributions:Repo('distributions','dst'),
+  purchases:    Repo('purchases','pur'),
+  purchasePayments: Repo('purchasePayments','ppm')
 };
 
 
@@ -1013,7 +1019,7 @@ const DEFAULT_SETTINGS = {
   gymName:'تبارك جيم', currency:'IQD',
   expiringSoonDays:7, urgentDays:3, consecutiveGapDays:15,
   backupReminderDays:14, lastBackupAt:null,
-  unusualExpenseFactor:3, memberSeq:0, saleSeq:0, demoLoaded:false, initialized:false,
+  unusualExpenseFactor:3, memberSeq:0, saleSeq:0, purchaseSeq:0, demoLoaded:false, initialized:false,
   /* طرق الدفع: مفتاح ثابت + تسمية عربية قابلة للتحرير (انظر PayMethods) */
   paymentMethods:[{ key:'cash', label:'نقد', active:true }, { key:'transfer', label:'تحويل', active:true },
                   { key:'card', label:'بطاقة', active:true }],
@@ -1071,7 +1077,10 @@ const DEFAULT_SETTINGS = {
   /* الشاشة التي يفتح عليها البرنامج: desk | dashboard */
   startScreen:'desk',
   /* الفترات المحاسبية المقفلة — يثبّت كلٌّ منها ربحه لحظة الإقفال */
-  closedPeriods:[]
+  closedPeriods:[],
+  /* تصحيح سجل مالي داخل فترة مقفلة: ممنوع افتراضاً. تفعيله لا يجعله صامتاً —
+     يبقى كل تصحيح مشروطاً بسبب مكتوب ومسجَّل في سجل الأحداث. */
+  allowClosedPeriodEdits:false
 };
 const Settings = {
   data: U.clone(DEFAULT_SETTINGS),
@@ -1134,6 +1143,12 @@ const PayMethods = {
   /* مفتاح محجوز للسجلات القديمة التي لم تُسجَّل طريقة صرفها. لا يُعرَض في أي قائمة
      اختيار، ولا يدخل حساب الدرج: التخمين في الصندوق أسوأ من الاعتراف بالجهل. */
   UNKNOWN_KEY: 'unknown',
+  /* مفتاح محجوز ثانٍ: «على الحساب». ليس طريقة دفع تُختار، بل وصفٌ لالتزامٍ نشأ
+     ولم يُدفع بعد (شراء من مورّد بالأجل). لا يُعرَض في قوائم الاختيار ولا يدخل
+     الدرج: لم يخرج منه شيء بعد. ما يخرج فعلاً تقوله دفعة المورّد بطريقتها. */
+  CREDIT_KEY: 'credit',
+  RESERVED: ['unknown','credit'],
+  isReserved(key){ return this.RESERVED.includes(String(key)); },
   /* يقبل الشكل القديم (مصفوفة نصوص) والجديد (مصفوفة كائنات) بلا ترقية مسبقة */
   all(){
     const raw = Settings.get('paymentMethods');
@@ -1155,6 +1170,7 @@ const PayMethods = {
   /* التسمية المعروضة. مفتاح لم يعد معرّفاً يُعرَض كما هو بدل أن يختفي صامتاً. */
   label(key){
     if (key === this.UNKNOWN_KEY) return 'غير معروفة';
+    if (key === this.CREDIT_KEY) return 'على الحساب';
     const m = this.get(key); return m ? m.label : (U.norm(key) || '—');
   },
   options(inclInactive){ return (inclInactive ? this.all() : this.active()).map(m => ({ v:m.key, t:m.label })); },
@@ -1173,7 +1189,7 @@ const PayMethods = {
   resolve(value){
     const v = U.norm(value);
     if (!v) return null;
-    if (v === this.UNKNOWN_KEY) return v;
+    if (this.isReserved(v)) return v;
     if (this.all().some(m => m.key === v)) return v;
     if (this.DEFAULTS.some(m => m.key === v)) return v;
     return this.keyOfLabel(v);
@@ -1194,7 +1210,24 @@ const PayMethods = {
   usage(key){
     return Repos.payments.list(true).filter(p => p.method === key).length
          + Repos.revenues.list(true).filter(r => r.method === key).length
-         + Repos.expenses.list(true).filter(e => e.method === key).length;
+         + Repos.expenses.list(true).filter(e => e.method === key).length
+         + Repos.capital.list(true).filter(c => c.method === key).length
+         + Repos.distributions.list(true).filter(d => d.method === key).length
+         + Repos.purchasePayments.list(true).filter(p => p.method === key).length;
+  },
+  /* السجلات المالية التي لم تُسجَّل طريقتها — تُعرض للمراجعة ولا تُخمَّن */
+  unknownRecords(from, to){
+    const inRange = r => (!from || D.cmp(r.date, from) >= 0) && (!to || D.cmp(r.date, to) <= 0);
+    const pick = (rows, kind, label) => rows.filter(r => r.method === this.UNKNOWN_KEY && inRange(r))
+      .map(r => ({ kind, label, id:r.id, date:r.date, amount:Number(r.amount) || 0,
+                   description:U.norm(r.description || r.notes || '') }));
+    return [].concat(
+      pick(Repos.payments.list(), 'payment', 'دفعة'),
+      pick(Repos.revenues.list(), 'revenue', 'إيراد'),
+      pick(Repos.expenses.list(), 'expense', 'مصروف'),
+      pick(Repos.capital.list(), 'capital', 'حركة رأس مال'),
+      pick(Repos.distributions.list(), 'distribution', 'توزيع أرباح'),
+      pick(Repos.purchasePayments.list(), 'purchasePayment', 'دفعة مورّد'));
   }
 };
 
@@ -1367,9 +1400,20 @@ const Calc = {
      التوزيع يخرج من الدرج فيقلّل السيولة، ولا يظهر في المصروفات فلا يقلّل الربح:
      نادٍ يوزّع أرباحه ليس نادياً خسر. */
   distributed(distributions, from, to){ return U.sum(this.inRange(distributions || [], from, to), d => d.amount); },
-  cash(revenues, expenses, capital, distributions){
+  /* السيولة = رأس المال + الإيرادات − المصروفات − السحوبات − التوزيعات + ما لم يُدفع بعد للموردين.
+     مستند الشراء يُسجَّل مصروفاً كاملاً لحظة ترحيله (التكلفة تحقّقت)، لكن ما لم
+     يُسدَّد منه لم يخرج من الجيب بعد. الحدّ الأخير يعيده حتى تبقى السيولة رقماً
+     يعني «ما يمكن صرفه اليوم» لا «ما التزمنا به». */
+  payables(purchases, purchasePayments){
+    const paid = {};
+    (purchasePayments || []).filter(p => !p.archived)
+      .forEach(p => { paid[p.purchaseId] = U.round2((paid[p.purchaseId] || 0) + (Number(p.amount) || 0)); });
+    return U.round2(U.sum((purchases || []).filter(p => !p.archived && p.status === 'posted'),
+      p => Math.max(0, U.round2((Number(p.total) || 0) - (paid[p.id] || 0)))));
+  },
+  cash(revenues, expenses, capital, distributions, payables){
     return U.round2(this.capitalIn(capital) + this.revenue(revenues) - this.expenses(expenses)
-                    - this.withdrawals(capital) - this.distributed(distributions));
+                    - this.withdrawals(capital) - this.distributed(distributions) + (Number(payables) || 0));
   },
   partnerShare(netProfit, percent){ return U.round2((Number(netProfit)||0) * (Number(percent)||0) / 100); },
   bySource(revenues, from, to){
@@ -1431,6 +1475,19 @@ const Calc = {
     const disc = Math.min(subtotal, Math.max(0, Number(invoiceDiscount)||0));
     return { subtotal, discount:U.round2(disc), total:U.round2(subtotal - disc),
              items:U.round2(U.sum(lines||[], l=>Number(l.qty)||0)) };
+  },
+  /* ---------------------------- مستند شراء ----------------------------
+     سطر الشراء يقول: كم اشترينا وبكم. الإجمالي مستحقٌّ للمورّد، وما دُفع منه
+     شيء آخر يُقرأ من دفعاته — ولا يُشتقّ أحدهما من الآخر. */
+  purchaseLineTotal(line){
+    const qty = Math.abs(Number(line.qty) || 0), uc = Math.max(0, Number(line.unitCost) || 0);
+    return U.round2(qty * uc);
+  },
+  purchaseTotals(lines, discount){
+    const subtotal = U.round2(U.sum(lines || [], l => this.purchaseLineTotal(l)));
+    const disc = Math.min(subtotal, Math.max(0, Number(discount) || 0));
+    return { subtotal, discount:U.round2(disc), total:U.round2(subtotal - disc),
+             items:U.round2(U.sum(lines || [], l => Math.abs(Number(l.qty) || 0))) };
   },
   /* ربح البيع = المبيعات − تكلفة ما بيع (من تكلفة الصنف وقت البيع) */
   saleProfit(sales, costByProduct, from, to){
@@ -1568,6 +1625,10 @@ const Validate = {
     if (!this.positive(d.amount)) vErr(r,'amount','المبلغ يجب أن يكون أكبر من صفر');
     if (!['injection','withdrawal'].includes(d.type)) vErr(r,'type','نوع الحركة غير صحيح');
     if (!U.norm(d.description)) vErr(r,'description','الوصف مطلوب');
+    /* الطريقة تُسجَّل مع كل حركة رأس مال: بدونها لا يُعرف ما دخل الدرج مما وصل بتحويل.
+       «على الحساب» لا معنى له هنا: رأس المال لا يُضخّ بالأجل. */
+    if (d.method != null && d.method !== '' && PayMethods.resolve(d.method) === PayMethods.CREDIT_KEY)
+      vErr(r,'method','طريقة غير صالحة لحركة رأس مال');
     return r;
   },
   training(d){
@@ -2223,6 +2284,7 @@ Svc.payments = {
     const already = this.paidFor(d.refType, d.refId);
     const val = this.validate(d, doc, already);
     if (!val.ok) throw new AppError('بيانات الدفعة غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(d.date, 'قبض دفعة', d);
     const amount = Money.clean(d.amount);
     const memberId = d.memberId || doc.memberId || null;
     const member = memberId ? Repos.members.get(memberId) : null;
@@ -2374,11 +2436,27 @@ Svc.inventory = {
     await Audit.log('stock','move',`${this.MOVE_LABEL[d.type]} ${U.round2(qty)} ${product.unit||''} — ${product.name}`, rec.id);
     return rec;
   },
+  /* متوسط التكلفة المرجّح محسوباً من الحركات نفسها لا من رقمٍ محفوظ تراكمَ عليه
+     الخطأ. يُستعمل حين تُلغى عملية شراء: الرقم التراكمي لا يُعكَس بالطرح، أمّا
+     إعادة الحساب من الحركات الباقية فتُعطي القيمة الصحيحة دائماً.
+     الأسعار التاريخية لا تتأثر: كل سطر بيع يحمل تكلفته وقت البيع. */
+  async recomputeCost(productId){
+    const pr = Repos.products.get(productId);
+    if (!pr) return null;
+    const rows = Repos.stockMoves.list().filter(m => m.productId === productId
+      && this.IN_TYPES.includes(m.type) && m.type !== 'return' && (Number(m.unitCost) || 0) > 0);
+    const qty = U.round2(U.sum(rows, m => Math.abs(Number(m.qty) || 0)));
+    if (qty <= 0) return pr;
+    const cost = U.round2(U.sum(rows, m => Math.abs(Number(m.qty) || 0) * (Number(m.unitCost) || 0)) / qty);
+    if (cost === U.round2(Number(pr.cost) || 0)) return pr;
+    return Repos.products.update(productId, { cost });
+  },
   /* حذف حركة يسحب معه مصروف الشراء المرتبط بها */
   async removeMove(id){
     const mv = Repos.stockMoves.get(id);
     if (!mv) throw new AppError('الحركة غير موجودة','NOT_FOUND');
     if (mv.refType === 'sale') throw new AppError('هذه الحركة ناتجة عن فاتورة بيع — ألغي الفاتورة بدلاً منها','LINKED');
+    if (mv.refType === 'purchase') throw new AppError('هذه الحركة ناتجة عن مستند شراء — ألغي المستند بدلاً منها','LINKED');
     if (mv.expenseId && Repos.expenses.get(mv.expenseId)) await DB.remove('expenses', mv.expenseId);
     await Repos.stockMoves.hardDelete(id);
     await Audit.log('stock','delete',`حذف حركة مخزون`, id);
@@ -2490,9 +2568,16 @@ Svc.sales = {
 /* ===== src/app/services/60-finance.js ================================================ */
 /* ------------------------------ المالية ------------------------------ */
 Svc.finance = {
+  /* مصدر واحد لرقم السيولة في كل الشاشات — لا تُعاد صياغته في كل مكان */
+  payables(){ return Calc.payables(Repos.purchases.list(), Repos.purchasePayments.list()); },
+  liquidity(){
+    return Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list(),
+                     Repos.distributions.list(), this.payables());
+  },
   async addRevenue(d){
     const val = Validate.money(d,'revenue');
     if (!val.ok) throw new AppError('بيانات الإيراد غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(d.date, 'إيراد', d);
     const rec = await Repos.revenues.create({ date:d.date, amount:Money.clean(d.amount), source:d.source,
       description:U.norm(d.description), method:PayMethods.normalize(d.method), notes:U.norm(d.notes), refId:d.refId||null, isDemo:!!d.isDemo });
     await Audit.log('revenue','create',`إيراد ${Money.fmt(rec.amount)} — ${rec.description}`, rec.id);
@@ -2504,6 +2589,8 @@ Svc.finance = {
     const cur = Repos.revenues.get(id);
     if (cur && cur.paymentId) throw new AppError('هذا الإيراد ناتج عن دفعة — عدّليها من سجل دفعات المستند','LINKED');
     if (cur && cur.source === 'subscription' && cur.refId) throw new AppError('هذا الإيراد مرتبط باشتراك — عدّليه من صفحة الاشتراكات','LINKED');
+    await Svc.periods.guardWrite(cur ? cur.date : d.date, 'تعديل إيراد', d);
+    if (cur && cur.date !== d.date) await Svc.periods.guardWrite(d.date, 'نقل إيراد', d);
     const rec = await Repos.revenues.update(id, { date:d.date, amount:Money.clean(d.amount), source:d.source,
       description:U.norm(d.description), method:PayMethods.normalize(d.method), notes:U.norm(d.notes) });
     await Audit.log('revenue','update',`تعديل إيراد ${Money.fmt(rec.amount)}`, id);
@@ -2520,6 +2607,7 @@ Svc.finance = {
   async addExpense(d){
     const val = Validate.money(d,'expense');
     if (!val.ok) throw new AppError('بيانات المصروف غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(d.date, 'مصروف', d);
     /* طريقة الصرف تُسجَّل مع كل مصروف: بدونها لا يُعرف ما خرج من الدرج مما خرج بتحويل */
     const rec = await Repos.expenses.create({ date:d.date, amount:Money.clean(d.amount), categoryId:d.categoryId,
       description:U.norm(d.description), payee:U.norm(d.payee), notes:U.norm(d.notes),
@@ -2532,8 +2620,11 @@ Svc.finance = {
     const cur = Repos.expenses.get(id);
     if (cur && cur.refType === 'payroll') throw new AppError('هذا المصروف مرتبط براتب — عدّليه من صفحة الرواتب','LINKED');
     if (cur && cur.refType === 'stock') throw new AppError('هذا المصروف ناتج عن حركة شراء — عدّليها من صفحة المخزون','LINKED');
+    if (cur && cur.refType === 'purchase') throw new AppError('هذا المصروف ناتج عن مستند شراء — عدّليه من شاشة المشتريات','LINKED');
     const val = Validate.money(d,'expense');
     if (!val.ok) throw new AppError('بيانات المصروف غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(cur ? cur.date : d.date, 'تعديل مصروف', d);
+    if (cur && cur.date !== d.date) await Svc.periods.guardWrite(d.date, 'نقل مصروف', d);
     const rec = await Repos.expenses.update(id, { date:d.date, amount:Money.clean(d.amount), categoryId:d.categoryId,
       description:U.norm(d.description), payee:U.norm(d.payee), notes:U.norm(d.notes),
       method:PayMethods.normalize(d.method) });
@@ -2544,6 +2635,7 @@ Svc.finance = {
     const e = Repos.expenses.get(id);
     if (e && e.refType === 'payroll' && on) throw new AppError('لا يمكن أرشفة مصروف راتب مباشرة — ألغي الدفع من صفحة الرواتب','LINKED');
     if (e && e.refType === 'stock' && on) throw new AppError('لا يمكن أرشفة مصروف شراء مباشرة — احذفي حركة الشراء من صفحة المخزون','LINKED');
+    if (e && e.refType === 'purchase' && on) throw new AppError('لا يمكن أرشفة مصروف مستند شراء مباشرة — ألغي المستند من شاشة المشتريات','LINKED');
     const rec = await Repos.expenses.archive(id, on);
     await Audit.log('expense', on?'archive':'restore', `${on?'أرشفة':'استرجاع'} مصروف ${e?Money.fmt(e.amount):''}`, id);
     return rec;
@@ -2552,13 +2644,35 @@ Svc.finance = {
     const val = Validate.capital(d);
     if (!val.ok) throw new AppError('بيانات الحركة غير صحيحة','VALIDATION', val.errors);
     if (d.type === 'withdrawal'){
-      const cash = Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list(), Repos.distributions.list());
+      const cash = this.liquidity();
       if (Money.clean(d.amount) > cash) val.warnings.push(`السحب أكبر من السيولة المتاحة (${Money.fmt(cash)})`);
     }
+    const method = PayMethods.normalize(d.method);
+    if (d.type === 'withdrawal' && PayMethods.isCash(method)){
+      const drawer = Svc.cashbook.expected(d.date);
+      if (Money.clean(d.amount) > drawer.expected)
+        val.warnings.push(`السحب نقداً أكبر ممّا في الدرج المتوقّع يوم ${D.fmt(d.date)} (${Money.fmt(drawer.expected)})`);
+    }
+    await Svc.periods.guardWrite(d.date, 'حركة رأس مال', d);
     const rec = await Repos.capital.create({ date:d.date, amount:Money.clean(d.amount), type:d.type,
-      partnerId:d.partnerId||null, description:U.norm(d.description), notes:U.norm(d.notes), isDemo:!!d.isDemo });
-    await Audit.log('capital','create',`${d.type==='injection'?'ضخ رأس مال':'سحب'} ${Money.fmt(rec.amount)}`, rec.id);
+      kind: d.type === 'withdrawal' ? 'capital_return' : 'capital_injection',
+      method, partnerId:d.partnerId||null, description:U.norm(d.description), notes:U.norm(d.notes), isDemo:!!d.isDemo });
+    await Audit.log('capital','create',
+      `${d.type==='injection'?'ضخ رأس مال':'استرجاع رأس مال'} ${Money.fmt(rec.amount)} — ${PayMethods.label(method)}`, rec.id);
     return { rec, warnings:val.warnings };
+  },
+  /* السجل القديم الذي لم تُسجَّل طريقته يُصحَّح صراحةً بفعلٍ مسجَّل، لا يُخمَّن.
+     وهذا وحده ما يُخرج مبلغاً من خانة «غير معروفة» إلى حساب الدرج. */
+  async setCapitalMethod(id, method){
+    const c = Repos.capital.get(id);
+    if (!c) throw new AppError('الحركة غير موجودة','NOT_FOUND');
+    const next = PayMethods.resolve(method);
+    if (!next || next === PayMethods.UNKNOWN_KEY || next === PayMethods.CREDIT_KEY)
+      throw new AppError('اختاري طريقة صالحة','VALIDATION', { method:'طريقة غير صالحة' });
+    const rec = await Repos.capital.update(id, { method:next });
+    await Audit.log('capital','method',
+      `تحديد طريقة حركة رأس مال ${Money.fmt(c.amount)} — ${PayMethods.label(next)}`, id);
+    return rec;
   },
   async archiveCapital(id, on=true){
     const c = Repos.capital.get(id);
@@ -2583,7 +2697,7 @@ Svc.finance = {
       capitalIn:Calc.capitalIn(cap, from, to), withdrawals:Calc.withdrawals(cap, from, to),
       /* التوزيعات تُعرض بجانب الربح لا داخله: صافي الربح أعلاه لا يطرحها */
       distributions:Calc.distributed(dst, from, to),
-      capitalBalance:Calc.capitalBalance(cap), cash:Calc.cash(rev, exp, cap, dst)
+      capitalBalance:Calc.capitalBalance(cap), payables:this.payables(), cash:this.liquidity()
     };
   }
 };
@@ -4068,11 +4182,15 @@ Svc.cashbook = {
   movement(date){
     const paymentsAll = Repos.payments.list().filter(p => p.date === date);
     const otherAll = Repos.revenues.list().filter(r => r.date === date && !r.paymentId);
-    const expensesAll = Repos.expenses.list().filter(e => e.date === date);
-    const capIn = Repos.capital.list().filter(c => c.date === date && c.type === 'injection');
-    const capOut = Repos.capital.list().filter(c => c.date === date && c.type === 'withdrawal');
+    /* مصروف مستند الشراء ليس حدثاً نقدياً: الالتزام نشأ، وما خرج فعلاً تقوله
+       دفعة المورّد بطريقتها. إدخاله هنا يحسب الشراء مرتين في يوم واحد. */
+    const expensesAll = Repos.expenses.list().filter(e => e.date === date && e.refType !== 'purchase');
+    const capInAll = Repos.capital.list().filter(c => c.date === date && c.type === 'injection');
+    const capOutAll = Repos.capital.list().filter(c => c.date === date && c.type === 'withdrawal');
     /* توزيع الأرباح نقدٌ يخرج من الدرج اليوم وإن لم يكن مصروفاً في التقارير */
     const distAll = Repos.distributions.list().filter(x => x.date === date);
+    /* دفعات الموردين: مالٌ يخرج اليوم بطريقته، ولا يُخصم من الربح (خُصم عند الترحيل) */
+    const supPayAll = Repos.purchasePayments.list().filter(x => x.date === date);
 
     const isUnknown = x => x.method === PayMethods.UNKNOWN_KEY;
     const paymentsIn = paymentsAll.filter(p => this.isCash(p.method));
@@ -4082,9 +4200,19 @@ Svc.cashbook = {
     const nonCashOut = expensesAll.filter(e => !this.isCash(e.method) && !isUnknown(e));
     const nonCashIn = paymentsAll.filter(p => !this.isCash(p.method));
 
+    /* رأس المال يدخل الدرج بقدر ما سُجّل نقداً وحده. التحويل يزيد السيولة ولا
+       يزيد ما في الدرج، وما لم تُسجَّل طريقته يُعزَل للمراجعة بدل أن يُخمَّن. */
+    const capIn = capInAll.filter(c => this.isCash(c.method));
+    const capOut = capOutAll.filter(c => this.isCash(c.method));
+    const capUnknown = capInAll.concat(capOutAll).filter(isUnknown);
+    const capNonCashIn = capInAll.filter(c => !this.isCash(c.method) && !isUnknown(c));
+    const capNonCashOut = capOutAll.filter(c => !this.isCash(c.method) && !isUnknown(c));
+
     const distOut = distAll.filter(x => this.isCash(x.method));
+    const supOut = supPayAll.filter(x => this.isCash(x.method));
     const cashIn = U.round2(U.sum(paymentsIn, p => p.amount) + U.sum(otherIn, r => r.amount) + U.sum(capIn, c => c.amount));
-    const cashOut = U.round2(U.sum(out, e => e.amount) + U.sum(capOut, c => c.amount) + U.sum(distOut, d => d.amount));
+    const cashOut = U.round2(U.sum(out, e => e.amount) + U.sum(capOut, c => c.amount)
+                             + U.sum(distOut, d => d.amount) + U.sum(supOut, x => x.amount));
     /* غير النقدي يُعرض ليُطمأنّ إليه، ولا يدخل حساب الدرج */
     const nonCash = U.round2(U.sum(nonCashIn, p => p.amount));
 
@@ -4098,21 +4226,34 @@ Svc.cashbook = {
     };
     paymentsAll.forEach(p => bump(p.method, 'in', p.amount));
     otherAll.forEach(r => bump(r.method, 'in', r.amount));
-    capIn.forEach(c => bump(PayMethods.CASH_KEY, 'in', c.amount));
+    capInAll.forEach(c => bump(c.method, 'in', c.amount));
     expensesAll.forEach(e => bump(e.method, 'out', e.amount));
-    capOut.forEach(c => bump(PayMethods.CASH_KEY, 'out', c.amount));
+    capOutAll.forEach(c => bump(c.method, 'out', c.amount));
     distAll.forEach(x => bump(x.method, 'out', x.amount));
+    supPayAll.forEach(x => bump(x.method, 'out', x.amount));
     const byMethod = U.sortBy(Object.values(map), m => (m.key === PayMethods.CASH_KEY ? '0' : '1') + m.label);
 
     return { date, cashIn, cashOut, nonCash, byMethod,
              unknownOut:U.round2(U.sum(unknownOut, e => e.amount)),
              nonCashOut:U.round2(U.sum(nonCashOut, e => e.amount)),
+             /* حركات رأس مال بلا طريقة مسجّلة: معزولة عن الدرج ومعروضة للمراجعة */
+             capitalUnknown:U.round2(U.sum(capUnknown, c => c.amount)),
+             capitalNonCashIn:U.round2(U.sum(capNonCashIn, c => c.amount)),
+             capitalNonCashOut:U.round2(U.sum(capNonCashOut, c => c.amount)),
+             capitalCashIn:U.round2(U.sum(capIn, c => c.amount)),
+             capitalCashOut:U.round2(U.sum(capOut, c => c.amount)),
+             supplierPaidCash:U.round2(U.sum(supOut, x => x.amount)),
+             supplierPaidNonCash:U.round2(U.sum(supPayAll.filter(x => !this.isCash(x.method)), x => x.amount)),
              counts:{ payments:paymentsIn.length, otherRevenue:otherIn.length, expenses:out.length,
                       capitalIn:capIn.length, capitalOut:capOut.length, nonCash:nonCashIn.length,
                       unknownOut:unknownOut.length, nonCashOut:nonCashOut.length,
+                      capitalUnknown:capUnknown.length, capitalNonCash:capNonCashIn.length + capNonCashOut.length,
+                      supplierPayments:supPayAll.length, supplierPaymentsCash:supOut.length,
                       distributions:distAll.length, distributionsCash:distOut.length },
              distributionsOut:U.round2(U.sum(distOut, d => d.amount)),
-             rows:{ paymentsIn, otherIn, out, capIn, capOut, unknownOut, nonCashOut, nonCashIn, distributions:distAll } };
+             rows:{ paymentsIn, otherIn, out, capIn, capOut, capInAll, capOutAll, capUnknown,
+                    unknownOut, nonCashOut, nonCashIn, distributions:distAll,
+                    supplierPayments:supPayAll, supplierPaymentsCash:supOut } };
   },
   /* الافتتاحي: ما تبقّى معدوداً أمس، وإلا الرقم الذي ضبطه النادي */
   openingFor(date){
@@ -4124,7 +4265,7 @@ Svc.cashbook = {
     const opening = saved && saved.openingCash != null ? Number(saved.openingCash) : this.openingFor(date);
     const mv = this.movement(date);
     return { opening:U.round2(opening), cashIn:mv.cashIn, cashOut:mv.cashOut, nonCash:mv.nonCash,
-             unknownOut:mv.unknownOut, byMethod:mv.byMethod,
+             unknownOut:mv.unknownOut, capitalUnknown:mv.capitalUnknown, byMethod:mv.byMethod,
              expected:U.round2(opening + mv.cashIn - mv.cashOut), movement:mv };
   },
   preview(date){
@@ -4161,7 +4302,8 @@ Svc.cashbook = {
       throw new AppError(`الفرق ${Money.fmt(difference)} — اكتبي سبب الفرق قبل الإقفال`,'VALIDATION',
                          { notes:'وضّحي سبب الفرق بين المعدود والمتوقّع' });
     const payload = { date:d.date, openingCash:U.round2(opening), cashIn:mv.cashIn, cashOut:mv.cashOut,
-      nonCash:mv.nonCash, unknownOut:mv.unknownOut,
+      nonCash:mv.nonCash, unknownOut:mv.unknownOut, capitalUnknown:mv.capitalUnknown,
+      supplierPaidCash:mv.supplierPaidCash,
       /* لقطة التفصيل حسب الطريقة: تبقى مع اليوم المقفل ولو تغيّرت الإعدادات لاحقاً */
       byMethod:mv.byMethod.map(m => ({ key:m.key, label:m.label, in:m.in, out:m.out })),
       expectedCash:expected, countedCash:counted, difference,
@@ -4209,6 +4351,7 @@ Svc.suppliers = {
     const r = V();
     if (!U.norm(d.name)) vErr(r,'name','اسم المورّد مطلوب');
     if (d.phone && !/^[0-9+\-\s]{7,20}$/.test(String(d.phone).trim())) vErr(r,'phone','رقم الهاتف غير صحيح');
+    if (U.norm(d.email) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(U.norm(d.email))) vErr(r,'email','البريد غير صحيح');
     const dupe = (all||[]).find(x => x.id !== id && U.normAr(x.name) === U.normAr(d.name));
     if (dupe) vErr(r,'name','يوجد مورّد بنفس الاسم');
     return r;
@@ -4217,7 +4360,7 @@ Svc.suppliers = {
     const val = this.validate(d, Repos.suppliers.list(true), id);
     if (!val.ok) throw new AppError('بيانات المورّد غير صحيحة','VALIDATION', val.errors);
     const payload = { name:U.norm(d.name), phone:U.norm(d.phone), contact:U.norm(d.contact),
-      address:U.norm(d.address), notes:U.norm(d.notes) };
+      email:U.norm(d.email), address:U.norm(d.address), notes:U.norm(d.notes) };
     const rec = id ? await Repos.suppliers.update(id, payload)
                    : await Repos.suppliers.create(Object.assign(payload, { isDemo:!!d.isDemo }));
     await Audit.log('supplier', id ? 'update' : 'create', `${id ? 'تعديل' : 'إضافة'} مورّد: ${rec.name}`, rec.id);
@@ -4229,26 +4372,320 @@ Svc.suppliers = {
     await Audit.log('supplier', on ? 'archive' : 'restore', `${on ? 'أرشفة' : 'استرجاع'} مورّد: ${s ? s.name : id}`, id);
     return rec;
   },
-  /* تاريخ الشراء من مورّد: يُقرأ من حركات المخزون، بلا جدول موازٍ يشرد */
-  purchases(supplierId){
+  /* شراء سُجّل حركةَ مخزونٍ مباشرةً بلا مستند — ما كان يُسجَّل قبل دورة الشراء.
+     يبقى مقروءاً من الحركات نفسها بلا جدول موازٍ يشرد، ولا يدخل المتبقّي
+     للمورّد: مصروفه سُجّل مدفوعاً بطريقته يوم سُجّل. */
+  legacyPurchases(supplierId){
     const s = Repos.suppliers.get(supplierId);
     if (!s) return [];
     const byName = U.normAr(s.name);
     return U.sortBy(Repos.stockMoves.list().filter(m => {
       if (m.type !== 'purchase') return false;
+      if (m.refType === 'purchase') return false;         /* هذه لمستند شراء، وتُقرأ منه */
       if (m.supplierId) return m.supplierId === supplierId;
       const p = Repos.products.get(m.productId);
       return p && U.normAr(p.supplier) === byName;        /* توافق مع ما سُجّل قبل وجود جدول الموردين */
     }), m => m.date, -1).map(m => ({ move:m, product:Repos.products.get(m.productId),
       total:U.round2(Math.abs(Number(m.qty) || 0) * (Number(m.unitCost) || 0)) }));
   },
+  purchases(supplierId){ return this.legacyPurchases(supplierId); },
+  /* صورة المورّد في سطر واحد: كم اشترينا، كم دفعنا، وكم بقي عليه */
   stats(supplierId){
-    const rows = this.purchases(supplierId);
-    return { count:rows.length, total:U.round2(U.sum(rows, r => r.total)),
-             last:rows.length ? rows[0].move.date : null,
-             products:new Set(rows.map(r => r.move.productId)).size };
+    const legacy = this.legacyPurchases(supplierId);
+    const st = Svc.purchases.statement(supplierId);
+    const docs = st ? st.docs.filter(x => x.p.status === 'posted') : [];
+    const products = new Set(legacy.map(r => r.move.productId));
+    docs.forEach(x => (x.p.lines || []).forEach(l => products.add(l.productId)));
+    return { count:docs.length + legacy.length, docCount:docs.length, legacyCount:legacy.length,
+             total:U.round2((st ? st.purchased : 0) + U.sum(legacy, r => r.total)),
+             purchased:st ? st.purchased : 0, paid:st ? st.paid : 0, due:st ? st.due : 0,
+             last:U.sortBy([st && st.last, legacy.length ? legacy[0].move.date : null].filter(Boolean), x => x, -1)[0] || null,
+             products:products.size };
   }
 };
+
+/* ===== src/app/services/155-purchases.js ============================================= */
+/* --------------------------- دورة الشراء الكاملة ------------------------
+   قبل هذه المرحلة كان الشراء عمليتين منفصلتين يربطهما الذهن وحده: حركة مخزون
+   في شاشة، ومصروف في شاشة أخرى. فإن دُفع نصف المبلغ فقط لم يبقَ للباقي أثر
+   في النظام أصلاً — يبقى في ذاكرة صاحبة النادي حتى تنساه.
+
+   المستند هنا يجمعها في رحلة واحدة:
+     مورّد ⇐ مستند شراء بسطوره ⇐ حركات مخزون ⇐ مصروف ⇐ دفعات ⇐ متبقٍّ للمورّد
+
+   والقاعدة المالية الحاكمة — وهي موضع الخطأ الأشهر في هذه الدورة:
+     · «المستحق» شيء و«المدفوع» شيء آخر. شراء بـ500 ودفعُ 200 يعني: مصروف 500،
+       نقد خارج 200، وباقٍ للمورّد 300.
+     · المصروف يُسجَّل مرة واحدة فقط: عند ترحيل المستند. دفعة المورّد ليست
+       مصروفاً ثانياً — هي تسديد التزامٍ سُجّل مرة.
+     · لذلك مصروف المستند يحمل طريقة «على الحساب»: لم يخرج من الدرج شيء بعد.
+       ما يخرج من الدرج تقوله الدفعة بطريقتها هي.
+     · والسيولة تُعيد ما لم يُدفع بعد (Calc.payables) فلا تُنقِص جيباً لم يُفتح.
+   ====================================================================== */
+Svc.purchases = {
+  STATUS: { draft:{ key:'draft', ar:'مسودة', cls:'chip-none' },
+            posted:{ key:'posted', ar:'مُرحَّل', cls:'chip-active' },
+            cancelled:{ key:'cancelled', ar:'ملغى', cls:'chip-expired' } },
+  status(rec){ return this.STATUS[(rec && rec.status) || 'draft'] || this.STATUS.draft; },
+  list(inclArchived = false){ return U.sortBy(Repos.purchases.list(inclArchived), p => p.date, -1); },
+  get(id){ return Repos.purchases.get(id); },
+  ofSupplier(supplierId, inclArchived = false){
+    return this.list(inclArchived).filter(p => p.supplierId === supplierId);
+  },
+  posted(){ return this.list().filter(p => p.status === 'posted'); },
+
+  /* المدفوع يُقرأ من الدفعات وحدها — لا يُخزَّن في المستند ولا يُشتقّ من حالته */
+  paymentsOf(purchaseId, inclArchived = false){
+    return U.sortBy(Repos.purchasePayments.list(inclArchived).filter(p => p.purchaseId === purchaseId), p => p.date);
+  },
+  paidFor(purchaseId){ return U.round2(U.sum(this.paymentsOf(purchaseId), p => Number(p.amount) || 0)); },
+  /* فهرس {purchaseId: المدفوع} بمرور واحد — لقوائم بمئات المستندات */
+  paidIndex(){
+    const out = {};
+    Repos.purchasePayments.list().forEach(p => {
+      out[p.purchaseId] = U.round2((out[p.purchaseId] || 0) + (Number(p.amount) || 0));
+    });
+    return out;
+  },
+  balance(purchase){
+    if (!purchase) return Calc.payStatus(0, 0);
+    if (purchase.status !== 'posted') return Calc.payStatus(0, this.paidFor(purchase.id));
+    return Calc.payStatus(purchase.total, this.paidFor(purchase.id));
+  },
+  /* ما زال مستحقاً لكل الموردين — رقم واحد يقرأه تبويب المستحقات والإقفال */
+  payables(){
+    const idx = this.paidIndex();
+    const rows = this.posted().map(p => ({ p, st:Calc.payStatus(p.total, idx[p.id] || 0),
+      supplier:Repos.suppliers.get(p.supplierId) })).filter(x => x.st.due > 0.009);
+    return { rows:U.sortBy(rows, x => x.p.date), due:U.round2(U.sum(rows, x => x.st.due)), count:rows.length };
+  },
+
+  /* ------------------------------ التحقّق ------------------------------ */
+  normalizeLines(raw){
+    return (raw || []).map(l => {
+      const pr = l.productId ? Repos.products.get(l.productId) : null;
+      const qty = Math.abs(Money.clean(l.qty) || 0);
+      const unitCost = Math.max(0, Money.clean(l.unitCost) || 0);
+      return { productId:l.productId || null, name:U.norm(l.name) || (pr ? pr.name : ''),
+               unit:U.norm(l.unit) || (pr ? (pr.unit || 'قطعة') : 'قطعة'),
+               qty:U.round2(qty), unitCost:U.round2(unitCost),
+               total:Calc.purchaseLineTotal({ qty, unitCost }) };
+    }).filter(l => l.productId && l.qty > 0);
+  },
+  validate(d, lines){
+    const r = V();
+    if (!d.supplierId || !Repos.suppliers.get(d.supplierId)) vErr(r, 'supplierId', 'اختاري المورّد');
+    if (!D.isISO(d.date)) vErr(r, 'date', 'تاريخ الشراء غير صحيح');
+    else if (D.cmp(d.date, D.today()) > 0) vErr(r, 'date', 'لا يُسجَّل شراء بتاريخ لم يأتِ بعد');
+    if (!lines.length) vErr(r, 'lines', 'أضيفي صنفاً واحداً على الأقل بكمية أكبر من صفر');
+    if (lines.some(l => l.unitCost <= 0)) r.warnings.push('سطر بتكلفة صفر — تأكّدي أنه هدية أو عيّنة');
+    const totals = Calc.purchaseTotals(lines, d.discount);
+    if (Money.clean(d.discount) < 0) vErr(r, 'discount', 'الخصم لا يكون سالباً');
+    else if (Money.clean(d.discount) > totals.subtotal + 0.001) vErr(r, 'discount', 'الخصم أكبر من إجمالي السطور');
+    if (d.paidAmount !== '' && d.paidAmount != null){
+      const paid = Money.clean(d.paidAmount);
+      if (!(isFinite(paid) && paid >= 0)) vErr(r, 'paidAmount', 'المدفوع غير صحيح');
+      else if (paid > totals.total + 0.001) vErr(r, 'paidAmount', `لا يُدفع أكثر من إجمالي المستند (${Money.fmt(totals.total)})`);
+    }
+    if (U.norm(d.invoiceNo)){
+      const dupe = Repos.purchases.list(true).find(p => p.id !== d.id && p.supplierId === d.supplierId
+        && p.status !== 'cancelled' && U.normAr(p.invoiceNo) === U.normAr(d.invoiceNo));
+      /* لا يُمنع — قد يكون رقماً مكرّراً عند المورّد نفسه — لكنه لا يمرّ صامتاً */
+      if (dupe) r.warnings.push(`رقم الفاتورة «${U.norm(d.invoiceNo)}» مسجَّل من قبل على المستند ${dupe.code}`);
+    }
+    return r;
+  },
+
+  /* --------------------------- حفظ مسودة/إنشاء ---------------------------
+     المسودة لا تلمس مخزوناً ولا مالاً: هي ورقة طلبٍ تُراجَع. الترحيل وحده
+     يصنع الحركة والمصروف. */
+  async save(id, d){
+    const cur = id ? Repos.purchases.get(id) : null;
+    if (cur && cur.status !== 'draft')
+      throw new AppError('لا يُعدَّل مستند مُرحَّل — ألغيه ثم سجّلي مستنداً صحيحاً','LOCKED');
+    const lines = this.normalizeLines(d.lines);
+    const val = this.validate(Object.assign({}, d, { id }), lines);
+    if (!val.ok) throw new AppError('بيانات مستند الشراء غير صحيحة','VALIDATION', val.errors);
+    const totals = Calc.purchaseTotals(lines, d.discount);
+    const payload = { supplierId:d.supplierId, date:d.date, invoiceNo:U.norm(d.invoiceNo),
+      lines, subtotal:totals.subtotal, discount:totals.discount, total:totals.total, items:totals.items,
+      notes:U.norm(d.notes) };
+    let rec;
+    if (cur) rec = await Repos.purchases.update(id, payload);
+    else {
+      /* الرقم يُحجز على القرص قبل استعماله فلا يتكرّر رقمان على ورقتين */
+      const code = await Settings.nextCode('purchaseSeq', 'ش', 5);
+      rec = await Repos.purchases.create(Object.assign({ code, status:'draft', expenseId:null,
+        postedAt:null, cancelledAt:null, cancelReason:'' }, payload, { isDemo:!!d.isDemo }));
+    }
+    await Audit.log('purchase', cur ? 'update' : 'create',
+      `${cur ? 'تعديل' : 'إنشاء'} مستند شراء ${rec.code} بمبلغ ${Money.fmt(rec.total)}`, rec.id);
+    return { rec, warnings:val.warnings };
+  },
+
+  /* ------------------------------ الترحيل ------------------------------
+     كل الكتابات هنا صفقة واحدة: مخزون + مصروف + حالة المستند. إن فشلت واحدة
+     تُسحب البقية، فلا يبقى مستند «نصف مُرحَّل» يظهر شراءً بلا بضاعة. */
+  async post(id, opts){
+    const o = opts || {};
+    const rec = Repos.purchases.get(id);
+    if (!rec) throw new AppError('مستند الشراء غير موجود','NOT_FOUND');
+    if (rec.status === 'posted') throw new AppError('هذا المستند مُرحَّل بالفعل','ALREADY_POSTED');
+    if (rec.status === 'cancelled') throw new AppError('لا يُرحَّل مستند ملغى','CANCELLED');
+    if (!(rec.lines || []).length) throw new AppError('لا سطور في المستند','VALIDATION', { lines:'أضيفي صنفاً' });
+    const supplier = Repos.suppliers.get(rec.supplierId);
+    await Svc.periods.guardWrite(rec.date, `ترحيل مستند شراء ${rec.code}`, o);
+
+    const moves = [];
+    let expense = null;
+    try {
+      for (const l of rec.lines){
+        const mv = await Svc.inventory.addMove({ productId:l.productId, date:rec.date, type:'purchase',
+          qty:l.qty, unitCost:l.unitCost, refType:'purchase', refId:rec.id,
+          notes:`مستند شراء ${rec.code}`, skipExpense:true, isDemo:!!rec.isDemo });
+        moves.push(mv.id);
+      }
+      /* المصروف الواحد الوحيد لهذا الشراء. طريقته «على الحساب» لأن الالتزام
+         نشأ ولم يخرج من الدرج شيء بعد — وما يخرج تقوله الدفعة. */
+      const cat = Repos.expCats.list().find(c => c.system === 'purchases')
+               || Repos.expCats.list().find(c => U.normAr(c.name) === U.normAr('مشتريات'));
+      expense = await Repos.expenses.create({ date:rec.date, amount:rec.total, categoryId:cat ? cat.id : null,
+        description:`شراء ${rec.code}${supplier ? ' — ' + supplier.name : ''}`,
+        payee:supplier ? supplier.name : '', notes:U.norm(rec.invoiceNo) ? `فاتورة المورّد ${U.norm(rec.invoiceNo)}` : '',
+        method:PayMethods.CREDIT_KEY, refType:'purchase', refId:rec.id, isDemo:!!rec.isDemo });
+      var out = await Repos.purchases.update(id, { status:'posted', expenseId:expense.id,
+        postedAt:new Date().toISOString(), postedBy:Auth.session.actorName || '' });
+    } catch(e){
+      for (const mid of moves){ try { await Repos.stockMoves.hardDelete(mid); } catch(_){} }
+      if (expense){ try { await DB.remove('expenses', expense.id); } catch(_){} }
+      for (const l of rec.lines){ try { await Svc.inventory.recomputeCost(l.productId); } catch(_){} }
+      throw e;
+    }
+    await Audit.log('purchase','post',
+      `ترحيل مستند شراء ${rec.code}${supplier ? ' — ' + supplier.name : ''} بمبلغ ${Money.fmt(rec.total)} (${rec.lines.length} سطراً)`, id);
+    return out;
+  },
+
+  /* ------------------------------ الإلغاء ------------------------------
+     الإلغاء يعكس أثر الترحيل ولا يمحو تاريخه: المستند يبقى بحالته «ملغى»،
+     وحركاته تُؤرشف فتخرج من الرصيد، ومصروفه يُؤرشف فيخرج من الربح. الدفعات
+     المسدَّدة تمنع الإلغاء: مالٌ خرج فعلاً لا يُلغى بحذف ورقة. */
+  async cancel(id, reason, opts){
+    const o = opts || {};
+    const rec = Repos.purchases.get(id);
+    if (!rec) throw new AppError('مستند الشراء غير موجود','NOT_FOUND');
+    if (rec.status === 'cancelled') throw new AppError('هذا المستند ملغى بالفعل','CANCELLED');
+    const paid = this.paidFor(id);
+    if (paid > 0.009)
+      throw new AppError(`سُدّد ${Money.fmt(paid)} على هذا المستند — احذفي دفعاته أولاً ثم ألغيه`,'LINKED');
+    if (rec.status === 'posted') await Svc.periods.guardWrite(rec.date, `إلغاء مستند شراء ${rec.code}`, o);
+    const moves = Repos.stockMoves.list(true).filter(m => m.refType === 'purchase' && m.refId === id && !m.archived);
+    /* لا يُلغى شراءٌ بيعت بضاعته: الرصيد سيصير سالباً وهو كذبٌ على المخزن */
+    const idx = Svc.inventory.onHandIndex();
+    const need = {};
+    moves.forEach(m => { need[m.productId] = U.round2((need[m.productId] || 0) + Math.abs(Number(m.qty) || 0)); });
+    for (const pid of Object.keys(need)){
+      const pr = Repos.products.get(pid);
+      if (pr && pr.stockTracked !== false && U.round2(idx[pid] || 0) < need[pid] - 0.001)
+        throw new AppError(`لا يمكن إلغاء المستند: رصيد «${pr.name}» ${U.round2(idx[pid] || 0)} والمطلوب إرجاعه ${need[pid]}`,'STOCK');
+    }
+    for (const mv of moves) await Repos.stockMoves.archive(mv.id, true);
+    if (rec.expenseId && Repos.expenses.get(rec.expenseId)) await Repos.expenses.archive(rec.expenseId, true);
+    const out = await Repos.purchases.update(id, { status:'cancelled', cancelledAt:new Date().toISOString(),
+      cancelledBy:Auth.session.actorName || '', cancelReason:U.norm(reason) });
+    /* متوسط التكلفة يُعاد حسابه من الحركات الباقية — لا يبقى أثر شراء أُلغي */
+    for (const pid of Object.keys(need)) await Svc.inventory.recomputeCost(pid);
+    await Audit.log('purchase','cancel',
+      `إلغاء مستند شراء ${rec.code} بمبلغ ${Money.fmt(rec.total)}${U.norm(reason) ? ' — ' + U.norm(reason) : ''}`, id);
+    return out;
+  },
+  /* مسودة لم تُرحَّل: تُحذف بلا أثر مالي */
+  async removeDraft(id){
+    const rec = Repos.purchases.get(id);
+    if (!rec) throw new AppError('مستند الشراء غير موجود','NOT_FOUND');
+    if (rec.status !== 'draft') throw new AppError('لا يُحذف إلا مستند مسودة — المُرحَّل يُلغى','LOCKED');
+    await Repos.purchases.hardDelete(id);
+    await Audit.log('purchase','delete',`حذف مسودة شراء ${rec.code}`, id);
+    return rec;
+  },
+
+  /* ------------------------- دفعات المورّد -------------------------
+     الدفعة تسدّد التزاماً سُجّل مرة واحدة عند الترحيل. فليست مصروفاً ثانياً،
+     ولا تولّد سطر إيراد (فالمال يخرج لا يدخل). أثرها الوحيد: نقدٌ يغادر
+     الدرج إن كانت نقداً، ومتبقٍّ للمورّد يقلّ. */
+  validatePayment(d, purchase){
+    const r = V();
+    if (!purchase) vErr(r, 'purchaseId', 'مستند الشراء غير موجود');
+    else if (purchase.status !== 'posted') vErr(r, 'purchaseId', 'لا تُسدَّد إلا مستندات مُرحَّلة');
+    if (!D.isISO(d.date)) vErr(r, 'date', 'تاريخ الدفعة غير صحيح');
+    else if (D.cmp(d.date, D.today()) > 0) vErr(r, 'date', 'لا يُدفع مبلغ بتاريخ لم يأتِ بعد');
+    const amt = Money.clean(d.amount);
+    if (!(isFinite(amt) && amt > 0)) vErr(r, 'amount', 'المبلغ يجب أن يكون أكبر من صفر');
+    else if (purchase){
+      const due = U.round2(Number(purchase.total || 0) - this.paidFor(purchase.id) - (d.id ? 0 : 0));
+      if (amt > due + 0.001) vErr(r, 'amount', `المتبقّي للمورّد ${Money.fmt(due)} فقط — لا يُدفع أكثر منه`);
+    }
+    const m = PayMethods.resolve(d.method);
+    if (m === PayMethods.CREDIT_KEY || m === PayMethods.UNKNOWN_KEY)
+      vErr(r, 'method', 'اختاري طريقة دفع صالحة');
+    if (r.ok && PayMethods.isCash(PayMethods.normalize(d.method))){
+      const drawer = Svc.cashbook.expected(d.date);
+      if (amt > drawer.expected)
+        r.warnings.push(`الدفع نقداً أكبر ممّا في الدرج المتوقّع يوم ${D.fmt(d.date)} (${Money.fmt(drawer.expected)})`);
+    }
+    return r;
+  },
+  async addPayment(d){
+    const purchase = Repos.purchases.get(d.purchaseId);
+    const val = this.validatePayment(d, purchase);
+    if (!val.ok) throw new AppError('بيانات الدفعة غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(d.date, 'دفعة لمورّد', d);
+    const supplier = Repos.suppliers.get(purchase.supplierId);
+    const rec = await Repos.purchasePayments.create({ purchaseId:purchase.id, supplierId:purchase.supplierId,
+      date:d.date, amount:Money.clean(d.amount), method:PayMethods.normalize(d.method),
+      notes:U.norm(d.notes), isDemo:!!d.isDemo });
+    await Audit.log('purchase','pay',
+      `تسديد ${Money.fmt(rec.amount)} لـ${supplier ? supplier.name : 'مورّد'} على المستند ${purchase.code} — ${PayMethods.label(rec.method)}`, rec.id);
+    return { rec, warnings:val.warnings };
+  },
+  async removePayment(id){
+    const rec = Repos.purchasePayments.get(id);
+    if (!rec) throw new AppError('الدفعة غير موجودة','NOT_FOUND');
+    await Svc.periods.guardWrite(rec.date, 'حذف دفعة مورّد', {});
+    const purchase = Repos.purchases.get(rec.purchaseId);
+    await Repos.purchasePayments.hardDelete(id);
+    await Audit.log('purchase','unpay',
+      `إلغاء دفعة ${Money.fmt(rec.amount)}${purchase ? ' على المستند ' + purchase.code : ''}`, id);
+    return rec;
+  },
+
+  /* ------------------------- كشف حساب المورّد -------------------------
+     الأسئلة الثلاثة التي يجب أن تُجاب بلا إعادة تركيب يدوي من شاشات متفرّقة:
+     كم اشترينا منه؟ كم دفعنا له؟ وكم بقي عليه؟ */
+  statement(supplierId){
+    const supplier = Repos.suppliers.get(supplierId);
+    if (!supplier) return null;
+    const idx = this.paidIndex();
+    const docs = this.ofSupplier(supplierId, true).map(p => ({ p,
+      paid:U.round2(idx[p.id] || 0),
+      st:p.status === 'posted' ? Calc.payStatus(p.total, idx[p.id] || 0) : Calc.payStatus(0, idx[p.id] || 0),
+      payments:this.paymentsOf(p.id) }));
+    const posted = docs.filter(x => x.p.status === 'posted');
+    const purchased = U.round2(U.sum(posted, x => x.p.total));
+    const paid = U.round2(U.sum(posted, x => x.paid));
+    /* مشتريات سُجّلت قبل وجود المستند (حركة مخزون مباشرة) — دُفعت وقتها،
+       فتُعرض للتاريخ ولا تدخل المتبقّي حتى لا يُطالَب المورّد مرتين. */
+    const legacy = Svc.suppliers.legacyPurchases(supplierId);
+    return { supplier, docs:U.sortBy(docs, x => x.p.date, -1), posted:posted.length,
+             drafts:docs.filter(x => x.p.status === 'draft').length,
+             cancelled:docs.filter(x => x.p.status === 'cancelled').length,
+             purchased, paid, due:U.round2(purchased - paid),
+             payments:U.sortBy(Repos.purchasePayments.list().filter(x => x.supplierId === supplierId), x => x.date, -1),
+             legacy, legacyTotal:U.round2(U.sum(legacy, r => r.total)),
+             last: posted.length ? U.sortBy(posted, x => x.p.date, -1)[0].p.date : null };
+  }
+};
+
 
 /* ===== src/app/services/160-notes.js ================================================= */
 /* --------------------------- ملاحظات الفريق ----------------------------
@@ -4348,16 +4785,180 @@ Svc.periods = {
     const expense = Calc.expenses(Repos.expenses.list(), from, to);
     return { key, from, to, revenue, expense, net:U.round2(revenue - expense) };
   },
+  /* الفترة المقفلة تاريخ لا يُعاد كتابته صامتاً. أي كتابة مالية بتاريخ داخلها
+     تُمنع، إلا بتصحيح صريح: سببٌ مكتوب يُسجَّل في سجل الأحداث باسم كاتبته.
+     الصمت هو ما يجعل الرقم المقفل يتحرّك بعد أن بُني عليه توزيع. */
+  closedOf(date){
+    if (!D.isISO(date)) return null;
+    return this.get(D.monthKey(date));
+  },
+  async guardWrite(date, what, opts){
+    const o = opts || {};
+    const closed = this.closedOf(date);
+    if (!closed) return false;
+    const reason = U.norm(o.correctionReason);
+    if (!reason)
+      throw new AppError(`فترة ${D.monthName(closed.key)} مقفلة — لا يُسجَّل فيها «${what}» إلا بتصحيح مُعلَّل`,
+        'PERIOD_CLOSED', { date:`الشهر مقفل منذ ${D.fmt(String(closed.closedAt).slice(0,10))}` });
+    await Audit.log('period','correction',
+      `تصحيح في فترة مقفلة ${D.monthName(closed.key)} — ${what}: ${reason}`, closed.key);
+    return true;
+  },
+
+  /* --------------------------- قائمة ما قبل الإقفال ---------------------
+     الإقفال قرار، والقرار يحتاج أن يُرى ما يُقفَل عليه. القائمة تفصل ثلاثة
+     أشياء لا تُخلط: ما يمنع الإقفال (خلل يُصلَح)، وما يُنبَّه إليه ويُقَرّ
+     (وضعٌ طبيعي لكن يُعرف)، وما يُقال للعلم فقط.
+     ولا تُخترع موانع: كل مانع هنا يجعل رقم الربح نفسه غير صحيح. */
+  checklist(key){
+    const blocking = [], warnings = [], info = [];
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+    const inP = r => D.cmp(r.date, from) >= 0 && D.cmp(r.date, to) <= 0;
+
+    if (!/^\d{4}-\d{2}$/.test(String(key)))
+      blocking.push({ code:'BAD_KEY', text:'الفترة غير صحيحة', fix:null });
+    else if (D.cmp(to, D.today()) > 0)
+      blocking.push({ code:'NOT_ENDED', text:'الشهر لم ينتهِ بعد — لا يُقفَل شهر ما زال يُسجَّل فيه', fix:null });
+    if (this.isClosed(key)) info.push({ code:'ALREADY', text:'هذه الفترة مقفلة بالفعل' });
+
+    /* 1) طريقة دفع غير معروفة: الدرج لا يعرف أين ذهب المال ولا من أين جاء */
+    const unknown = PayMethods.unknownRecords(from, to);
+    if (unknown.length)
+      blocking.push({ code:'UNKNOWN_METHOD', fix:'methods',
+        text:`${unknown.length} سجلاً مالياً بلا طريقة دفع معروفة (${Money.fmt(U.sum(unknown, x => x.amount))}) — حدّديها قبل الإقفال`,
+        rows:unknown });
+
+    /* 2) مستند شراء لم يُرحَّل: بضاعته ليست في المخزن وتكلفته ليست في الربح */
+    const drafts = Repos.purchases.list().filter(p => p.status === 'draft' && inP(p));
+    if (drafts.length)
+      blocking.push({ code:'DRAFT_PURCHASE', fix:'purchases',
+        text:`${drafts.length} مستند شراء مسودة في هذه الفترة (${Money.fmt(U.sum(drafts, p => p.total))}) — رحّليها أو احذفيها`,
+        rows:drafts.map(p => ({ id:p.id, code:p.code, date:p.date, amount:p.total })) });
+
+    /* 3) خلل في الروابط المالية: رقم الربح نفسه مبنيّ على سجلات ناقصة */
+    const FINANCIAL = ['دفعة بلا سطر إيراد','دفعة بلا مستند','إيراد لدفعة محذوفة','اشتراك مقبوض أكثر من سعره',
+                       'مصروف مستند شراء بلا مستند','مستند شراء بلا مورّد','دفعة مورّد بلا مستند شراء',
+                       'توزيع أرباح بلا شريكة','حركة مخزون بلا صنف'];
+    const issues = Integrity.scan().filter(x => FINANCIAL.includes(x.type));
+    if (issues.length)
+      blocking.push({ code:'INTEGRITY', fix:'integrity',
+        text:`${issues.length} خللاً في الروابط المالية — افحصي سلامة البيانات وأصلحيها`,
+        rows:issues.slice(0, 20) });
+
+    /* 4) أيام فيها حركة نقدية ولم يُقفَل صندوقها: فرقٌ لن يُعرف سببه بعد اليوم */
+    const openDays = [];
+    for (let d = from; D.cmp(d, to) <= 0 && D.cmp(d, D.today()) <= 0; d = D.addDays(d, 1)){
+      const rec = Svc.cashbook.get(d);
+      if (rec && rec.closedAt) continue;
+      const mv = Svc.cashbook.movement(d);
+      if (mv.cashIn > 0 || mv.cashOut > 0) openDays.push({ date:d, cashIn:mv.cashIn, cashOut:mv.cashOut });
+    }
+    if (openDays.length)
+      warnings.push({ code:'OPEN_CASH_DAYS', fix:'cash',
+        text:`${openDays.length} يوماً فيه حركة نقدية ولم يُقفَل صندوقه`, rows:openDays });
+
+    /* 5) فروق إقفال الصندوق داخل الفترة */
+    const diffDays = Repos.cashDays.list(true).filter(c => c.closedAt && inP(c) && Math.abs(Number(c.difference) || 0) > 0.009);
+    if (diffDays.length)
+      warnings.push({ code:'CASH_DIFF', fix:'cash',
+        text:`${diffDays.length} يوماً أُقفل بفارق عن المتوقّع (صافي ${Money.fmt(U.sum(diffDays, c => c.difference))})`,
+        rows:diffDays.map(c => ({ date:c.date, difference:c.difference, notes:c.notes })) });
+
+    /* 6) مستحقات مفتوحة: على النادي وله */
+    const due = Svc.payments.totalDue();
+    if (due.count) warnings.push({ code:'RECEIVABLES', fix:'dues',
+      text:`${due.count} مستنداً لم يُقبض بالكامل (${Money.fmt(due.due)}) — الإيراد يُسجَّل بالقبض لا بالتسعير` });
+    const pay = Svc.purchases.payables();
+    if (pay.count) warnings.push({ code:'PAYABLES', fix:'purchases',
+      text:`${pay.count} مستند شراء ما زال عليه متبقٍّ للموردين (${Money.fmt(pay.due)})` });
+
+    /* 7) الشركاء: مجموع الحصص، وفترات سابقة لم تُقفل بعد */
+    const partners = Repos.partners.list();
+    const shareSum = U.round2(U.sum(partners, p => p.sharePercent));
+    if (partners.length && Math.abs(shareSum - 100) > 0.01)
+      warnings.push({ code:'SHARES', fix:'partners', text:`مجموع حصص الشركاء ${shareSum}% لا 100%` });
+    const earlier = this.openMonths(18).filter(p => D.cmp(p.key, key) < 0);
+    if (earlier.length)
+      warnings.push({ code:'EARLIER_OPEN', fix:'periods',
+        text:`فترات أسبق لم تُقفل بعد: ${earlier.map(p => D.monthName(p.key)).join('، ')}` });
+
+    /* 8) رصيد سالب في المخزن: بيعٌ بلا بضاعة يعني تكلفةً ناقصة في الربح */
+    const neg = Svc.inventory.rows(true).filter(r => r.p.stockTracked !== false && r.qty < -0.001);
+    if (neg.length)
+      warnings.push({ code:'NEG_STOCK', fix:'inventory',
+        text:`${neg.length} صنفاً برصيد سالب — راجعي حركاته`, rows:neg.map(r => ({ id:r.p.id, name:r.p.name, qty:r.qty })) });
+
+    const sum = this.summary(key);
+    info.push({ code:'COUNTS', text:`${sum.counts.payments} دفعة، ${sum.counts.expenses} مصروفاً، `
+      + `${sum.counts.capital} حركة رأس مال، ${sum.counts.distributions} توزيعاً، ${sum.counts.purchases} مستند شراء` });
+    return { key, blocking, warnings, info, summary:sum, ok:blocking.length === 0 };
+  },
+
+  /* ----------------------- ملخّص ما يُقفَل عليه -----------------------
+     ورقة واحدة قبل الضغط على «إقفال»: ماذا دخل وماذا خرج، وبأي طريقة، وكم
+     بقي في الدرج. النقدي وغير النقدي مفصولان لأنهما ليسا الشيء نفسه. */
+  summary(key){
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+    const inR = rows => Calc.inRange(rows, from, to);
+    const isCash = m => PayMethods.isCash(m);
+    const pays = inR(Repos.payments.list());
+    const otherRev = inR(Repos.revenues.list()).filter(r => !r.paymentId);
+    const exps = inR(Repos.expenses.list());
+    const cashExp = exps.filter(e => e.refType !== 'purchase' && isCash(e.method));
+    const nonCashExp = exps.filter(e => e.refType !== 'purchase' && !isCash(e.method));
+    const caps = inR(Repos.capital.list());
+    const capIn = caps.filter(c => c.type === 'injection'), capOut = caps.filter(c => c.type === 'withdrawal');
+    const dists = inR(Repos.distributions.list());
+    const supPays = inR(Repos.purchasePayments.list());
+    const purch = inR(Repos.purchases.list()).filter(p => p.status === 'posted');
+    const revenue = Calc.revenue(Repos.revenues.list(), from, to);
+    const expense = Calc.expenses(Repos.expenses.list(), from, to);
+    const cashIn = U.round2(U.sum(pays.filter(p => isCash(p.method)), p => p.amount)
+                          + U.sum(otherRev.filter(r => isCash(r.method)), r => r.amount)
+                          + U.sum(capIn.filter(c => isCash(c.method)), c => c.amount));
+    const cashOut = U.round2(U.sum(cashExp, e => e.amount)
+                           + U.sum(capOut.filter(c => isCash(c.method)), c => c.amount)
+                           + U.sum(dists.filter(d => isCash(d.method)), d => d.amount)
+                           + U.sum(supPays.filter(p => isCash(p.method)), p => p.amount));
+    const lastDay = D.cmp(to, D.today()) > 0 ? D.today() : to;
+    return { key, from, to, revenue, expense, net:U.round2(revenue - expense),
+      cashIn, cashOut,
+      nonCashIn:U.round2(U.sum(pays.filter(p => !isCash(p.method)), p => p.amount)
+                       + U.sum(otherRev.filter(r => !isCash(r.method)), r => r.amount)
+                       + U.sum(capIn.filter(c => !isCash(c.method)), c => c.amount)),
+      nonCashOut:U.round2(U.sum(nonCashExp, e => e.amount)
+                        + U.sum(capOut.filter(c => !isCash(c.method)), c => c.amount)
+                        + U.sum(dists.filter(d => !isCash(d.method)), d => d.amount)
+                        + U.sum(supPays.filter(p => !isCash(p.method)), p => p.amount)),
+      capitalIn:U.round2(U.sum(capIn, c => c.amount)), capitalOut:U.round2(U.sum(capOut, c => c.amount)),
+      distributions:U.round2(U.sum(dists, d => d.amount)),
+      purchases:U.round2(U.sum(purch, p => p.total)),
+      supplierPaid:U.round2(U.sum(supPays, p => p.amount)),
+      endingExpectedCash:Svc.cashbook.expected(lastDay).expected,
+      counts:{ payments:pays.length, expenses:exps.length, capital:caps.length,
+               distributions:dists.length, purchases:purch.length, supplierPayments:supPays.length } };
+  },
+
   async close(key, opts){
+    const o = opts || {};
     if (!/^\d{4}-\d{2}$/.test(String(key))) throw new AppError('الفترة غير صحيحة','VALIDATION', { key:'اختاري شهراً' });
     if (D.cmp(D.endOfMonth(key), D.today()) > 0)
       throw new AppError('لا تُقفل فترة لم تنتهِ بعد','VALIDATION', { key:'الشهر لم ينتهِ' });
     if (this.isClosed(key)) return this.get(key);
+    /* المانع يمنع فعلاً. التنبيه يُقَرّ ويُحفظ مع الفترة ليُعرف لاحقاً على ماذا أُقفلت. */
+    const check = this.checklist(key);
+    if (check.blocking.length)
+      throw new AppError(`لا تُقفل الفترة قبل حلّ ${check.blocking.length} مانعاً: ${check.blocking[0].text}`,
+        'PERIOD_BLOCKED', { key:check.blocking.map(b => b.text).join(' · ') });
     const p = this.profitOf(key);
     const rec = Object.assign({}, p, { closedAt:new Date().toISOString(), closedBy:Auth.session.actorName || '',
-      isDemo:!!(opts && opts.isDemo) });
+      snapshot:check.summary,
+      acknowledged:check.warnings.map(w => ({ code:w.code, text:w.text })),
+      isDemo:!!o.isDemo });
     await Settings.set({ closedPeriods:U.sortBy([...this.list(), rec], x => x.key) });
-    await Audit.log('period','close',`إقفال فترة ${D.monthName(key)} — الربح ${Money.fmt(p.net)}`, key);
+    await Audit.log('period','close',
+      `إقفال فترة ${D.monthName(key)} — الربح ${Money.fmt(p.net)}`
+      + (check.warnings.length ? ` (أُقرّ ${check.warnings.length} تنبيهاً)` : ''), key);
     return rec;
   },
   /* إعادة الفتح ممنوعة ما دام هناك توزيع مبنيّ على أرقام هذه الفترة */
@@ -4406,6 +5007,59 @@ Svc.distributions = {
   total(from, to){
     return U.round2(U.sum(Calc.inRange(Repos.distributions.list(), from, to), d => d.amount));
   },
+  /* ----------------------- تفصيل التوزيع بالأشهر -----------------------
+     التوزيع الواحد قد يغطّي عدة أشهر. قبل هذه المرحلة كان السجل يحفظ مبلغاً
+     واحداً، فيُقسَّم على الأشهر وقت العرض تقديراً — والتقدير يتبدّل كلما تبدّل
+     ربح شهرٍ في الطريق. الآن التفصيل جزء من السجل نفسه: مبلغ لكل شهر، مكتوب
+     مرة، لا يُعاد حسابه أبداً.
+
+     والثابت الذي لا يُكسر: Σ(مبالغ الأشهر) = مبلغ التوزيع. بالضبط، بلا باقٍ
+     مخفي: الفرق الناتج عن التقريب يُحمَّل على أكبر سطر فتُغلق المعادلة. */
+  proposeAllocations(partnerId, from, to, amount){
+    const months = Svc.periods.monthsBetween(from, to);
+    const total = U.round2(Money.clean(amount) || 0);
+    if (!months.length) return [];
+    const partner = Repos.partners.get(partnerId);
+    const pct = Number(partner && partner.sharePercent) || 0;
+    const rows = months.map(k => {
+      const p = Svc.periods.get(k) || Svc.periods.profitOf(k);
+      return { key:k, net:U.round2(p.net), share:U.round2(Math.max(0, Calc.partnerShare(p.net, pct))) };
+    });
+    const base = U.sum(rows, r => r.share);
+    /* لا نصيب موجب في أي شهر (خسارة أو صفر)؟ لا نسبة يُقاس عليها، فيُقسم بالتساوي */
+    const weights = base > 0 ? rows.map(r => r.share / base) : rows.map(() => 1 / rows.length);
+    const out = rows.map((r, i) => ({ key:r.key, net:r.net, share:U.round2(Calc.partnerShare(r.net, pct)),
+      amount:U.round2(total * weights[i]) }));
+    return this.balanceAllocations(out, total);
+  },
+  /* يجعل المجموع مطابقاً للمبلغ تماماً: الباقي يُضاف إلى أكبر سطر (أو أوّله) */
+  balanceAllocations(rows, total){
+    const list = (rows || []).map(x => ({ key:String(x.key), net:U.round2(Number(x.net) || 0),
+      share:U.round2(Number(x.share) || 0), amount:U.round2(Math.max(0, Money.clean(x.amount) || 0)) }));
+    if (!list.length) return list;
+    const t = U.round2(Number(total) || 0);
+    const sum = U.round2(U.sum(list, x => x.amount));
+    const diff = U.round2(t - sum);
+    if (diff !== 0){
+      let idx = 0;
+      list.forEach((x, i) => { if (x.amount > list[idx].amount) idx = i; });
+      list[idx].amount = U.round2(Math.max(0, list[idx].amount + diff));
+    }
+    return list;
+  },
+  /* تفصيل توزيعٍ مسجَّل. القديم الممتدّ بلا تفصيل يُقال عنه ذلك صراحةً بدل
+     أن يُخمَّن له تفصيلٌ لم يُكتب يوم وُزّع. */
+  allocationsOf(dist){
+    if (!dist) return [];
+    if (Array.isArray(dist.allocations) && dist.allocations.length) return dist.allocations;
+    return [];
+  },
+  isUnallocated(dist){ return !this.allocationsOf(dist).length; },
+  /* ما خُصّص لشهر بعينه من توزيعة واحدة — صفر إن لم يكن لها تفصيل */
+  allocatedTo(dist, key){
+    const row = this.allocationsOf(dist).find(a => a.key === key);
+    return row ? U.round2(Number(row.amount) || 0) : 0;
+  },
   validate(d){
     const r = V();
     const partner = d.partnerId ? Repos.partners.get(d.partnerId) : null;
@@ -4434,7 +5088,23 @@ Svc.distributions = {
       if (amt > left + 0.001)
         r.warnings.push(`نصيب ${partner.name} عن هذه الفترة ${Money.fmt(ent.share)}${already ? ` (وُزّع منه ${Money.fmt(already)})` : ''} — المتبقّي ${Money.fmt(Math.max(0, left))}`);
     }
-    const cash = Calc.cash(Repos.revenues.list(), Repos.expenses.list(), Repos.capital.list(), Repos.distributions.list());
+    /* التفصيل: كل شهر داخل الفترة، بلا شهر غريب، والمجموع = المبلغ بالضبط */
+    if (r.ok && Array.isArray(d.allocations) && d.allocations.length){
+      const months = Svc.periods.monthsBetween(d.periodFrom, d.periodTo);
+      const keys = d.allocations.map(a => String(a.key));
+      const stray = keys.filter(k => !months.includes(k));
+      if (stray.length) vErr(r, 'allocations', `شهر خارج الفترة: ${stray.map(k => D.monthName(k)).join('، ')}`);
+      else if (new Set(keys).size !== keys.length) vErr(r, 'allocations', 'شهر مكرّر في التفصيل');
+      else if (d.allocations.some(a => !(isFinite(Money.clean(a.amount)) && Money.clean(a.amount) >= 0)))
+        vErr(r, 'allocations', 'مبلغ شهرٍ غير صحيح');
+      else {
+        const sum = U.round2(U.sum(d.allocations, a => Money.clean(a.amount) || 0));
+        /* فرق القروش يُسوّى تلقائياً عند الحفظ؛ ما زاد عن ذلك خطأ يُقال */
+        if (Math.abs(U.round2(sum - amt)) > 0.01)
+          vErr(r, 'allocations', `مجموع الأشهر ${Money.fmt(sum)} ولا يساوي المبلغ ${Money.fmt(amt)}`);
+      }
+    }
+    const cash = Svc.finance.liquidity();
     if (r.ok && amt > cash) r.warnings.push(`التوزيع أكبر من السيولة المتاحة (${Money.fmt(cash)})`);
     return r;
   },
@@ -4457,14 +5127,49 @@ Svc.distributions = {
   async create(d){
     const val = this.validate(d);
     if (!val.ok) throw new AppError('بيانات التوزيع غير صحيحة','VALIDATION', val.errors);
+    await Svc.periods.guardWrite(d.date, 'توزيع أرباح', d);
     const partner = Repos.partners.get(d.partnerId);
+    const amount = Money.clean(d.amount);
+    /* لا يُحفظ توزيع بلا تفصيل بعد اليوم: إمّا تفصيل كتبته المالكة، وإمّا
+       التفصيل المقترح بنسبة النصيب — ويُحفظ مرة واحدة فلا يتبدّل بعدها. */
+    const allocations = this.balanceAllocations(
+      (Array.isArray(d.allocations) && d.allocations.length)
+        ? d.allocations
+        : this.proposeAllocations(d.partnerId, d.periodFrom, d.periodTo, amount), amount);
     const rec = await Repos.distributions.create({
       partnerId:d.partnerId, periodFrom:d.periodFrom, periodTo:d.periodTo,
-      amount:Money.clean(d.amount), date:d.date,
+      amount, date:d.date, allocations,
+      allocationSource:(Array.isArray(d.allocations) && d.allocations.length) ? 'manual' : 'proposed',
       method:PayMethods.normalize(d.method), notes:U.norm(d.notes), isDemo:!!d.isDemo
     });
     await Audit.log('distribution','create',
-      `توزيع أرباح ${Money.fmt(rec.amount)} لـ${partner ? partner.name : ''} عن ${D.fmt(rec.periodFrom)} ← ${D.fmt(rec.periodTo)}`, rec.id);
+      `توزيع أرباح ${Money.fmt(rec.amount)} لـ${partner ? partner.name : ''} عن ${D.fmt(rec.periodFrom)} ← ${D.fmt(rec.periodTo)}`
+      + ` (${allocations.map(a => `${D.monthName(a.key)}: ${Money.fmt(a.amount)}`).join('، ')})`, rec.id);
+    return { rec, warnings:val.warnings };
+  },
+  /* تعديل توزيع مسجَّل: المبلغ والتفصيل يتحرّكان معاً أو لا يتحرّكان.
+     لا يُترك سجلٌ مجموع أشهره يخالف مبلغه ولو لحظة واحدة. */
+  async update(id, d){
+    const cur = Repos.distributions.get(id);
+    if (!cur) throw new AppError('التوزيع غير موجود','NOT_FOUND');
+    /* التفصيل القديم لا يُحمل إلى التحقّق: تغيير المبلغ وحده يعيد بناءه تحته،
+       ولو بقي المحفوظ لقيل إن المجموع يخالف مبلغاً لم يُقصد به هذا التفصيل. */
+    const next = Object.assign({}, cur, d, { id, allocations:d.allocations });
+    const val = this.validate(next);
+    if (!val.ok) throw new AppError('بيانات التوزيع غير صحيحة','VALIDATION', val.errors);
+    const amount = Money.clean(next.amount);
+    const allocations = this.balanceAllocations(
+      (Array.isArray(d.allocations) && d.allocations.length) ? d.allocations
+        : (next.periodFrom === cur.periodFrom && next.periodTo === cur.periodTo
+           && this.allocationsOf(cur).length && amount === U.round2(Number(cur.amount) || 0))
+          ? this.allocationsOf(cur)
+          : this.proposeAllocations(next.partnerId, next.periodFrom, next.periodTo, amount), amount);
+    const rec = await Repos.distributions.update(id, { partnerId:next.partnerId, periodFrom:next.periodFrom,
+      periodTo:next.periodTo, amount, allocations, date:next.date,
+      allocationSource:(Array.isArray(d.allocations) && d.allocations.length) ? 'manual' : (cur.allocationSource || 'proposed'),
+      method:PayMethods.normalize(next.method), notes:U.norm(next.notes) });
+    await Audit.log('distribution','update',
+      `تعديل توزيع إلى ${Money.fmt(rec.amount)} عن ${D.fmt(rec.periodFrom)} ← ${D.fmt(rec.periodTo)}`, id);
     return { rec, warnings:val.warnings };
   },
   async remove(id){
@@ -4488,37 +5193,30 @@ Svc.distributions = {
     const paid = U.round2(U.sum(dists, d => d.amount));
     /* الاستحقاق يُحسب على الفترات المقفلة وحدها: ما لم يُقفل لم يُثبَّت بعد */
     const closed = Svc.periods.list();
-    /* التوزيع الواحد قد يغطّي عدة أشهر، والسجل لا يقول كم منه يخصّ كل شهر —
-       لأن الشريكة قبضت مبلغاً واحداً عن الفترة كلها. فيُوزَّع على أشهرها بنسبة
-       نصيبها في كل شهر: شهرٌ ربحه الضعف يأخذ الضعف. وإذا لم يكن للفترة نصيب
-       موجب (خسارة أو صفر) فلا نسبة يُقاس عليها، فيُقسم بالتساوي.
-       الإجماليات تبقى مضبوطة في الحالتين — التوزيع هنا عرضٌ لا قيدٌ محاسبي. */
-    const shareOf = key => { const p = Svc.periods.get(key);
-      return p ? Calc.partnerShare(p.net, partner.sharePercent) : 0; };
-    const allocation = (d, key) => {
-      const months = Svc.periods.monthsBetween(d.periodFrom, d.periodTo);
-      if (!months.includes(key)) return 0;
-      if (months.length === 1) return Number(d.amount) || 0;
-      /* الأشهر الخاسرة لا تأخذ نصيباً، ولا تدخل المقام أيضاً — وإلا لم يعد
-         مجموع ما وُزّع على الأشهر يساوي ما قُبض فعلاً. */
-      const shares = months.map(k => Math.max(0, shareOf(k)));
-      const total = U.sum(shares, x => x);
-      if (total > 0) return U.round2((Number(d.amount) || 0) * (Math.max(0, shareOf(key)) / total));
-      return U.round2((Number(d.amount) || 0) / months.length);
-    };
+    /* ما يخصّ كل شهر يُقرأ من تفصيل التوزيع المحفوظ — لا يُقدَّر وقت العرض.
+       والتوزيعات القديمة الممتدّة (سُجّلت قبل وجود التفصيل) لا تُوزَّع تخميناً
+       على الأشهر: يُقال عنها «بلا تفصيل» ويُعرَض مجموعها على حدة، لأن السجل
+       لا يحمل ما يكفي لمعرفة كم منها كان عن كل شهر. اختراع التفصيل يُنتج
+       رقماً يبدو دقيقاً ولم يُتّفق عليه أبداً. */
+    const unallocated = dists.filter(d => Svc.distributions.isUnallocated(d));
+    const unallocatedTotal = U.round2(U.sum(unallocated, d => d.amount));
     const periods = closed.map(p => {
       const share = Calc.partnerShare(p.net, partner.sharePercent);
-      const got = U.round2(U.sum(dists, d => allocation(d, p.key)));
-      return { key:p.key, label:D.monthName(p.key), net:p.net, share, paid:got, remaining:U.round2(share - got),
-               /* التوزيع الممتدّ موزَّع تقديراً على أشهره، ويُعلَّم ليُقرأ على حقيقته */
-               apportioned:dists.some(d => allocation(d, p.key) > 0
-                 && Svc.periods.monthsBetween(d.periodFrom, d.periodTo).length > 1) };
+      const got = U.round2(U.sum(dists, d => Svc.distributions.allocatedTo(d, p.key)));
+      /* توزيع قديم بلا تفصيل يشمل هذا الشهر: يُعلَّم ليُقرأ المتبقّي على حقيقته */
+      const legacy = unallocated.some(d => Svc.periods.monthsBetween(d.periodFrom, d.periodTo).includes(p.key));
+      return { key:p.key, label:D.monthName(p.key), net:p.net, share, paid:got,
+               remaining:U.round2(share - got), legacyUnallocated:legacy };
     });
     const entitled = U.round2(U.sum(periods, p => p.share));
+    const allocatedTotal = U.round2(U.sum(periods, p => p.paid));
     return {
       partner, percent:Number(partner.sharePercent) || 0,
       contributions, returns, capitalBalance:U.round2(contributions - returns),
       capitalRows:caps, periods, entitled, paid,
+      /* ثابت الكشف: المقبوض = ما فُصِّل على أشهرٍ مقفلة + ما لم يُفصَّل + ما فُصِّل
+         على أشهر لم تُقفل بعد. الإجمالي لا يتغيّر مهما كان تفصيله. */
+      allocatedTotal, unallocatedTotal, unallocatedCount:unallocated.length,
       remaining:U.round2(entitled - paid),
       distributions:dists,
       openPeriods:Svc.periods.openMonths(o.openMonths || 12)
@@ -4759,11 +5457,19 @@ const Seed = {
         demoPartners.push(await Repos.partners.create(Object.assign({}, pr, { isDemo:true })));
         summary.partners = (summary.partners || 0) + 1;
       }
+      /* الطرق مختلفة عمداً: النقد يدخل الدرج والتحويل لا يدخله. من أول تشغيل
+         تُرى القاعدة بعينها في شاشة الصندوق بدل شرحها بالكلام. */
       await Svc.finance.addCapital({ date:D.addDays(today, -450), amount:15000000, type:'injection',
-        partnerId:demoPartners[0].id, description:'رأس مال التأسيس', isDemo:true });
+        partnerId:demoPartners[0].id, method:'transfer', description:'رأس مال التأسيس (تحويل بنكي)', isDemo:true });
       summary.capital++;
       await Svc.finance.addCapital({ date:D.addDays(today, -430), amount:5000000, type:'injection',
-        partnerId:demoPartners[1].id, description:'مساهمة الشريكة الثانية', isDemo:true });
+        partnerId:demoPartners[1].id, method:'cash', description:'مساهمة الشريكة الثانية', isDemo:true });
+      summary.capital++;
+      await Svc.finance.addCapital({ date:D.today(), amount:750000, type:'injection',
+        partnerId:demoPartners[0].id, method:'cash', description:'دعم نقدي لتغطية مشتريات الشهر', isDemo:true });
+      summary.capital++;
+      await Svc.finance.addCapital({ date:D.today(), amount:400000, type:'injection',
+        partnerId:demoPartners[1].id, method:'transfer', description:'تحويل بنكي لشراء أجهزة', isDemo:true });
       summary.capital++;
 
       step = 'جدول التدريبات';
@@ -4940,9 +5646,33 @@ const Seed = {
       } catch(e){ Log.warn('تعذّر إنشاء توزيع تجريبي', e); }
 
       step = 'الموردون';
+      const demoSuppliers = [];
       for (const nm of ['شركة المكمّلات الحديثة','مخزن الملابس الرياضية','موزّع المشروبات']){
-        await Svc.suppliers.save(null, { name:nm, phone:'0773'+String(1000000 + Math.floor(rnd()*8999999)), isDemo:true });
+        demoSuppliers.push(await Svc.suppliers.save(null, { name:nm, phone:'0773'+String(1000000 + Math.floor(rnd()*8999999)),
+          contact:'المسؤول', isDemo:true }));
         summary.suppliers = (summary.suppliers||0) + 1;
+      }
+
+      step = 'مستندات الشراء';
+      /* مستندان يُظهران الفرق الذي تدور حوله الدورة كلها: واحد سُدّد بالكامل،
+         وآخر سُدّد نصفه فيبقى للمورّد متبقٍّ ظاهر في كشفه وفي المستحقات. */
+      const buyable = Repos.products.list().filter(p => p.isDemo).slice(0, 3);
+      if (buyable.length && demoSuppliers[0]){
+        const full = await Svc.purchases.save(null, { supplierId:demoSuppliers[0].id, date:D.addDays(today, -12),
+          invoiceNo:'INV-2231', notes:'طلبية المكمّلات الشهرية', isDemo:true,
+          lines:buyable.slice(0, 2).map(p => ({ productId:p.id, qty:10, unitCost:U.round2((Number(p.cost) || 1000) * 0.95) })) });
+        await Svc.purchases.post(full.rec.id);
+        await Svc.purchases.addPayment({ purchaseId:full.rec.id, date:D.addDays(today, -12),
+          amount:full.rec.total, method:'cash', notes:'سُدّد بالكامل عند الاستلام', isDemo:true });
+        summary.purchases = (summary.purchases || 0) + 1;
+
+        const partial = await Svc.purchases.save(null, { supplierId:demoSuppliers[Math.min(1, demoSuppliers.length - 1)].id,
+          date:D.addDays(today, -4), invoiceNo:'INV-2290', notes:'ملابس رياضية — دفعة أولى', isDemo:true,
+          lines:buyable.map(p => ({ productId:p.id, qty:6, unitCost:U.round2((Number(p.cost) || 1000) * 1.05) })) });
+        await Svc.purchases.post(partial.rec.id);
+        await Svc.purchases.addPayment({ purchaseId:partial.rec.id, date:D.addDays(today, -4),
+          amount:U.round2(partial.rec.total / 2), method:'transfer', notes:'نصف المبلغ تحويلاً', isDemo:true });
+        summary.purchases = (summary.purchases || 0) + 1;
       }
 
       step = 'إقفال الصندوق';
@@ -5002,6 +5732,19 @@ const Seed = {
     });
     /* التوزيعات تتبع شريكتها التجريبية */
     Repos.distributions.list(true).forEach(x => { if (marked.partners.has(x.partnerId)) marked.distributions.add(x.id); });
+    /* مستند الشراء يسحب معه كل ما ولّده: مصروفه وحركاته ودفعاته — وإلا بقي
+       مصروف بلا مستند ورصيد مخزون من بضاعة حُذف مصدرها */
+    Repos.purchases.list(true).forEach(p => {
+      if (!marked.purchases.has(p.id) && !marked.suppliers.has(p.supplierId)) return;
+      marked.purchases.add(p.id);
+      if (p.expenseId) marked.expenses.add(p.expenseId);
+    });
+    Repos.stockMoves.list(true).forEach(mv => {
+      if (mv.refType === 'purchase' && marked.purchases.has(mv.refId)) marked.stockMoves.add(mv.id);
+    });
+    Repos.purchasePayments.list(true).forEach(pp => {
+      if (marked.purchases.has(pp.purchaseId) || marked.suppliers.has(pp.supplierId)) marked.purchasePayments.add(pp.id);
+    });
     Repos.subEvents.list(true).forEach(e => { if (marked.subscriptions.has(e.subId)) marked.subEvents.add(e.id); });
     Repos.bookings.list(true).forEach(b => {
       if (marked.classSessions.has(b.sessionId) || marked.members.has(b.memberId)) marked.bookings.add(b.id);
@@ -5065,6 +5808,7 @@ const Migrations = {
     if (from < 4){ applied.push(await this.v3_to_v4()); }
     if (from < 5){ applied.push(await this.v4_to_v5()); }
     if (from < 6){ applied.push(await this.v5_to_v6()); }
+    if (from < 7){ applied.push(await this.v6_to_v7()); }
     if (from !== APP.schema || !rec) await DB.put('meta', { k:'schema', v:APP.schema });
     /* من كان عنده بيانات قبل هذا الإصدار يُعتبر مُهيّأً حتى لا تُزرع افتراضيات فوق بياناته */
     const st = DB.get('meta','settings');
@@ -5324,6 +6068,66 @@ Migrations.v5_to_v6 = async function(){
 };
 
 
+/* ============================ v6 → v7 =====================================
+   ترقية «إقفال الدورات». لا تُنشئ مالاً ولا تغيّر مبلغاً محفوظاً، وتشغيلها
+   مرّتين يعطي النتيجة نفسها. وما تفعله بالضبط:
+
+     1. حركات رأس المال القديمة تُعطى طريقة. والسؤال هنا ليس تقنياً: بأي طريقة
+        دخل رأس مال سُجّل قبل أن يسأل النظام عن الطريقة؟ لا أحد يعرف. وقد كان
+        الحساب القديم يفترضها نقداً كلها ويخصمها من الدرج — افتراضٌ يصنع فرقاً
+        بلا تفسير في كل يوم دخله تحويل بنكي. فتُوسَم «غير معروفة» كما فعلنا مع
+        رواتب v5 بالضبط: تبقى في السيولة ورأس المال كاملةً، وتخرج من حساب الدرج
+        وحده، وتُعرض في شاشة الصندوق بقائمة تُصحَّح سجلاً سجلاً.
+        القاعدة نفسها منذ v5: التخمين في الصندوق أسوأ من الاعتراف بالجهل.
+
+     2. الضخّ القديم يُوسَم kind='capital_injection' ليكتمل ما بدأته v5 بوسم
+        السحب 'capital_return' — فيُقرأ الصنفان بالوسم لا بالاستنتاج.
+
+     3. التوزيعات القديمة: التي تغطّي شهراً واحداً تُفصَّل تفصيلاً دقيقاً لا
+        تخمينياً (مبلغها كله يخصّ شهرها الوحيد — هذه حقيقة لا اجتهاد). أمّا
+        الممتدّة على أكثر من شهر فلا تُفصَّل: السجل لا يحمل ما يكفي، واختراع
+        التفصيل يصنع رقماً يبدو دقيقاً ولم يُتّفق عليه قط. تُوسَم بأن تفصيلها
+        غير متاح، ويظهر مجموعها في الكشف على حدة. المبالغ الإجمالية لا تُمسّ.
+
+     4. الجداول الجديدة (المشتريات ودفعاتها) تبدأ فارغة، فلا شيء يُنقل إليها.
+   ========================================================================== */
+Migrations.v6_to_v7 = async function(){
+  let capMethod = 0, capKind = 0, allocated = 0, legacy = 0;
+  for (const c of DB.all('capital')){
+    const patch = {};
+    if (!U.norm(c.method)) patch.method = PayMethods.UNKNOWN_KEY;
+    if (!c.kind) patch.kind = c.type === 'withdrawal' ? 'capital_return' : 'capital_injection';
+    if (!Object.keys(patch).length) continue;
+    if (patch.method) capMethod++;
+    if (patch.kind) capKind++;
+    await DB.put('capital', Object.assign({}, c, patch));
+  }
+  for (const d of DB.all('distributions')){
+    if (Array.isArray(d.allocations) && d.allocations.length) continue;
+    if (d.allocationUnavailable) continue;
+    const months = Svc.periods.monthsBetween(d.periodFrom, d.periodTo);
+    if (months.length === 1){
+      const p = Svc.periods.get(months[0]);
+      await DB.put('distributions', Object.assign({}, d, {
+        allocations:[{ key:months[0], net:p ? U.round2(p.net) : 0,
+                       share:0, amount:U.round2(Number(d.amount) || 0) }],
+        allocationSource:'migrated' }));
+      allocated++;
+    } else {
+      await DB.put('distributions', Object.assign({}, d, { allocations:[], allocationUnavailable:true,
+        allocationSource:'legacy' }));
+      legacy++;
+    }
+  }
+  const parts = [];
+  if (capMethod) parts.push(`${capMethod} حركة رأس مال بلا طريقة مسجّلة وُسمت «غير معروفة»`);
+  if (capKind) parts.push(`${capKind} حركة رأس مال وُسم صنفها`);
+  if (allocated) parts.push(`${allocated} توزيعاً عن شهر واحد فُصّل بالضبط`);
+  if (legacy) parts.push(`${legacy} توزيعاً ممتدّاً بقي بلا تفصيل (لا يُخترع تاريخ)`);
+  return `v6→v7: ${parts.length ? parts.join('، ') : 'لا شيء يحتاج ترقية'}`;
+};
+
+
 /* ===== src/app/data/80-integrity.js ================================================== */
 /* ============================== Integrity ================================
    فحص العلاقات: سجلات يتيمة أو روابط مكسورة. يُستعمل في الإعدادات وفي الاختبارات. */
@@ -5346,6 +6150,7 @@ const Integrity = {
     DB.all('expenses').forEach(e => {
       if (e.refType === 'payroll' && !has('payrolls', e.refId)) issues.push({ type:'مصروف راتب بلا كشف', id:e.id, fix:'unlinkExpense' });
       if (e.refType === 'stock' && !has('stockMoves', e.refId)) issues.push({ type:'مصروف شراء بلا حركة مخزون', id:e.id, fix:'unlinkExpense' });
+      if (e.refType === 'purchase' && !has('purchases', e.refId)) issues.push({ type:'مصروف مستند شراء بلا مستند', id:e.id, fix:'unlinkExpense' });
     });
     DB.all('exercises').forEach(x => {
       if (x.mediaId && !has('media', x.mediaId)) issues.push({ type:'تمرين يشير إلى وسائط محذوفة', id:x.id, fix:'clearMediaLink' });
@@ -5401,6 +6206,46 @@ const Integrity = {
     });
     DB.all('distributions').forEach(x => {
       if (!has('partners', x.partnerId)) issues.push({ type:'توزيع أرباح بلا شريكة', id:x.id, fix:'deleteOrphan', store:'distributions' });
+      /* الثابت الذي يحرس التفصيل: مجموع أشهر التوزيع = مبلغه بالضبط */
+      const alloc = Array.isArray(x.allocations) ? x.allocations : [];
+      if (alloc.length){
+        const sum = U.round2(U.sum(alloc, a => Number(a.amount) || 0));
+        if (Math.abs(U.round2(sum - (Number(x.amount) || 0))) > 0.009)
+          issues.push({ type:'تفصيل توزيع لا يساوي مبلغه', id:x.id, fix:'rebalanceAllocations' });
+        const months = Svc.periods.monthsBetween(x.periodFrom, x.periodTo);
+        if (alloc.some(a => !months.includes(String(a.key))))
+          issues.push({ type:'تفصيل توزيع بشهر خارج فترته', id:x.id, fix:'rebalanceAllocations' });
+      }
+    });
+    /* --- دورة الشراء: كل مستند لمورّد، وكل دفعة لمستند، ولا مستند مُرحَّل بلا أثر --- */
+    DB.all('purchases').forEach(p => {
+      if (!has('suppliers', p.supplierId)) issues.push({ type:'مستند شراء بلا مورّد', id:p.id, fix:'none' });
+      if (p.status === 'posted'){
+        if (p.expenseId && !has('expenses', p.expenseId))
+          issues.push({ type:'مستند شراء مُرحَّل بلا مصروف', id:p.id, fix:'none' });
+        const moves = DB.all('stockMoves').filter(m => m.refType === 'purchase' && m.refId === p.id && !m.archived);
+        if (!moves.length && (p.lines || []).length)
+          issues.push({ type:'مستند شراء مُرحَّل بلا حركة مخزون', id:p.id, fix:'none' });
+      }
+      (p.lines || []).forEach(l => {
+        if (l.productId && !has('products', l.productId))
+          issues.push({ type:'سطر شراء بصنف محذوف', id:p.id, fix:'none' });
+      });
+    });
+    DB.all('purchasePayments').forEach(pp => {
+      if (!has('purchases', pp.purchaseId))
+        issues.push({ type:'دفعة مورّد بلا مستند شراء', id:pp.id, fix:'deleteOrphan', store:'purchasePayments' });
+      else {
+        const doc = DB.get('purchases', pp.purchaseId);
+        const paid = U.round2(U.sum(DB.all('purchasePayments').filter(x => x.purchaseId === pp.purchaseId),
+          x => Number(x.amount) || 0));
+        if (doc && doc.status === 'posted' && paid > U.round2(Number(doc.total) || 0) + 0.009)
+          issues.push({ type:'مستند شراء مدفوع أكثر من قيمته', id:doc.id, fix:'none' });
+      }
+    });
+    DB.all('stockMoves').forEach(m => {
+      if (m.refType === 'purchase' && !has('purchases', m.refId))
+        issues.push({ type:'حركة مخزون لمستند شراء محذوف', id:m.id, fix:'deleteStockMove' });
     });
     DB.all('bookings').forEach(b => {
       if (!has('classSessions', b.sessionId)) issues.push({ type:'حجز بلا حصة', id:b.id, fix:'deleteOrphan', store:'bookings' });
@@ -5446,6 +6291,18 @@ const Integrity = {
         else if (it.fix === 'voidReceipt'){
           await Repos.receipts.update(it.id, { voided:true, voidedAt:new Date().toISOString(), voidReason:'أُلغيت الدفعة المرتبطة' });
           fixed++;
+        }
+        else if (it.fix === 'rebalanceAllocations'){
+          /* الإجمالي لا يُمسّ أبداً — يُعاد ضبط التفصيل تحته حتى يُغلق الثابت */
+          const d = Repos.distributions.get(it.id);
+          if (d){
+            const months = Svc.periods.monthsBetween(d.periodFrom, d.periodTo);
+            const kept = Svc.distributions.allocationsOf(d).filter(a => months.includes(String(a.key)));
+            const rows = kept.length ? Svc.distributions.balanceAllocations(kept, d.amount)
+                                     : Svc.distributions.proposeAllocations(d.partnerId, d.periodFrom, d.periodTo, d.amount);
+            await Repos.distributions.update(it.id, { allocations:rows });
+            fixed++;
+          }
         }
         else if (it.fix === 'clearSessionTemplate'){ await Repos.sessions.update(it.id, { trainingId:null }); fixed++; }
         else if (it.fix === 'clearAttendanceSession'){ await Repos.attendance.update(it.id, { sessionId:null }); fixed++; }
@@ -6170,6 +7027,7 @@ const State = {
     exercises:{ q:'', cat:'', level:'' },
     sales:{ q:'', pay:'', from:'', to:'', archived:false, page:1, pageSize:25, sortFn:null, sortDir:1 },
     inventory:{ q:'', cat:'', state:'', archived:false, page:1, pageSize:25, sortFn:null, sortDir:1 },
+    purchases:{ q:'', supplierId:'', status:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
     attendance:{ date:'', sessionId:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
     dues:{ q:'', kind:'', page:1, pageSize:25, sortFn:null, sortDir:1 },
     audit:{ page:1, pageSize:20, sortFn:null, sortDir:1 },
@@ -6208,6 +7066,7 @@ const NAV = [
   { g:'المتجر' },
   { k:'pos',        t:'المبيعات',       i:ICON.coins },
   { k:'inventory',  t:'الأصناف والمخزون', i:ICON.box },
+  { k:'inventory',  t:'المشتريات',      i:ICON.card,  p:{ tab:'purchases' }, id:'inv-pur' },
   { k:'inventory',  t:'الموردون',       i:ICON.staff, p:{ tab:'suppliers' }, id:'inv-sup' },
   { g:'النظام' },
   { k:'settings',   t:'الإعدادات',      i:ICON.gear },
@@ -8311,6 +9170,7 @@ Views.finance = {
     const todayPays = U.sortBy(Repos.payments.list().filter(x => x.date === today), x => x.createdAt, -1);
     const todayOut = U.sortBy(Repos.expenses.list().filter(x => x.date === today), x => x.createdAt, -1);
     const todayDist = Repos.distributions.list().filter(x => x.date === today);
+    const todaySupPay = U.sortBy(Repos.purchasePayments.list().filter(x => x.date === today), x => x.createdAt);
     const missing = Svc.cashbook.missing(14);
     const sum = Svc.cashbook.summary();
     const rows = Svc.cashbook.recent(30);
@@ -8346,6 +9206,24 @@ Views.finance = {
           <div class="t-sub" style="margin-top:4px">هذه سجلات صُرفت قبل تسجيل طريقة الصرف — غالباً رواتب.
             خصمها تخميناً يصنع فرقاً لا تفسير له. حدّدي طريقة كل منها من صفحة الرواتب أو المصروفات لتدخل الحساب.</div>
         </div></div>` : ''}
+        ${p.capitalUnknown ? `<div class="card" style="border-color:var(--gold-600);margin-top:12px"><div class="card-body" style="padding:11px 14px">
+          <strong>${Money.fmt(p.capitalUnknown)} حركات رأس مال اليوم بلا طريقة مسجَّلة (${p.movement.counts.capitalUnknown} حركة)، خارج حساب الدرج.</strong>
+          <div class="t-sub" style="margin:4px 0 8px">حدّديها من تبويب «رأس المال» لتدخل الحساب.</div>
+          <button class="btn btn-sm" id="cashToCapital">فتح تبويب رأس المال</button>
+        </div></div>` : ''}
+        ${(p.movement.capitalCashIn || p.movement.capitalCashOut || p.movement.capitalNonCashIn || p.movement.capitalNonCashOut) ? `
+          <h4 style="font-size:14px;margin:16px 0 8px">رأس المال اليوم</h4>
+          <table class="mini-tbl" style="max-width:520px"><tbody>
+            ${p.movement.capitalCashIn ? `<tr><td>ضخّ نقداً <span class="t-sub">(دخل الدرج)</span></td>
+              <td class="num ta-l money-pos">${Money.fmt(p.movement.capitalCashIn)}</td></tr>` : ''}
+            ${p.movement.capitalNonCashIn ? `<tr><td>ضخّ بغير النقد <span class="t-sub">(سيولة لا درج)</span></td>
+              <td class="num ta-l">${Money.fmt(p.movement.capitalNonCashIn)}</td></tr>` : ''}
+            ${p.movement.capitalCashOut ? `<tr><td>استرجاع نقداً <span class="t-sub">(خرج من الدرج)</span></td>
+              <td class="num ta-l money-neg">${Money.fmt(p.movement.capitalCashOut)}</td></tr>` : ''}
+            ${p.movement.capitalNonCashOut ? `<tr><td>استرجاع بغير النقد <span class="t-sub">(سيولة لا درج)</span></td>
+              <td class="num ta-l">${Money.fmt(p.movement.capitalNonCashOut)}</td></tr>` : ''}
+          </tbody></table>
+          <div class="t-sub" style="margin-top:6px">رأس المال ليس إيراداً واسترجاعه ليس مصروفاً — ولا يدخل الدرج منه إلا النقدي.</div>` : ''}
         ${p.byMethod && p.byMethod.length ? `<h4 style="font-size:14px;margin:16px 0 8px">اليوم حسب طريقة الدفع</h4>
           <table class="mini-tbl" style="max-width:520px"><thead><tr><th>الطريقة</th><th>داخل</th><th>خارج</th><th>الصافي</th></tr></thead><tbody>
           ${p.byMethod.map(m => `<tr${m.key === PayMethods.CASH_KEY ? ' style="font-weight:700"' : ''}>
@@ -8378,6 +9256,15 @@ Views.finance = {
             <td class="num money-neg">${Money.fmt(e.amount)}</td>
             <td>${U.esc(PayMethods.label(e.method))}${Svc.cashbook.isCash(e.method) ? '' : ' <span class="pill">خارج الدرج</span>'}</td></tr>`).join('')}
           </tbody></table>` : ''}
+        ${todaySupPay.length ? `<h4 style="font-size:13px;margin:16px 0 8px">دفعات الموردين اليوم</h4>
+          <table class="mini-tbl"><thead><tr><th>المورّد</th><th>المستند</th><th>المبلغ</th><th>الطريقة</th></tr></thead><tbody>
+          ${todaySupPay.map(x => { const doc = Repos.purchases.get(x.purchaseId);
+            return `<tr><td>${U.esc((Repos.suppliers.get(x.supplierId) || {}).name || '—')}</td>
+            <td class="num">${U.esc(doc ? doc.code : '—')}</td>
+            <td class="num money-neg">${Money.fmt(x.amount)}</td>
+            <td>${U.esc(PayMethods.label(x.method))}${Svc.cashbook.isCash(x.method) ? '' : ' <span class="pill">خارج الدرج</span>'}</td></tr>`; }).join('')}
+          </tbody></table>
+          <div class="t-sub" style="margin-top:6px">تسديد المورّد ليس مصروفاً جديداً — المصروف سُجّل يوم تُرحِّل المستند، وهذه تسديدُه.</div>` : ''}
         ${todayDist.length ? `<h4 style="font-size:13px;margin:16px 0 8px">توزيعات أرباح اليوم</h4>
           <table class="mini-tbl"><thead><tr><th>الشريكة</th><th>عن الفترة</th><th>المبلغ</th><th>الطريقة</th></tr></thead><tbody>
           ${todayDist.map(x => `<tr><td>${U.esc((Repos.partners.get(x.partnerId) || {}).name || '—')}</td>
@@ -8412,6 +9299,8 @@ Views.finance = {
       renderRoute();
     });
     body.querySelectorAll('[data-rcp]').forEach(b => b.onclick = () => Actions.printReceiptForPayment(b.dataset.rcp));
+    const ctc = body.querySelector('#cashToCapital');
+    if (ctc) ctc.onclick = () => { State.f.financeTab = 'capital'; renderRoute(); };
     const pa = body.querySelector('#cashPrintAll');
     if (pa) pa.onclick = () => Actions.printDayReceipts(today);
     const dp = body.querySelector('#cashDayPrint');
@@ -8432,15 +9321,27 @@ Views.finance = {
     const total = U.round2(U.sum(all, x=>x.st.due));
     const today = D.today();
     const aged = all.filter(x => Svc.payments.ageText(x.date).days > 30);
+    const payables = Svc.purchases.payables();
     body.innerHTML = `<div class="stack">
       <div class="grid g-4">
-        ${kpi('إجمالي المستحقات', Money.fmt(total), `${all.length} مستند`, total>0?'neg':'pos')}
+        ${kpi('لنا على المشتركات', Money.fmt(total), `${all.length} مستند`, total>0?'neg':'pos')}
         ${kpi('اشتراكات', Money.fmt(U.sum(all.filter(x=>x.kind==='subscription'), x=>x.st.due)),
           `${all.filter(x=>x.kind==='subscription').length} اشتراك`, 'plum')}
-        ${kpi('فواتير بيع', Money.fmt(U.sum(all.filter(x=>x.kind==='sale'), x=>x.st.due)),
-          `${all.filter(x=>x.kind==='sale').length} فاتورة`, 'plum')}
         ${kpi('متأخرة أكثر من 30 يوماً', Money.fmt(U.sum(aged, x=>x.st.due)), `${aged.length} مستند`, aged.length?'neg':'pos')}
+        ${kpi('علينا للموردين', Money.fmt(payables.due), `${payables.count} مستند شراء`, payables.due>0?'neg':'pos')}
       </div>
+      ${payables.count ? `<div class="card"><div class="card-head"><h3>مستحقات الموردين</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="duPur">فتح المشتريات</button></div><div class="card-body">
+        <table class="mini-tbl"><thead><tr><th>المستند</th><th>المورّد</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th><th></th></tr></thead><tbody>
+        ${payables.rows.slice(0, 10).map(x => `<tr><td class="num">${U.esc(x.p.code)}</td>
+          <td>${U.esc(x.supplier ? x.supplier.name : '—')}</td><td class="num">${D.fmt(x.p.date)}</td>
+          <td class="num">${Money.fmt(x.st.total)}</td><td class="num">${Money.fmt(x.st.paid)}</td>
+          <td class="num"><strong class="money-neg">${Money.fmt(x.st.due)}</strong></td>
+          <td class="ta-l"><button class="btn btn-sm btn-primary" data-dupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
+        </tbody><tfoot><tr><th colspan="5">الإجمالي</th><th class="num">${Money.fmt(payables.due)}</th><th></th></tr></tfoot></table>
+        <div class="t-sub" style="margin-top:6px">ما لنا على المشتركات يُقبض فيصير إيراداً، وما علينا للموردين يُسدَّد
+          ولا يصير مصروفاً ثانياً — تكلفته سُجّلت يوم رُحِّل مستندها.</div>
+      </div></div>` : ''}
       <div class="card">
         <div class="filters">
           <input class="inp search" id="duQ" placeholder="بحث باسم المشتركة أو رقم الفاتورة" value="${U.esc(f.q)}">
@@ -8475,7 +9376,7 @@ Views.finance = {
             ${x.member?`<button class="btn btn-sm btn-icon" data-prof="${x.member.id}" title="ملف المشتركة">${svg(ICON.eye,15)}</button>`:''}</div>` }
       ];
       UI.table($('duTable'), { cols, rows, state:f,
-        empty:UI.empty('لا مستحقات','كل الاشتراكات والفواتير محصّلة بالكامل'),
+        empty:UI.empty('لا مستحقات على المشتركات','كل الاشتراكات والفواتير محصّلة بالكامل'),
         onSort:(fn,d)=>{ f.sortFn=fn; f.sortDir=d; draw(); }, onPage:draw });
       const t = $('duTable');
       t.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
@@ -8484,6 +9385,9 @@ Views.finance = {
       f._rows = rows;
     };
     draw();
+    body.querySelectorAll('[data-dupay]').forEach(b => b.onclick = () => Forms.purchasePayment(b.dataset.dupay));
+    const dp = body.querySelector('#duPur');
+    if (dp) dp.onclick = () => go('inventory', { tab:'purchases' });
     $('duQ').oninput = U.debounce(e => { f.q = e.target.value; f.page=1; draw(); }, 220);
     $('f_duKind').onchange = e => { f.kind = e.target.value; f.page=1; draw(); };
     $('duXls').onclick = () => Exporter.xlsx(`المستحقات-${D.today()}.xlsx`,
@@ -8629,6 +9533,7 @@ Views.finance = {
   capital(body){
     const s = Svc.finance.summary();
     const partners = Repos.partners.list();
+    const unknownCap = U.sortBy(Repos.capital.list().filter(c => c.method === PayMethods.UNKNOWN_KEY), c => c.date, -1);
     const yFrom = `${D.today().slice(0,4)}-01-01`, yTo = `${D.today().slice(0,4)}-12-31`;
     const yearNet = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), yFrom, yTo);
     const shareSum = U.sum(partners, p=>p.sharePercent);
@@ -8644,7 +9549,17 @@ Views.finance = {
         صافي الربح = الإيرادات − المصروفات (والرواتب المدفوعة مصروف).
         السحب يعني «استرجاع مالٍ استُثمر» وينقص رأس المال والسيولة ولا ينقص الربح،
         وتوزيع الأرباح ينقص السيولة وحدها — وهو في تبويب «الشركاء والأرباح».
+        <div style="margin-top:6px">والطريقة تفرّق بين شيئين لا يجوز خلطهما:
+          <u>السيولة</u> تزيد بالتحويل كما تزيد بالنقد، أمّا <u>درج الصندوق</u> فلا يزيد إلا بما دخله نقداً.</div>
       </div></div>
+      ${unknownCap.length ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-body">
+        <strong>${unknownCap.length} حركة رأس مال بلا طريقة مسجَّلة (${Money.fmt(U.sum(unknownCap, c => c.amount))}).</strong>
+        <div class="t-sub" style="margin:6px 0 10px">سُجّلت قبل أن يسأل النظام عن الطريقة، فهي خارج حساب درج الصندوق:
+          خصمها أو إضافتها تخميناً يصنع فرقاً لا تفسير له. حدّدي طريقة كلٍّ منها لتدخل الحساب.</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          ${unknownCap.slice(0, 12).map(c => `<button class="btn btn-sm" data-capm="${c.id}">
+            ${D.fmt(c.date)} — ${Money.fmt(c.amount)}</button>`).join('')}
+        </div></div></div>` : ''}
       <div class="card"><div class="card-head"><h3>حركات رأس المال</h3><div class="sp"></div>
         <button class="btn btn-sm btn-primary" id="cAdd">${svg(ICON.plus,15,2.4)} حركة جديدة</button></div>
         <div id="cTable"></div></div></div>`;
@@ -8654,9 +9569,14 @@ Views.finance = {
       cols:[
         { h:'التاريخ', sort:c=>c.date, render:c=>`<span class="num">${D.fmt(c.date)}</span>` },
         { h:'الوصف', render:c=>`<div class="t-name">${U.esc(c.description)}</div><div class="t-sub">${U.esc(c.partnerId?(Repos.partners.get(c.partnerId)||{}).name||'':'')}</div>` },
-        { h:'النوع', render:c=>c.type==='injection' ? '<span class="chip chip-active"><span class="dot"></span>ضخ</span>' : '<span class="chip chip-expired"><span class="dot"></span>سحب</span>' },
+        { h:'النوع', render:c=>c.type==='injection' ? '<span class="chip chip-active"><span class="dot"></span>ضخّ</span>' : '<span class="chip chip-expired"><span class="dot"></span>استرجاع</span>' },
+        { h:'الطريقة', render:c=> c.method === PayMethods.UNKNOWN_KEY
+            ? '<span class="pill warn">غير معروفة — خارج الدرج</span>'
+            : `${U.esc(PayMethods.label(c.method))}${Svc.cashbook.isCash(c.method) ? ' <span class="t-sub">(الدرج)</span>' : ' <span class="pill">خارج الدرج</span>'}` },
         { h:'المبلغ', sort:c=>c.amount, render:c=>`<strong class="num ${c.type==='injection'?'money-pos':'money-neg'}">${Money.fmt(c.amount)}</strong>` },
-        { h:'', cls:'ta-l', render:c=>`<button class="btn btn-sm btn-icon ${c.archived?'':'btn-danger'}" data-arch="${c.id}">${svg(c.archived?ICON.undo:ICON.trash,15)}</button>` }
+        { h:'', cls:'ta-l', render:c=>`<div class="t-actions">
+            ${c.method === PayMethods.UNKNOWN_KEY ? `<button class="btn btn-sm" data-capm="${c.id}">تحديد الطريقة</button>` : ''}
+            <button class="btn btn-sm btn-icon ${c.archived?'':'btn-danger'}" data-arch="${c.id}">${svg(c.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ], empty:UI.empty('لا حركات رأس مال','سجّلي رأس المال الابتدائي ليُحسب رصيد السيولة بدقة'),
       onPage:()=>Views.finance.capital(body) });
     $('cTable').querySelectorAll('[data-arch]').forEach(b => b.onclick = async () => {
@@ -8664,6 +9584,7 @@ Views.finance = {
       if (!c.archived && !await UI.confirm({ title:'أرشفة حركة رأس مال', message:`سيتأثر رصيد السيولة بمبلغ ${Money.fmt(c.amount)}.`, danger:true, confirmText:'أرشفة' })) return;
       await Svc.finance.archiveCapital(c.id, !c.archived); UI.toast('تم التحديث'); renderRoute();
     });
+    body.querySelectorAll('[data-capm]').forEach(b => b.onclick = () => Forms.capitalMethod(b.dataset.capm));
     $('cAdd').onclick = () => Forms.capital();
   },
 
@@ -8709,8 +9630,11 @@ Views.finance = {
         ${U.sortBy(closed, p => p.key, -1).map(p => `<tr><td>${U.esc(D.monthName(p.key))}</td>
           <td class="num money-pos">${Money.fmt(p.revenue)}</td><td class="num money-neg">${Money.fmt(p.expense)}</td>
           <td class="num"><strong>${Money.fmt(p.net)}</strong></td>
-          <td class="t-sub num">${D.fmt(String(p.closedAt).slice(0,10))}</td>
-          <td class="ta-l"><button class="btn btn-sm" data-reopen-p="${p.key}">إعادة فتح</button></td></tr>`).join('')}
+          <td class="t-sub num">${D.fmt(String(p.closedAt).slice(0,10))}
+            ${(p.acknowledged || []).length ? `<div class="t-sub">${(p.acknowledged || []).length} تنبيهاً أُقرّ</div>` : ''}</td>
+          <td class="ta-l"><div class="t-actions">
+            <button class="btn btn-sm" data-sum-p="${p.key}">الملخّص</button>
+            <button class="btn btn-sm" data-reopen-p="${p.key}">إعادة فتح</button></div></td></tr>`).join('')}
         </tbody></table></div></div>` : ''}
       </div>`;
 
@@ -8760,6 +9684,7 @@ Views.finance = {
         message:`سيعود ${Money.fmt(d.amount)} إلى السيولة، ويعود استحقاق الشريكة كما كان. الربح لا يتأثر في الحالتين.` })) return;
       await guard(null, () => Svc.distributions.remove(d.id), 'أُلغي التوزيع'); renderRoute();
     });
+    on('[data-sum-p]', b => Print.open(`ملخّص إقفال ${D.monthName(b.dataset.sumP)}`, Print.periodCloseHtml(b.dataset.sumP)));
     on('[data-reopen-p]', async b => {
       if (!await UI.confirm({ title:'إعادة فتح فترة', confirmText:'إعادة الفتح',
         message:'سيعود ربح الفترة متحرّكاً مع أي تعديل لاحق. لا يمكن إعادة فتح فترة وُزّعت أرباحها.' })) return;
@@ -8865,6 +9790,7 @@ Views.inventory = {
   sub(){ const r = Svc.inventory.rows(); return `${r.length} صنف — قيمة ${Money.fmt(Svc.inventory.totalValue())}`; },
   render(root, params){
     if (params && params.tab === 'suppliers') return this.suppliers(root);
+    if (params && params.tab === 'purchases') return this.purchases(root);
     const f = State.f.inventory;
     const all = Svc.inventory.rows(f.archived);
     const low = all.filter(r => r.low || r.out);
@@ -8948,19 +9874,104 @@ Views.inventory = {
   }
 ,
 
+  /* ------------------------------ المشتريات ------------------------------
+     الرحلة كلها في شاشة واحدة: مستند من مورّد ⇐ بضاعة تدخل المخزن ⇐ مصروف
+     يُسجَّل مرة ⇐ دفعات تُسدَّد ⇐ متبقٍّ ظاهر. لا شاشة جديدة في الشريط: تبويب
+     داخل المخزون، لأن الشراء مخزونٌ ومالٌ معاً. */
+  purchases(root){
+    const f = State.f.purchases;
+    const idx = Svc.purchases.paidIndex();
+    const all = Svc.purchases.list(true);
+    const payables = Svc.purchases.payables();
+    const posted = all.filter(p => p.status === 'posted');
+    const drafts = all.filter(p => p.status === 'draft');
+    const suppliers = Svc.suppliers.list();
+    root.innerHTML = `<div class="stack">
+      <div class="grid g-4">
+        ${kpi('مستندات مُرحَّلة', posted.length, `${all.length} مستنداً إجمالاً`, 'plum')}
+        ${kpi('إجمالي المشتريات', Money.fmt(U.sum(posted, p => p.total)), 'تكلفة سُجّلت مرة واحدة')}
+        ${kpi('المتبقّي للموردين', Money.fmt(payables.due), `${payables.count} مستنداً`, payables.due > 0 ? 'neg' : 'pos')}
+        ${kpi('مسودات', drafts.length, drafts.length ? 'لم تدخل المخزن ولا الحسابات بعد' : 'لا مسودات معلّقة', drafts.length ? 'neg' : 'pos')}
+      </div>
+      <div class="card"><div class="card-body" style="background:var(--rose-50);border-radius:var(--r-lg)">
+        <strong>المستحق شيء والمدفوع شيء آخر:</strong> مستند بـ500 دُفع منه 200 يعني مصروفاً 500،
+        ونقداً خارجاً 200، ومتبقّياً للمورّد 300. المصروف يُسجَّل مرة واحدة عند الترحيل،
+        والتسديد بعده ليس مصروفاً ثانياً — لذلك لا يُحسب الشراء مرتين.
+      </div></div>
+      ${payables.count ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-head"><h3>مستحقات الموردين</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="puPayPrint">${svg(ICON.print,15)} طباعة</button></div><div class="card-body">
+        <table class="mini-tbl"><thead><tr><th>المستند</th><th>المورّد</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th><th></th></tr></thead><tbody>
+        ${payables.rows.map(x => `<tr><td class="num">${U.esc(x.p.code)}</td>
+          <td>${U.esc(x.supplier ? x.supplier.name : '—')}</td><td class="num">${D.fmt(x.p.date)}</td>
+          <td class="num">${Money.fmt(x.st.total)}</td><td class="num">${Money.fmt(x.st.paid)}</td>
+          <td class="num"><strong class="money-neg">${Money.fmt(x.st.due)}</strong></td>
+          <td class="ta-l"><button class="btn btn-sm btn-primary" data-pupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
+        </tbody><tfoot><tr><th colspan="5">الإجمالي</th><th class="num">${Money.fmt(payables.due)}</th><th></th></tr></tfoot></table>
+      </div></div>` : ''}
+      <div class="card">
+        <div class="filters">
+          <input class="inp search" id="puQ" placeholder="بحث برقم المستند أو فاتورة المورّد" value="${U.esc(f.q)}">
+          ${UI.select('puSup', f.supplierId, [{v:'',t:'كل الموردين'}, ...suppliers.map(x => ({ v:x.id, t:x.name }))])}
+          ${UI.select('puSt', f.status, [{v:'',t:'كل الحالات'},{v:'posted',t:'مُرحَّل'},{v:'draft',t:'مسودة'},{v:'cancelled',t:'ملغى'}])}
+          <div style="flex:1"></div>
+          <button class="btn btn-sm" id="puSup2">الموردون</button>
+          <button class="btn btn-sm btn-primary" id="puAdd">${svg(ICON.plus,15,2.4)} مستند شراء</button>
+        </div><div id="puTable"></div></div></div>`;
+
+    const draw = () => {
+      let rows = all;
+      const q = U.normAr(f.q);
+      if (q) rows = rows.filter(p => U.normAr(p.code).includes(q) || U.normAr(p.invoiceNo).includes(q));
+      if (f.supplierId) rows = rows.filter(p => p.supplierId === f.supplierId);
+      if (f.status) rows = rows.filter(p => p.status === f.status);
+      rows = f.sortFn ? U.sortBy(rows, f.sortFn, f.sortDir) : U.sortBy(rows, p => p.date, -1);
+      UI.table($('puTable'), { state:f, rows, rowCls:p => p.status === 'cancelled' ? 'archived-row' : '',
+        cols:[
+          { h:'المستند', sort:p=>p.code, render:p=>`<div class="t-name num">${U.esc(p.code)}</div>
+              <div class="t-sub">${U.esc(p.invoiceNo ? 'فاتورة ' + p.invoiceNo : '')}</div>` },
+          { h:'المورّد', render:p=>U.esc((Repos.suppliers.get(p.supplierId) || {}).name || '—') },
+          { h:'التاريخ', sort:p=>p.date, render:p=>`<span class="num">${D.fmt(p.date)}</span>` },
+          { h:'الأصناف', render:p=>`<span class="num">${(p.lines || []).length}</span>
+              <span class="t-sub">(${U.round2(p.items || 0)})</span>` },
+          { h:'الإجمالي', sort:p=>p.total, render:p=>UI.money(p.total) },
+          { h:'المدفوع', render:p=>`<span class="num">${Money.fmt(idx[p.id] || 0)}</span>` },
+          { h:'المتبقّي', render:p=>{ const st = Svc.purchases.balance(p);
+              return p.status === 'posted'
+                ? `<strong class="num ${st.due > 0 ? 'money-neg' : 'money-pos'}">${Money.fmt(st.due)}</strong>`
+                : '<span class="t-sub">—</span>'; } },
+          { h:'الحالة', render:p=>UI.chip(Svc.purchases.status(p)) },
+          { h:'', cls:'ta-l', render:p=>`<div class="t-actions">
+              <button class="btn btn-sm" data-puopen="${p.id}">فتح</button></div>` }
+        ], empty:UI.empty('لا مستندات شراء','سجّلي أول مستند ليدخل الشراء المخزنَ والحساباتِ معاً'),
+        onSort:(fn,d)=>{ f.sortFn=fn; f.sortDir=d; draw(); }, onPage:draw });
+      $('puTable').querySelectorAll('[data-puopen]').forEach(b => b.onclick = () => Screens.purchase(b.dataset.puopen));
+    };
+    draw();
+    $('puQ').oninput = U.debounce(e => { f.q = e.target.value; f.page = 1; draw(); }, 220);
+    $('f_puSup').onchange = e => { f.supplierId = e.target.value; f.page = 1; draw(); };
+    $('f_puSt').onchange = e => { f.status = e.target.value; f.page = 1; draw(); };
+    $('puAdd').onclick = () => Forms.purchase();
+    $('puSup2').onclick = () => go('inventory', { tab:'suppliers' });
+    root.querySelectorAll('[data-pupay]').forEach(b => b.onclick = () => Forms.purchasePayment(b.dataset.pupay));
+    const pp = root.querySelector('#puPayPrint');
+    if (pp) pp.onclick = () => Print.open('مستحقات الموردين', Print.payablesHtml());
+  },
+
   /* ------------------------------- الموردون -------------------------------
-     شاشة صغيرة عمداً: مَن نشتري منه، وكم اشترينا، ومتى آخر مرة. تاريخ الشراء
-     يُقرأ من حركات المخزون نفسها فلا يوجد جدول موازٍ يشرد عن الحقيقة. */
+     شاشة صغيرة عمداً: مَن نشتري منه، وكم اشترينا، وكم بقي عليه، ومتى آخر مرة. */
   suppliers(root){
     const rows = Svc.suppliers.list(true).map(s => ({ s, st:Svc.suppliers.stats(s.id) }));
     const total = U.round2(U.sum(rows, r => r.st.total));
+    const payables = Svc.purchases.payables();
     root.innerHTML = `<div class="stack">
-      <div class="grid g-3">
+      <div class="grid g-4">
         ${kpi('موردون مسجّلون', rows.filter(r => !r.s.archived).length, `${rows.length} إجمالاً`, 'plum')}
-        ${kpi('إجمالي المشتريات', Money.fmt(total), 'من حركات المخزون', 'neg')}
-        ${kpi('أصناف مشتراة', new Set(rows.flatMap(r => Svc.suppliers.purchases(r.s.id).map(p => p.move.productId))).size, '', 'pos')}
+        ${kpi('إجمالي المشتريات', Money.fmt(total), 'مستندات ومشتريات مباشرة', 'neg')}
+        ${kpi('المتبقّي للموردين', Money.fmt(payables.due), `${payables.count} مستنداً`, payables.due > 0 ? 'neg' : 'pos')}
+        ${kpi('أصناف مشتراة', U.sum(rows, r => r.st.products), 'عبر كل الموردين', 'pos')}
       </div>
       <div class="card"><div class="card-head"><h3>الموردون</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="spPur">المشتريات</button>
         <button class="btn btn-sm" id="spInv">الأصناف والمخزون</button>
         <button class="btn btn-sm btn-primary" id="spAdd">${svg(ICON.plus,15,2.4)} مورّد</button></div>
         <div class="card-body tight" id="spTable"></div></div></div>`;
@@ -8969,11 +9980,15 @@ Views.inventory = {
       cols:[
         { h:'المورّد', render:r=>`<div class="t-name">${U.esc(r.s.name)}</div>
             <div class="t-sub">${U.esc([r.s.contact, r.s.phone].filter(Boolean).join(' — ') || 'بلا بيانات اتصال')}</div>` },
-        { h:'عمليات الشراء', render:r=>`<span class="num">${r.st.count}</span>` },
+        { h:'عمليات الشراء', render:r=>`<span class="num">${r.st.count}</span>
+            ${r.st.legacyCount ? `<div class="t-sub">${r.st.docCount} مستنداً + ${r.st.legacyCount} مباشرة</div>` : ''}` },
         { h:'إجمالي الشراء', render:r=>UI.money(r.st.total) },
-        { h:'أصناف', render:r=>`<span class="num">${r.st.products}</span>` },
+        { h:'المدفوع', render:r=>`<span class="num">${Money.fmt(r.st.paid)}</span>` },
+        { h:'المتبقّي له', render:r=>`<strong class="num ${r.st.due > 0 ? 'money-neg' : ''}">${Money.fmt(r.st.due)}</strong>` },
         { h:'آخر شراء', render:r=>r.st.last ? `<span class="num">${D.fmt(r.st.last)}</span>` : '<span class="t-sub">—</span>' },
         { h:'', cls:'ta-l', render:r=>`<div class="t-actions">
+            <button class="btn btn-sm" data-spstmt="${r.s.id}">كشف الحساب</button>
+            <button class="btn btn-sm btn-primary" data-spbuy="${r.s.id}">شراء</button>
             <button class="btn btn-sm btn-icon" data-spedit="${r.s.id}">${svg(ICON.edit,15)}</button>
             <button class="btn btn-sm btn-icon ${r.s.archived ? '' : 'btn-danger'}" data-sparch="${r.s.id}">${svg(r.s.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ], empty:UI.empty('لا موردون','أضيفي مورّداً ليُنسب إليه الشراء ويُعرف منه تاريخه') });
@@ -8985,7 +10000,10 @@ Views.inventory = {
         message:`سيُخفى «${U.esc(s.name)}» من القوائم، وتبقى مشترياته في سجل المخزون كما هي.` })) return;
       await guard(null, () => Svc.suppliers.archive(s.id, !s.archived), 'تم التحديث'); renderRoute();
     });
+    root.querySelectorAll('[data-spstmt]').forEach(b => b.onclick = () => Screens.supplierStatement(b.dataset.spstmt));
+    root.querySelectorAll('[data-spbuy]').forEach(b => b.onclick = () => Forms.purchase(null, b.dataset.spbuy));
     $('spAdd').onclick = () => Forms.supplier();
+    $('spPur').onclick = () => go('inventory', { tab:'purchases' });
     $('spInv').onclick = () => go('inventory');
   }
 };
@@ -10340,18 +11358,57 @@ Object.assign(Forms, {
     const partners = Repos.partners.list();
     const h = UI.modal({ title:'حركة رأس مال', size:'narrow',
       body:`<div id="capForm">
-        ${UI.field('type','نوع الحركة', UI.select('type','injection', [{v:'injection',t:'ضخ رأس مال'},{v:'withdrawal',t:'سحب'}]))}
+        ${UI.field('type','نوع الحركة', UI.select('type','injection',
+          [{v:'injection',t:'ضخّ رأس مال (مالٌ يدخل النادي)'},{v:'withdrawal',t:'استرجاع رأس مال (مالٌ يعود للشريكة)'}]))}
         ${UI.field('date','التاريخ', UI.input('date', D.today(), {type:'date'}))}
         ${UI.field('amount','المبلغ', UI.input('amount','', {type:'number', attrs:{min:0,step:'any'}}))}
+        ${UI.field('method','الطريقة', UI.select('method', PayMethods.CASH_KEY, payMethods()),
+          'النقدي وحده يدخل درج الصندوق أو يخرج منه — التحويل يغيّر السيولة ولا يمسّ الدرج')}
         ${UI.field('partnerId','الشريك (اختياري)', UI.select('partnerId','', [{v:'',t:'— بدون —'}, ...partners.map(p=>({v:p.id,t:p.name}))]))}
         ${UI.field('description','الوصف', UI.input('description','', {placeholder:'مثال: رأس مال التأسيس'}))}
-        ${UI.field('notes','ملاحظات', UI.input('notes',''))}</div>`,
+        ${UI.field('notes','ملاحظات', UI.input('notes',''))}
+        <div class="card" style="background:var(--rose-50);border-color:var(--rose-100);margin-top:10px"><div class="card-body" style="padding:11px 14px">
+          <div id="capOut" class="t-sub">—</div></div></div>
+      </div>`,
       footer:`<button class="btn btn-primary" id="capSave">حفظ</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
-      onMount(ov){ ov.querySelector('#capSave').onclick = async () => {
-        const scope = ov.querySelector('#capForm'), d = UI.read(scope);
-        const res = await guard(scope, () => Svc.finance.addCapital(d));
-        if (!res) return; (res.warnings||[]).forEach(w=>UI.toast(w,'warn',5000));
-        UI.toast('تم تسجيل الحركة'); h.close(); renderRoute(); }; }
+      onMount(ov){
+        const scope = ov.querySelector('#capForm');
+        const g = n => scope.querySelector(`[name="${n}"]`);
+        /* الجملة التي تمنع الخلط الأشهر: رأس المال ليس إيراداً، واسترجاعه ليس مصروفاً */
+        const sync = () => {
+          const inj = g('type').value === 'injection';
+          const cash = PayMethods.isCash(g('method').value);
+          const amt = Money.clean(g('amount').value) || 0;
+          ov.querySelector('#capOut').innerHTML =
+            `<strong>${inj ? 'ضخّ رأس مال: ليس إيراداً' : 'استرجاع رأس مال: ليس مصروفاً تشغيلياً'}</strong> — لا يغيّر صافي الربح في أي تقرير.<br>`
+            + (cash ? `أثره في الدرج: ${inj ? 'يزيد' : 'ينقص'} ${Money.fmt(amt)} اليوم.`
+                    : `${PayMethods.label(g('method').value)}: لا يمسّ درج الصندوق — يغيّر السيولة ورأس المال فقط.`);
+        };
+        ['type','method','amount'].forEach(n => { g(n).oninput = sync; g(n).onchange = sync; });
+        sync();
+        ov.querySelector('#capSave').onclick = async () => {
+          const d = UI.read(scope);
+          const res = await guard(scope, () => Svc.finance.addCapital(d));
+          if (!res) return; (res.warnings||[]).forEach(w=>UI.toast(w,'warn',5000));
+          UI.toast('تم تسجيل الحركة'); h.close(); renderRoute(); };
+      }
+    });
+  },
+  /* تحديد طريقة حركة رأس مال قديمة سُجّلت قبل أن يسأل النظام عن الطريقة */
+  capitalMethod(id){
+    const c = Repos.capital.get(id);
+    if (!c) return UI.toast('الحركة غير موجودة','err');
+    const h = UI.modal({ title:'تحديد طريقة الحركة', size:'narrow',
+      body:`<div id="cmForm">
+        <div class="t-sub" style="margin-bottom:10px">${U.esc(c.description || '')} — ${Money.fmt(c.amount)} يوم ${D.fmt(c.date)}.
+          سُجّلت قبل أن يسأل النظام عن الطريقة، فبقيت خارج حساب الدرج بدل أن تُخمَّن.</div>
+        ${UI.field('method','الطريقة الصحيحة', UI.select('method', PayMethods.CASH_KEY, payMethods()))}
+      </div>`,
+      footer:`<button class="btn btn-primary" id="cmSave">حفظ</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+      onMount(ov){ ov.querySelector('#cmSave').onclick = async () => {
+        const scope = ov.querySelector('#cmForm');
+        const res = await guard(scope, () => Svc.finance.setCapitalMethod(id, UI.read(scope).method));
+        if (!res) return; UI.toast('حُدّدت الطريقة'); h.close(); renderRoute(); }; }
     });
   },
   /* ------------------------------ شريك --------------------------------- */
@@ -11456,6 +12513,7 @@ Forms.supplier = function(id){
       ${UI.field('name','اسم المورّد', UI.input('name', s ? s.name : ''))}
       ${UI.field('phone','الهاتف', UI.input('phone', s ? s.phone : ''))}
       ${UI.field('contact','الشخص المسؤول', UI.input('contact', s ? s.contact : ''))}
+      ${UI.field('email','البريد الإلكتروني', UI.input('email', s ? (s.email || '') : '', { placeholder:'اختياري' }))}
       ${UI.field('address','العنوان', UI.input('address', s ? s.address : ''))}
       <div class="full">${UI.field('notes','ملاحظات', UI.textarea('notes', s ? s.notes : ''))}</div>
     </div>`,
@@ -11636,6 +12694,7 @@ Forms.supplier = function(id){
       ${UI.field('name','اسم المورّد', UI.input('name', s ? s.name : ''))}
       ${UI.field('phone','الهاتف', UI.input('phone', s ? s.phone : ''))}
       ${UI.field('contact','الشخص المسؤول', UI.input('contact', s ? s.contact : ''))}
+      ${UI.field('email','البريد الإلكتروني', UI.input('email', s ? (s.email || '') : '', { placeholder:'اختياري' }))}
       ${UI.field('address','العنوان', UI.input('address', s ? s.address : ''))}
       <div class="full">${UI.field('notes','ملاحظات', UI.input('notes', s ? s.notes : ''))}</div>
     </div>`,
@@ -11685,23 +12744,106 @@ Forms.closePeriod = function(){
   const h = UI.modal({
     title:'إقفال فترة محاسبية', size:'wide',
     body:`<div class="t-sub" style="margin-bottom:10px">إقفال الفترة يثبّت رقم ربحها كما هو الآن، فلا يتحرّك نصيب
-      الشريكة تحت قدميها كلما سُجّل مصروف متأخر. الإقفال لا يمنع التسجيل ولا يقفل الدفاتر.</div>
-      <table class="mini-tbl"><thead><tr><th>الشهر</th><th>الإيراد</th><th>المصروف</th><th>صافي الربح</th><th></th></tr></thead><tbody>
-      ${open.map(p => `<tr><td>${U.esc(D.monthName(p.key))}</td>
+      الشريكة تحت قدميها كلما سُجّل مصروف متأخر. اختاري شهراً لتُراجَع قائمةُ ما قبل الإقفال قبل التثبيت.</div>
+      <table class="mini-tbl"><thead><tr><th>الشهر</th><th>الإيراد</th><th>المصروف</th><th>صافي الربح</th><th>الحالة</th><th></th></tr></thead><tbody>
+      ${open.map(p => { const ck = Svc.periods.checklist(p.key);
+        return `<tr><td>${U.esc(D.monthName(p.key))}</td>
         <td class="num money-pos">${Money.fmt(p.revenue)}</td><td class="num money-neg">${Money.fmt(p.expense)}</td>
         <td class="num"><strong>${Money.fmt(p.net)}</strong></td>
-        <td class="ta-l"><button class="btn btn-sm btn-primary" data-close-p="${p.key}">إقفال</button></td></tr>`).join('')}
+        <td>${ck.blocking.length ? `<span class="chip chip-expired"><span class="dot"></span>${ck.blocking.length} مانع</span>`
+             : ck.warnings.length ? `<span class="chip chip-soon"><span class="dot"></span>${ck.warnings.length} تنبيه</span>`
+             : '<span class="chip chip-active"><span class="dot"></span>جاهزة</span>'}</td>
+        <td class="ta-l"><button class="btn btn-sm btn-primary" data-review-p="${p.key}">مراجعة وإقفال</button></td></tr>`; }).join('')}
       </tbody></table>`,
     footer:'<div class="sp"></div><button class="btn" data-close>إغلاق</button>',
     onMount(ov){
-      ov.querySelectorAll('[data-close-p]').forEach(b => b.onclick = async () => {
-        const key = b.dataset.closeP;
-        const p = Svc.periods.profitOf(key);
-        if (!await UI.confirm({ title:`إقفال ${D.monthName(key)}`, confirmText:'إقفال',
-          message:`سيُثبَّت ربح هذه الفترة عند <strong>${Money.fmt(p.net)}</strong>، ويصبح التوزيع منها ممكناً.` })) return;
-        await guard(null, () => Svc.periods.close(key), 'أُقفلت الفترة');
-        h.close(); renderRoute();
+      ov.querySelectorAll('[data-review-p]').forEach(b => b.onclick = () => {
+        h.close(); Screens.periodClose(b.dataset.reviewP);
       });
+    }
+  });
+};
+
+/* -------------------------- مراجعة الإقفال --------------------------
+   الإقفال قرار يُبنى عليه توزيعُ مالٍ حقيقي، فلا يصحّ أن يُتخذ على رقمٍ لم
+   تُرَ مصادره. هذه الشاشة تُري ثلاثة أشياء قبل زر التأكيد: ما يمنع الإقفال،
+   وما يُنبَّه إليه فيُقَرّ صراحةً، وملخّصَ ما يُقفَل عليه بالضبط.
+   والفرق بين المانع والتنبيه ليس شكلياً: المانع يجعل رقم الربح نفسه خطأ. */
+Screens.periodClose = function(key){
+  const ck = Svc.periods.checklist(key);
+  const sm = ck.summary;
+  const row = (t, v, cls) => `<tr><td>${U.esc(t)}</td><td class="num ta-l ${cls || ''}">${v}</td></tr>`;
+  const h = UI.modal({
+    title:`مراجعة إقفال ${D.monthName(key)}`, size:'wide',
+    body:`<div class="grid g-4" style="margin-bottom:14px">
+        ${kpi('الإيرادات', Money.fmt(sm.revenue), `${sm.counts.payments} دفعة`, 'pos')}
+        ${kpi('المصروفات', Money.fmt(sm.expense), `${sm.counts.expenses} مصروفاً`, 'neg')}
+        ${kpi('صافي الربح', Money.fmt(sm.net), 'هذا ما سيُثبَّت', sm.net >= 0 ? 'pos' : 'neg')}
+        ${kpi('المتوقّع في الدرج', Money.fmt(sm.endingExpectedCash), 'آخر يوم في الفترة', 'plum')}
+      </div>
+      ${ck.blocking.length ? `<div class="card" style="border-color:var(--red-600)"><div class="card-head"><h3>موانع يجب حلّها (${ck.blocking.length})</h3></div>
+        <div class="card-body"><ul style="margin:0;padding-inline-start:18px">
+        ${ck.blocking.map(b => `<li style="margin-bottom:6px">${U.esc(b.text)}
+          ${b.fix ? `<button class="btn btn-sm" data-fix="${U.esc(b.fix)}" style="margin-inline-start:6px">فتح</button>` : ''}</li>`).join('')}
+        </ul><div class="t-sub" style="margin-top:8px">كلٌّ من هذه يجعل رقم الربح نفسه غير صحيح، فلا يُقفَل عليه.</div>
+      </div></div>` : `<div class="card" style="border-color:var(--green-600, var(--rose-100))"><div class="card-body" style="padding:11px 14px">
+        <strong>لا موانع.</strong> <span class="t-sub">كل السجلات المالية في هذه الفترة مكتملة الطريقة والروابط.</span></div></div>`}
+      ${ck.warnings.length ? `<div class="card" style="border-color:var(--gold-600);margin-top:12px"><div class="card-head"><h3>تنبيهات تُقَرّ (${ck.warnings.length})</h3></div>
+        <div class="card-body"><ul style="margin:0;padding-inline-start:18px">
+        ${ck.warnings.map(w => `<li style="margin-bottom:6px">${U.esc(w.text)}
+          ${w.fix ? `<button class="btn btn-sm" data-fix="${U.esc(w.fix)}" style="margin-inline-start:6px">فتح</button>` : ''}</li>`).join('')}
+        </ul><div class="t-sub" style="margin-top:8px">هذه أوضاع طبيعية قد تبقى — لكنها تُقرأ قبل الإقفال وتُحفظ معه.</div>
+      </div></div>` : ''}
+      <div class="card" style="margin-top:12px"><div class="card-head"><h3>ما الذي يُقفَل بالضبط</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="pcPrint">${svg(ICON.print,15)} طباعة الملخّص</button></div><div class="card-body">
+        <table class="mini-tbl" style="max-width:560px"><tbody>
+          ${row('الإيرادات', Money.fmt(sm.revenue), 'money-pos')}
+          ${row('المصروفات', Money.fmt(sm.expense), 'money-neg')}
+          ${row('صافي الربح', `<strong>${Money.fmt(sm.net)}</strong>`)}
+          <tr><td colspan="2" class="t-sub" style="padding-top:10px">الحركة النقدية</td></tr>
+          ${row('مقبوض نقداً', Money.fmt(sm.cashIn))}
+          ${row('مقبوض بغير النقد', Money.fmt(sm.nonCashIn))}
+          ${row('مصروف نقداً', Money.fmt(sm.cashOut))}
+          ${row('مصروف بغير النقد', Money.fmt(sm.nonCashOut))}
+          <tr><td colspan="2" class="t-sub" style="padding-top:10px">خارج قائمة الأرباح</td></tr>
+          ${row('ضخّ رأس مال', Money.fmt(sm.capitalIn))}
+          ${row('استرجاع رأس مال', Money.fmt(sm.capitalOut))}
+          ${row('توزيعات أرباح', Money.fmt(sm.distributions))}
+          ${row('مشتريات مُرحَّلة', Money.fmt(sm.purchases))}
+          ${row('مدفوع للموردين', Money.fmt(sm.supplierPaid))}
+          <tr style="font-weight:700"><td>المتوقّع في الدرج آخر الفترة</td>
+            <td class="num ta-l">${Money.fmt(sm.endingExpectedCash)}</td></tr>
+        </tbody></table>
+        <div class="t-sub" style="margin-top:8px">رأس المال وتوزيعات الأرباح خارج صافي الربح عمداً:
+          الأول ليس إيراداً ولا مصروفاً، والثاني تصرُّفٌ في ربحٍ تحقّق.</div>
+      </div></div>
+      ${ck.warnings.length ? `<label class="switch" style="margin-top:12px"><input type="checkbox" id="pcAck">
+        قرأتُ التنبيهات أعلاه وأوافق على الإقفال بها</label>` : ''}`,
+    footer:`<button class="btn btn-primary" id="pcDo" ${ck.blocking.length ? 'disabled' : ''}>إقفال الفترة</button>
+            <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
+    onMount(ov){
+      const btn = ov.querySelector('#pcDo');
+      const ack = ov.querySelector('#pcAck');
+      if (ack && !ck.blocking.length){ btn.disabled = true; ack.onchange = () => { btn.disabled = !ack.checked; }; }
+      ov.querySelector('#pcPrint').onclick = () => Print.open(`ملخّص إقفال ${D.monthName(key)}`, Print.periodCloseHtml(key));
+      ov.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => {
+        const to = b.dataset.fix;
+        h.close();
+        if (to === 'methods' || to === 'cash'){ State.f.financeTab = 'cash'; go('finance', { tab:'cash' }); }
+        else if (to === 'purchases') go('inventory', { tab:'purchases' });
+        else if (to === 'dues'){ State.f.financeTab = 'dues'; go('finance', { tab:'dues' }); }
+        else if (to === 'partners' || to === 'periods'){ State.f.financeTab = 'partners'; go('finance', { tab:'partners' }); }
+        else if (to === 'inventory') go('inventory');
+        else if (to === 'integrity') go('settings', { sec:'data' });
+        renderRoute();
+      });
+      btn.onclick = async () => {
+        if (!await UI.confirm({ title:`إقفال ${D.monthName(key)}`, confirmText:'إقفال',
+          message:`سيُثبَّت ربح هذه الفترة عند <strong>${Money.fmt(sm.net)}</strong> ويصبح التوزيع منها ممكناً.<br>
+            وبعد الإقفال لا تُسجَّل فيها حركة مالية إلا بتصحيح مُعلَّل يُحفظ في سجل الأحداث.` })) return;
+        if (!await guard(null, () => Svc.periods.close(key), 'أُقفلت الفترة')) return;
+        h.close(); renderRoute();
+      };
     }
   });
 };
@@ -11728,6 +12870,7 @@ Forms.distribution = function(partnerId){
       ${UI.field('method','طريقة الصرف', UI.select('method', PayMethods.CASH_KEY, payMethods()),
         'النقدي يخرج من درج الصندوق اليوم')}
       <div class="full">${UI.field('notes','ملاحظات', UI.input('notes', ''))}</div>
+      <div class="full" id="dsAllocBox" style="margin-top:10px"></div>
       <div class="card" style="background:var(--surface-2);margin-top:10px"><div class="card-body" style="padding:12px 14px">
         <div id="dsOut" class="t-sub">—</div>
         <div class="t-sub" style="margin-top:6px">التوزيع يقلّل السيولة ولا يقلّل الربح: نادٍ يوزّع أرباحه ليس نادياً خسر.</div>
@@ -11737,29 +12880,387 @@ Forms.distribution = function(partnerId){
     onMount(ov){
       const scope = ov.querySelector('#dsForm');
       const g = n => scope.querySelector(`[name="${n}"]`);
+      /* تفصيل الأشهر جزء من النموذج لا من العرض: المالكة ترى كم يخصّ كل شهر
+         وتعدّله قبل الحفظ، والمجموع مقفول على المبلغ فلا يُحفظ فرقٌ مخفي. */
+      let manual = false;
+      const box = ov.querySelector('#dsAllocBox');
+      const readAlloc = () => [...box.querySelectorAll('[data-alk]')].map(inp =>
+        ({ key:inp.dataset.alk, amount:Money.clean(inp.value) || 0 }));
+      const paintAlloc = (rows, amount) => {
+        if (rows.length <= 1){ box.innerHTML = ''; return; }
+        const sum = U.round2(U.sum(rows, r => r.amount));
+        const diff = U.round2((Number(amount) || 0) - sum);
+        box.innerHTML = `<div class="card" style="background:var(--surface-2)"><div class="card-body" style="padding:12px 14px">
+          <h4 style="font-size:13px;margin:0 0 8px">كم من هذا المبلغ يخصّ كل شهر؟</h4>
+          <table class="mini-tbl"><thead><tr><th>الشهر</th><th>نصيبها فيه</th><th>المخصَّص</th></tr></thead><tbody>
+          ${rows.map(r => `<tr><td>${U.esc(D.monthName(r.key))}</td>
+            <td class="num t-sub">${Money.fmt(r.share || 0)}</td>
+            <td><input class="inp num" data-alk="${U.esc(r.key)}" type="number" min="0" step="any" value="${U.esc(r.amount)}"></td></tr>`).join('')}
+          </tbody><tfoot><tr><th colspan="2">المجموع</th>
+            <th class="num ${Math.abs(diff) > 0.01 ? 'money-neg' : 'money-pos'}" id="dsAllocSum">${Money.fmt(sum)}</th></tr></tfoot></table>
+          <div class="t-sub" style="margin-top:6px" id="dsAllocNote">${Math.abs(diff) > 0.01
+            ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
+            : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.'}</div>
+        </div></div>`;
+        box.querySelectorAll('[data-alk]').forEach(inp => inp.oninput = () => { manual = true; refresh(true); });
+      };
       const sync = () => {
         const from = D.startOfMonth(g('periodFrom').value), to = D.endOfMonth(g('periodTo').value);
         const out = ov.querySelector('#dsOut');
-        if (D.cmp(to, from) < 0){ out.innerHTML = '<span class="err">نهاية الفترة قبل بدايتها</span>'; return; }
+        if (D.cmp(to, from) < 0){ out.innerHTML = '<span class="err">نهاية الفترة قبل بدايتها</span>'; box.innerHTML = ''; return; }
         const ent = Svc.distributions.entitlement(g('partnerId').value, from, to);
         const already = U.round2(U.sum(Svc.distributions.ofPartner(g('partnerId').value)
           .filter(x => x.periodFrom === from && x.periodTo === to), x => x.amount));
         out.innerHTML = `ربح الفترة ${Money.fmt(ent.net)} — نصيبها ${ent.percent}% = <strong>${Money.fmt(ent.share)}</strong>`
           + (already ? ` — وُزّع منه ${Money.fmt(already)}، المتبقّي ${Money.fmt(U.round2(ent.share - already))}` : '');
       };
-      ['partnerId','periodFrom','periodTo'].forEach(n => { g(n).onchange = sync; });
-      sync();
+      const refresh = keepManual => {
+        sync();
+        const from = D.startOfMonth(g('periodFrom').value), to = D.endOfMonth(g('periodTo').value);
+        if (D.cmp(to, from) < 0) return;
+        const amount = Money.clean(g('amount').value) || 0;
+        const proposed = Svc.distributions.proposeAllocations(g('partnerId').value, from, to, amount);
+        if (!keepManual || !manual) return paintAlloc(proposed, amount);
+        const typed = readAlloc();
+        const byKey = Object.fromEntries(typed.map(t => [t.key, t.amount]));
+        const rows = proposed.map(p => ({ key:p.key, share:p.share, amount:byKey[p.key] != null ? byKey[p.key] : p.amount }));
+        const sum = U.round2(U.sum(rows, r => r.amount));
+        const diff = U.round2(amount - sum);
+        const sumEl = box.querySelector('#dsAllocSum'), noteEl = box.querySelector('#dsAllocNote');
+        if (sumEl){
+          sumEl.textContent = Money.fmt(sum);
+          sumEl.className = 'num ' + (Math.abs(diff) > 0.01 ? 'money-neg' : 'money-pos');
+          noteEl.innerHTML = Math.abs(diff) > 0.01
+            ? `<span class="err">الفرق ${Money.fmt(diff)} — مجموع الأشهر يجب أن يساوي المبلغ بالضبط.</span>`
+            : 'يُحفظ هذا التفصيل مع التوزيع فلا يُقدَّر لاحقاً في كشف الشريكة.';
+        }
+      };
+      ['partnerId','periodFrom','periodTo'].forEach(n => { g(n).onchange = () => { manual = false; refresh(false); }; });
+      g('amount').oninput = () => refresh(true);
+      refresh(false);
       ov.querySelector('#dsSave').onclick = async () => {
         const d = UI.read(scope);
         d.periodFrom = D.startOfMonth(d.periodFrom);
         d.periodTo = D.endOfMonth(d.periodTo);
+        const rows = readAlloc();
+        if (rows.length > 1) d.allocations = rows;
         const res = await guard(scope, () => Svc.distributions.create(d));
         if (!res) return;
         (res.warnings || []).forEach(w => UI.toast(w, 'warn', 7000));
-        UI.toast(`سُجّل توزيع ${Money.fmt(res.rec.amount)}`); h.close(); renderRoute();
+        const al = Svc.distributions.allocationsOf(res.rec);
+        UI.toast(`سُجّل توزيع ${Money.fmt(res.rec.amount)}`
+          + (al.length > 1 ? ` — مفصَّل على ${al.length} أشهر` : ''), 'ok', 5000);
+        h.close(); renderRoute();
       };
     }
   });
+};
+
+
+/* ===================== دورة الشراء: النماذج والشاشات ==================== */
+
+/* مستند شراء: سطور بأصنافها وتكلفتها، ومقبوضٌ أولٌ اختياري.
+   الترحيل من الزر نفسه: الاستقبال لا تُطالَب بخطوتين لعملٍ واحد. */
+Forms.purchase = function(id, supplierId){
+  const cur = id ? Repos.purchases.get(id) : null;
+  if (id && !cur) return UI.toast('المستند غير موجود','err');
+  if (cur && cur.status !== 'draft') return Screens.purchase(id);
+  const suppliers = Svc.suppliers.list();
+  if (!suppliers.length){
+    UI.toast('أضيفي مورّداً أولاً','warn');
+    return Forms.supplier();
+  }
+  const products = U.sortBy(Repos.products.list(), p => p.name);
+  if (!products.length) return UI.toast('أضيفي صنفاً في المخزون أولاً','warn');
+  let lines = (cur && (cur.lines || []).length) ? U.clone(cur.lines)
+    : [{ productId:products[0].id, qty:1, unitCost:Number(products[0].cost) || 0 }];
+
+  const h = UI.modal({ title: cur ? `تعديل مسودة ${cur.code}` : 'مستند شراء جديد', size:'wide',
+    body:`<div id="puForm"><div class="form-grid">
+        ${UI.field('supplierId','المورّد', UI.select('supplierId', (cur && cur.supplierId) || supplierId || suppliers[0].id,
+          suppliers.map(x => ({ v:x.id, t:x.name }))))}
+        ${UI.field('date','تاريخ الشراء', UI.input('date', cur ? cur.date : D.today(), { type:'date' }))}
+        ${UI.field('invoiceNo','رقم فاتورة المورّد', UI.input('invoiceNo', cur ? cur.invoiceNo : '', { placeholder:'اختياري' }))}
+      </div>
+      <h4 style="font-size:14px;margin:14px 0 8px">سطور المستند</h4>
+      <div class="tbl-wrap"><table class="tbl pos-tbl"><thead><tr>
+        <th style="width:38%">الصنف</th><th style="width:15%">الكمية</th><th style="width:20%">تكلفة الوحدة</th>
+        <th style="width:22%">الإجمالي</th><th style="width:5%"></th>
+      </tr></thead><tbody id="puLines"></tbody></table></div>
+      <button class="btn btn-sm" id="puAddLine" style="margin-top:8px">${svg(ICON.plus,14,2.4)} إضافة سطر</button>
+      <div class="form-grid" style="margin-top:14px">
+        ${UI.field('discount','خصم المستند', UI.input('discount', cur ? cur.discount : 0, { type:'number', attrs:{ min:0, step:'any' } }))}
+        ${UI.field('paidAmount','المدفوع الآن', UI.input('paidAmount', '', { type:'number', attrs:{ min:0, step:'any' } }),
+          'اتركيه فارغاً إن كان الشراء كلّه على الحساب')}
+        ${UI.field('method','طريقة الدفع', UI.select('method', PayMethods.CASH_KEY, payMethods()),
+          'النقدي وحده يخرج من درج الصندوق')}
+        <div class="full">${UI.field('notes','ملاحظات', UI.input('notes', cur ? cur.notes : ''))}</div>
+      </div>
+      <div class="card" style="background:var(--rose-50);border-color:var(--rose-100);margin-top:12px"><div class="card-body" style="padding:12px 16px">
+        <div class="row"><span>إجمالي المستند:</span><strong id="puTotal" style="font-size:19px">—</strong>
+          <div style="flex:1"></div><span id="puDue" class="t-sub"></span></div>
+        <div class="t-sub" style="margin-top:6px">الترحيل يُدخل البضاعة المخزنَ ويسجّل المصروف مرة واحدة.
+          المدفوع الآن يخرج من الصندوق، وما بقي يظهر مستحقاً للمورّد.</div>
+      </div></div>`,
+    footer:`<button class="btn btn-primary" id="puPost">${cur ? 'ترحيل المستند' : 'حفظ وترحيل'}</button>
+            <button class="btn" id="puDraft">حفظ كمسودة</button>
+            <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){
+      const scope = ov.querySelector('#puForm');
+      const g = n => scope.querySelector(`[name="${n}"]`);
+      const rowHtml = (l, i) => `<tr data-i="${i}">
+        <td>${UI.select(`ln_p_${i}`, l.productId, products.map(p => ({ v:p.id, t:p.name })), { bare:true })}</td>
+        <td><input class="inp num" data-k="qty" type="number" min="0" step="any" value="${U.esc(l.qty)}"></td>
+        <td><input class="inp num" data-k="unitCost" type="number" min="0" step="any" value="${U.esc(l.unitCost)}"></td>
+        <td class="num" data-total>${Money.fmt(Calc.purchaseLineTotal(l))}</td>
+        <td><button class="btn btn-sm btn-icon btn-danger" data-rm>${svg(ICON.trash,15)}</button></td></tr>`;
+      const read = () => [...scope.querySelectorAll('#puLines tr')].map(tr => {
+        const sel = tr.querySelector('select');
+        return { productId:sel ? sel.value : null,
+                 qty:Money.clean(tr.querySelector('[data-k=qty]').value) || 0,
+                 unitCost:Money.clean(tr.querySelector('[data-k=unitCost]').value) || 0 };
+      });
+      const sync = () => {
+        lines = read();
+        const t = Calc.purchaseTotals(lines, g('discount').value);
+        scope.querySelectorAll('#puLines tr').forEach((tr, i) => {
+          tr.querySelector('[data-total]').textContent = Money.fmt(Calc.purchaseLineTotal(lines[i] || {}));
+        });
+        ov.querySelector('#puTotal').textContent = Money.fmt(t.total);
+        const paid = g('paidAmount').value === '' ? 0 : Money.clean(g('paidAmount').value) || 0;
+        ov.querySelector('#puDue').textContent = t.total > 0
+          ? `المدفوع ${Money.fmt(Math.min(paid, t.total))} — يبقى للمورّد ${Money.fmt(U.round2(Math.max(0, t.total - paid)))}` : '';
+      };
+      const paint = () => {
+        scope.querySelector('#puLines').innerHTML = lines.map(rowHtml).join('');
+        scope.querySelectorAll('#puLines [data-rm]').forEach(b => b.onclick = () => {
+          const i = Number(b.closest('tr').dataset.i);
+          lines = read().filter((_, j) => j !== i);
+          if (!lines.length) lines = [{ productId:products[0].id, qty:1, unitCost:Number(products[0].cost) || 0 }];
+          paint();
+        });
+        /* اختيار الصنف يملأ تكلفته المعروفة إن كان السطر ما زال فارغاً */
+        scope.querySelectorAll('#puLines select').forEach(sel => sel.onchange = () => {
+          const tr = sel.closest('tr'), uc = tr.querySelector('[data-k=unitCost]');
+          const pr = Repos.products.get(sel.value);
+          if (pr && (!Money.clean(uc.value) || Money.clean(uc.value) === 0)) uc.value = Number(pr.cost) || 0;
+          sync();
+        });
+        scope.querySelectorAll('#puLines input').forEach(inp => inp.oninput = sync);
+        sync();
+      };
+      paint();
+      ov.querySelector('#puAddLine').onclick = () => { lines = read().concat([{ productId:products[0].id, qty:1, unitCost:0 }]); paint(); };
+      ['discount','paidAmount'].forEach(n => { g(n).oninput = sync; });
+
+      const submit = async post => {
+        const d = UI.read(scope);
+        d.lines = read();
+        const res = await guard(scope, () => Svc.purchases.save(cur ? cur.id : null, d));
+        if (!res) return;
+        (res.warnings || []).forEach(w => UI.toast(w, 'warn', 6000));
+        if (!post){ UI.toast(`حُفظت مسودة ${res.rec.code}`); h.close(); renderRoute(); return; }
+        const posted = await guard(scope, () => Svc.purchases.post(res.rec.id));
+        if (!posted){ UI.toast(`حُفظ المستند ${res.rec.code} كمسودة — لم يُرحَّل`,'warn', 7000); h.close(); renderRoute(); return; }
+        const paid = d.paidAmount === '' || d.paidAmount == null ? 0 : Money.clean(d.paidAmount) || 0;
+        if (paid > 0){
+          const pay = await guard(scope, () => Svc.purchases.addPayment({ purchaseId:res.rec.id, date:d.date,
+            amount:Math.min(paid, res.rec.total), method:d.method, notes:'دفعة مع الاستلام' }));
+          if (pay) (pay.warnings || []).forEach(w => UI.toast(w, 'warn', 6000));
+        }
+        const st = Svc.purchases.balance(Repos.purchases.get(res.rec.id));
+        UI.toast(`رُحِّل ${res.rec.code}: دخل المخزن ${U.round2(res.rec.items)} وحدة`
+          + (st.due > 0 ? ` — يبقى للمورّد ${Money.fmt(st.due)}` : ' — مسدَّد بالكامل'), 'ok', 7000);
+        h.close(); renderRoute();
+      };
+      ov.querySelector('#puPost').onclick = () => submit(true);
+      ov.querySelector('#puDraft').onclick = () => submit(false);
+    }
+  });
+};
+
+/* تسديد دفعة لمورّد على مستند مُرحَّل */
+Forms.purchasePayment = function(purchaseId){
+  const doc = Repos.purchases.get(purchaseId);
+  if (!doc) return UI.toast('المستند غير موجود','err');
+  const st = Svc.purchases.balance(doc);
+  if (st.due <= 0) return UI.toast('هذا المستند مسدَّد بالكامل','warn');
+  const supplier = Repos.suppliers.get(doc.supplierId);
+  const h = UI.modal({ title:`تسديد على ${doc.code}`, size:'narrow',
+    body:`<div id="ppForm">
+      <div class="t-sub" style="margin-bottom:10px">${U.esc(supplier ? supplier.name : '')} —
+        الإجمالي ${Money.fmt(st.total)}، المدفوع ${Money.fmt(st.paid)}، <strong>المتبقّي ${Money.fmt(st.due)}</strong>.</div>
+      ${UI.field('amount','المبلغ', UI.input('amount', st.due, { type:'number', attrs:{ min:0, step:'any' } }))}
+      ${UI.field('date','التاريخ', UI.input('date', D.today(), { type:'date' }))}
+      ${UI.field('method','الطريقة', UI.select('method', PayMethods.CASH_KEY, payMethods()),
+        'النقدي وحده يخرج من درج الصندوق')}
+      ${UI.field('notes','ملاحظات', UI.input('notes',''))}
+      <div class="t-sub" style="margin-top:8px">التسديد ليس مصروفاً جديداً — المصروف سُجّل يوم رُحِّل المستند.</div>
+    </div>`,
+    footer:`<button class="btn btn-primary" id="ppSave">تسجيل الدفعة</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){ ov.querySelector('#ppSave').onclick = async () => {
+      const scope = ov.querySelector('#ppForm');
+      const res = await guard(scope, () => Svc.purchases.addPayment(Object.assign({ purchaseId }, UI.read(scope))));
+      if (!res) return;
+      (res.warnings || []).forEach(w => UI.toast(w, 'warn', 6000));
+      const after = Svc.purchases.balance(Repos.purchases.get(purchaseId));
+      UI.toast(`سُدّد ${Money.fmt(res.rec.amount)}` + (after.due > 0 ? ` — يبقى ${Money.fmt(after.due)}` : ' — سُدّد المستند بالكامل'));
+      h.close(); renderRoute(); }; }
+  });
+};
+
+/* شاشة المستند: سطوره، أثره في المخزن، دفعاته، وما بقي عليه */
+Screens.purchase = function(id){
+  const draw = () => {
+    const p = Repos.purchases.get(id);
+    if (!p) return UI.toast('المستند غير موجود','err');
+    const supplier = Repos.suppliers.get(p.supplierId);
+    const st = Svc.purchases.balance(p);
+    const pays = Svc.purchases.paymentsOf(id);
+    const moves = Repos.stockMoves.list(true).filter(m => m.refType === 'purchase' && m.refId === id);
+    const expense = p.expenseId ? Repos.expenses.get(p.expenseId) : null;
+    const h = UI.modal({ title:`مستند شراء ${p.code}`, size:'wide',
+      body:`<div class="grid g-4" style="margin-bottom:14px">
+          ${kpi('الإجمالي', Money.fmt(p.total), `${(p.lines || []).length} سطراً — ${U.round2(p.items || 0)} وحدة`, 'plum')}
+          ${kpi('المدفوع', Money.fmt(st.paid), `${pays.length} دفعة`)}
+          ${kpi('المتبقّي للمورّد', Money.fmt(st.due), st.due > 0 ? 'لم يُسدَّد بعد' : 'مسدَّد', st.due > 0 ? 'neg' : 'pos')}
+          ${kpi('الحالة', Svc.purchases.status(p).ar, p.status === 'posted' ? `رُحِّل ${D.fmt(String(p.postedAt || '').slice(0,10))}`
+            : p.status === 'cancelled' ? U.esc(p.cancelReason || 'ملغى') : 'لم تدخل المخزن بعد')}
+        </div>
+        <dl class="doc-kv" style="margin-bottom:12px">
+          <dt>المورّد</dt><dd>${U.esc(supplier ? supplier.name : '—')}</dd>
+          <dt>التاريخ</dt><dd class="num">${D.fmt(p.date)}</dd>
+          <dt>فاتورة المورّد</dt><dd>${U.esc(p.invoiceNo || '—')}</dd>
+          <dt>ملاحظات</dt><dd>${U.esc(p.notes || '—')}</dd>
+        </dl>
+        <h4 style="font-size:14px;margin:0 0 8px">السطور</h4>
+        <table class="mini-tbl"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>
+          ${(p.lines || []).map(l => `<tr><td>${U.esc(l.name || (Repos.products.get(l.productId) || {}).name || '—')}</td>
+            <td class="num">${U.round2(l.qty)}</td><td>${U.esc(l.unit || '')}</td>
+            <td class="num">${Money.fmt(l.unitCost)}</td><td class="num">${Money.fmt(l.total)}</td></tr>`).join('')}
+        </tbody><tfoot>
+          <tr><td colspan="4">مجموع السطور</td><td class="num">${Money.fmt(p.subtotal)}</td></tr>
+          ${p.discount ? `<tr><td colspan="4">الخصم</td><td class="num">− ${Money.fmt(p.discount)}</td></tr>` : ''}
+          <tr><td colspan="4"><strong>الإجمالي</strong></td><td class="num"><strong>${Money.fmt(p.total)}</strong></td></tr>
+        </tfoot></table>
+        ${p.status === 'posted' ? `<div class="t-sub" style="margin-top:8px">
+          أثره المسجَّل: ${moves.filter(m => !m.archived).length} حركة مخزون داخلة،
+          ومصروف واحد ${expense ? `بمبلغ ${Money.fmt(expense.amount)}` : 'غير موجود'} بطريقة «على الحساب» —
+          أي أنه لم يخرج من الدرج بنفسه، وما خرج تقوله الدفعات أدناه.</div>` : ''}
+        ${p.status === 'cancelled' ? `<div class="card" style="border-color:var(--red-600);margin-top:12px"><div class="card-body" style="padding:11px 14px">
+          <strong>مستند ملغى.</strong> أُعيدت حركاته وأُلغي أثر مصروفه، وبقي في السجل بتاريخه.
+          ${p.cancelReason ? `<div class="t-sub" style="margin-top:4px">السبب: ${U.esc(p.cancelReason)}</div>` : ''}</div></div>` : ''}
+        <h4 style="font-size:14px;margin:16px 0 8px">الدفعات للمورّد</h4>
+        ${pays.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th>ملاحظات</th><th></th></tr></thead><tbody>
+          ${pays.map(x => `<tr><td class="num">${D.fmt(x.date)}</td><td class="num">${Money.fmt(x.amount)}</td>
+            <td>${U.esc(PayMethods.label(x.method))}${Svc.cashbook.isCash(x.method) ? ' <span class="t-sub">(من الدرج)</span>' : ''}</td>
+            <td class="t-sub">${U.esc(x.notes || '')}</td>
+            <td class="ta-l"><button class="btn btn-sm btn-icon btn-danger" data-ppdel="${x.id}">${svg(ICON.trash,15)}</button></td></tr>`).join('')}
+        </tbody></table>` : '<div class="t-sub">لا دفعات بعد — المبلغ كله على الحساب.</div>'}`,
+      footer:`${p.status === 'draft' ? `<button class="btn btn-primary" id="puDoPost">ترحيل المستند</button>
+                <button class="btn" id="puEdit">تعديل</button>
+                <button class="btn btn-danger" id="puDel">حذف المسودة</button>` : ''}
+              ${p.status === 'posted' ? `${st.due > 0 ? '<button class="btn btn-primary" id="puDoPay">تسديد دفعة</button>' : ''}
+                <button class="btn" id="puPrint">${svg(ICON.print,15)} طباعة</button>
+                <button class="btn btn-danger" id="puCancel">إلغاء المستند</button>` : ''}
+              ${p.status === 'cancelled' ? '<button class="btn" id="puPrint">' + svg(ICON.print,15) + ' طباعة</button>' : ''}
+              <button class="btn" id="puSupp">كشف المورّد</button>
+              <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
+      onMount(ov, hh){
+        const again = () => { hh.close(); renderRoute(); draw(); };
+        const on = (sel, fn) => { const b = ov.querySelector(sel); if (b) b.onclick = fn; };
+        on('#puDoPost', async () => {
+          if (!await UI.confirm({ title:`ترحيل ${p.code}`, confirmText:'ترحيل',
+            message:`ستدخل ${U.round2(p.items)} وحدة إلى المخزن، ويُسجَّل مصروف ${Money.fmt(p.total)} مرة واحدة.` })) return;
+          if (!await guard(null, () => Svc.purchases.post(id), 'رُحِّل المستند')) return;
+          again();
+        });
+        on('#puEdit', () => { hh.close(); Forms.purchase(id); });
+        on('#puDel', async () => {
+          if (!await UI.confirm({ title:'حذف المسودة', danger:true, confirmText:'حذف',
+            message:'المسودة لم تدخل المخزن ولا الحسابات، فحذفها لا يمسّ رقماً.' })) return;
+          if (!await guard(null, () => Svc.purchases.removeDraft(id), 'حُذفت المسودة')) return;
+          hh.close(); renderRoute();
+        });
+        on('#puDoPay', () => { hh.close(); Forms.purchasePayment(id); });
+        on('#puPrint', () => Print.open(`مستند شراء ${p.code}`, Print.purchaseHtml(id)));
+        on('#puSupp', () => { hh.close(); Screens.supplierStatement(p.supplierId); });
+        on('#puCancel', async () => {
+          const reason = await new Promise(res => {
+            const hc = UI.modal({ title:`إلغاء المستند ${p.code}`, size:'narrow',
+              body:`<div class="t-sub" style="margin-bottom:10px">ستُعاد ${U.round2(p.items)} وحدة من المخزن ويُلغى أثر المصروف.
+                المستند يبقى في السجل بحالته «ملغى» — لا يُمحى تاريخ مالي.</div>
+                ${UI.field('reason','سبب الإلغاء', UI.input('reason','', { placeholder:'بضاعة مرتجعة، خطأ في التسجيل…' }))}`,
+              footer:'<button class="btn btn-danger" data-ok>إلغاء المستند</button><button class="btn" data-close>تراجع</button><div class="sp"></div>',
+              onMount(o){ o.querySelector('[data-ok]').onclick = () => { res(U.norm(UI.read(o).reason)); hc.close(); }; },
+              onClose(){ res(null); } });
+          });
+          if (reason === null) return;
+          if (!await guard(null, () => Svc.purchases.cancel(id, reason), 'أُلغي المستند')) return;
+          again();
+        });
+        ov.querySelectorAll('[data-ppdel]').forEach(b => b.onclick = async () => {
+          const pay = Repos.purchasePayments.get(b.dataset.ppdel);
+          if (!await UI.confirm({ title:'إلغاء دفعة مورّد', danger:true, confirmText:'إلغاء الدفعة',
+            message:`سيعود ${Money.fmt(pay.amount)} إلى السيولة، ويعود المبلغ مستحقاً للمورّد.` })) return;
+          if (!await guard(null, () => Svc.purchases.removePayment(pay.id), 'أُلغيت الدفعة')) return;
+          again();
+        });
+      } });
+  };
+  draw();
+};
+
+/* كشف حساب المورّد: ثلاثة أسئلة وثلاث إجابات في ورقة واحدة */
+Screens.supplierStatement = function(supplierId){
+  const st = Svc.purchases.statement(supplierId);
+  if (!st) return UI.toast('المورّد غير موجود','err');
+  const sup = st.supplier;
+  UI.modal({ title:`كشف حساب ${sup.name}`, size:'wide',
+    body:`<div class="grid g-4" style="margin-bottom:14px">
+        ${kpi('إجمالي المشتريات', Money.fmt(st.purchased), `${st.posted} مستنداً مُرحَّلاً`, 'plum')}
+        ${kpi('المدفوع له', Money.fmt(st.paid), `${st.payments.length} دفعة`)}
+        ${kpi('المتبقّي عليه لنا', Money.fmt(st.due), st.due > 0 ? 'ما زال مستحقاً للمورّد' : 'لا متبقٍّ', st.due > 0 ? 'neg' : 'pos')}
+        ${kpi('آخر شراء', st.last ? D.fmt(st.last) : '—', st.drafts ? `${st.drafts} مسودة معلّقة` : '')}
+      </div>
+      <dl class="doc-kv" style="margin-bottom:12px">
+        <dt>الهاتف</dt><dd class="num">${U.esc(sup.phone || '—')}</dd>
+        <dt>الشخص المسؤول</dt><dd>${U.esc(sup.contact || '—')}</dd>
+        <dt>البريد</dt><dd>${U.esc(sup.email || '—')}</dd>
+        <dt>العنوان</dt><dd>${U.esc(sup.address || '—')}</dd>
+      </dl>
+      <h4 style="font-size:14px;margin:0 0 8px">مستندات الشراء</h4>
+      ${st.docs.length ? `<table class="mini-tbl"><thead><tr><th>المستند</th><th>التاريخ</th><th>الحالة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th><th></th></tr></thead><tbody>
+        ${st.docs.map(x => `<tr><td class="num">${U.esc(x.p.code)}</td><td class="num">${D.fmt(x.p.date)}</td>
+          <td>${UI.chip(Svc.purchases.status(x.p))}</td>
+          <td class="num">${x.p.status === 'posted' ? Money.fmt(x.p.total) : '<span class="t-sub">—</span>'}</td>
+          <td class="num">${Money.fmt(x.paid)}</td>
+          <td class="num ${x.st.due > 0 ? 'money-neg' : ''}">${x.p.status === 'posted' ? Money.fmt(x.st.due) : '—'}</td>
+          <td class="ta-l"><button class="btn btn-sm" data-sdoc="${x.p.id}">فتح</button></td></tr>`).join('')}
+        </tbody><tfoot><tr><th colspan="3">الإجمالي (المُرحَّل)</th><th class="num">${Money.fmt(st.purchased)}</th>
+          <th class="num">${Money.fmt(st.paid)}</th><th class="num">${Money.fmt(st.due)}</th><th></th></tr></tfoot></table>`
+        : '<div class="t-sub">لا مستندات شراء من هذا المورّد بعد.</div>'}
+      ${st.legacy.length ? `<h4 style="font-size:14px;margin:16px 0 8px">مشتريات مباشرة (حركات مخزون قديمة)</h4>
+        <table class="mini-tbl"><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>الإجمالي</th></tr></thead><tbody>
+        ${st.legacy.slice(0, 20).map(r => `<tr><td class="num">${D.fmt(r.move.date)}</td>
+          <td>${U.esc(r.product ? r.product.name : '—')}</td><td class="num">${U.round2(Math.abs(r.move.qty))}</td>
+          <td class="num">${Money.fmt(r.total)}</td></tr>`).join('')}
+        </tbody><tfoot><tr><th colspan="3">الإجمالي</th><th class="num">${Money.fmt(st.legacyTotal)}</th></tr></tfoot></table>
+        <div class="t-sub" style="margin-top:6px">سُجّلت حركةَ مخزونٍ بمصروفها المدفوع يومَها، فلا تدخل المتبقّي للمورّد.</div>` : ''}
+      <h4 style="font-size:14px;margin:16px 0 8px">الدفعات</h4>
+      ${st.payments.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>المستند</th><th>المبلغ</th><th>الطريقة</th></tr></thead><tbody>
+        ${st.payments.map(x => { const doc = Repos.purchases.get(x.purchaseId);
+          return `<tr><td class="num">${D.fmt(x.date)}</td><td class="num">${U.esc(doc ? doc.code : '—')}</td>
+          <td class="num">${Money.fmt(x.amount)}</td><td>${U.esc(PayMethods.label(x.method))}</td></tr>`; }).join('')}
+        </tbody></table>` : '<div class="t-sub">لا دفعات بعد.</div>'}`,
+    footer:`<button class="btn btn-primary" id="ssPrint">${svg(ICON.print,15)} طباعة الكشف</button>
+            <button class="btn" id="ssBuy">مستند شراء جديد</button>
+            <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
+    onMount(ov, h){
+      ov.querySelector('#ssPrint').onclick = () => Print.open(`كشف حساب ${sup.name}`, Print.supplierStatementHtml(supplierId));
+      ov.querySelector('#ssBuy').onclick = () => { h.close(); Forms.purchase(null, supplierId); };
+      ov.querySelectorAll('[data-sdoc]').forEach(b => b.onclick = () => { h.close(); Screens.purchase(b.dataset.sdoc); });
+    } });
 };
 
 
@@ -12572,6 +14073,153 @@ Actions.printDayReceipts = async function(date){
 /* ---------------------------- كشف حساب شريكة ---------------------------
    يجيب عن أربعة أسئلة لا خامس لها: كم ضخّت؟ كم استرجعت؟ كم استحقّت من
    الأرباح؟ وكم قُبض منها فعلاً؟ ولا يخلط بين استرجاع رأس المال وتوزيع الربح. */
+/* ------------------------- مستندات دورة الشراء -------------------------
+   ثلاث أوراق تُطبع بالأبيض والأسود وتُقرأ بالعين: المستند نفسه، وكشف المورّد،
+   وقائمة ما بقي على النادي. في كلٍّ منها يبقى الفصل ظاهراً بين ما استُحقّ
+   وما دُفع، لأن خلطهما هو الخطأ الذي تُبنى عليه مطالبات المورّدين. */
+Print.purchaseHtml = function(id){
+  const p = Repos.purchases.get(id);
+  if (!p) return '';
+  const supplier = Repos.suppliers.get(p.supplierId);
+  const st = Svc.purchases.balance(p);
+  const pays = Svc.purchases.paymentsOf(id);
+  return `<div class="doc">
+    ${Brand.printHeader('مستند شراء', `${p.code}${p.status === 'cancelled' ? ' — ملغى' : ''}`)}
+    <dl class="doc-kv">
+      <dt>المورّد</dt><dd>${U.esc(supplier ? supplier.name : '—')}</dd>
+      <dt>التاريخ</dt><dd class="num">${D.fmt(p.date)} ${D.dayName(p.date)}</dd>
+      <dt>فاتورة المورّد</dt><dd class="num">${U.esc(p.invoiceNo || '—')}</dd>
+      <dt>الحالة</dt><dd>${U.esc(Svc.purchases.status(p).ar)}</dd>
+    </dl>
+    <table class="doc-tbl"><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>
+      ${(p.lines || []).map(l => `<tr><td>${U.esc(l.name || '')}</td><td class="num">${U.round2(l.qty)}</td>
+        <td>${U.esc(l.unit || '')}</td><td class="num">${Money.fmt(l.unitCost)}</td>
+        <td class="num">${Money.fmt(l.total)}</td></tr>`).join('')}
+    </tbody><tfoot>
+      <tr><td colspan="4">مجموع السطور</td><td class="num">${Money.fmt(p.subtotal)}</td></tr>
+      ${p.discount ? `<tr><td colspan="4">الخصم</td><td class="num">− ${Money.fmt(p.discount)}</td></tr>` : ''}
+      <tr><td colspan="4"><strong>إجمالي المستند</strong></td><td class="num"><strong>${Money.fmt(p.total)}</strong></td></tr>
+    </tfoot></table>
+    <h3 class="doc-title">التسديد</h3>
+    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>الطريقة</th><th>ملاحظات</th><th>المبلغ</th></tr></thead><tbody>
+      ${pays.length ? pays.map(x => `<tr><td class="num">${D.fmt(x.date)}</td>
+        <td>${U.esc(PayMethods.label(x.method))}</td><td>${U.esc(x.notes || '')}</td>
+        <td class="num">${Money.fmt(x.amount)}</td></tr>`).join('')
+        : '<tr><td colspan="4">لا دفعات — المبلغ كله على الحساب</td></tr>'}
+    </tbody><tfoot>
+      <tr><td colspan="3">المدفوع</td><td class="num">${Money.fmt(st.paid)}</td></tr>
+      <tr><td colspan="3"><strong>المتبقّي للمورّد</strong></td><td class="num"><strong>${Money.fmt(st.due)}</strong></td></tr>
+    </tfoot></table>
+    <div class="doc-note">المستحق شيء والمدفوع شيء آخر: تكلفة الشراء تُسجَّل مرة واحدة يوم الترحيل،
+      والتسديد بعدها ليس مصروفاً ثانياً — فلا يُحسب الشراء مرتين.</div>
+    ${p.notes ? `<div class="doc-note">${U.esc(p.notes)}</div>` : ''}
+    <div class="doc-sign"><div>توقيع المستلمة</div><div>توقيع المورّد</div></div>
+    <div class="doc-foot">${U.esc(Brand.name())} — طُبع في ${D.fmt(D.today())}</div>
+  </div>`;
+};
+
+Print.supplierStatementHtml = function(supplierId){
+  const st = Svc.purchases.statement(supplierId);
+  if (!st) return '';
+  const sup = st.supplier;
+  return `<div class="doc">
+    ${Brand.printHeader('كشف حساب مورّد', sup.name)}
+    <dl class="doc-kv">
+      <dt>المورّد</dt><dd>${U.esc(sup.name)}</dd>
+      <dt>الهاتف</dt><dd class="num">${U.esc(sup.phone || '—')}</dd>
+      <dt>الشخص المسؤول</dt><dd>${U.esc(sup.contact || '—')}</dd>
+      <dt>تاريخ الكشف</dt><dd class="num">${D.fmt(D.today())}</dd>
+    </dl>
+    <h3 class="doc-title">مستندات الشراء</h3>
+    <table class="doc-tbl"><thead><tr><th>المستند</th><th>التاريخ</th><th>الحالة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th></tr></thead><tbody>
+      ${st.docs.length ? st.docs.map(x => `<tr><td class="num">${U.esc(x.p.code)}</td><td class="num">${D.fmt(x.p.date)}</td>
+        <td>${U.esc(Svc.purchases.status(x.p).ar)}</td>
+        <td class="num">${x.p.status === 'posted' ? Money.fmt(x.p.total) : '—'}</td>
+        <td class="num">${Money.fmt(x.paid)}</td>
+        <td class="num">${x.p.status === 'posted' ? Money.fmt(x.st.due) : '—'}</td></tr>`).join('')
+        : '<tr><td colspan="6">لا مستندات شراء</td></tr>'}
+    </tbody><tfoot><tr><td colspan="3"><strong>الإجمالي (المُرحَّل)</strong></td>
+      <td class="num"><strong>${Money.fmt(st.purchased)}</strong></td>
+      <td class="num"><strong>${Money.fmt(st.paid)}</strong></td>
+      <td class="num"><strong>${Money.fmt(st.due)}</strong></td></tr></tfoot></table>
+    ${st.legacy.length ? `<h3 class="doc-title">مشتريات مباشرة (حركات مخزون)</h3>
+      <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>الصنف</th><th>الكمية</th><th>الإجمالي</th></tr></thead><tbody>
+        ${st.legacy.map(r => `<tr><td class="num">${D.fmt(r.move.date)}</td><td>${U.esc(r.product ? r.product.name : '—')}</td>
+          <td class="num">${U.round2(Math.abs(r.move.qty))}</td><td class="num">${Money.fmt(r.total)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><td colspan="3">الإجمالي</td><td class="num">${Money.fmt(st.legacyTotal)}</td></tr></tfoot></table>
+      <div class="doc-note">سُجّلت حركةَ مخزونٍ بمصروفها المدفوع يومها، فلا تدخل المتبقّي.</div>` : ''}
+    <h3 class="doc-title">الدفعات</h3>
+    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>المستند</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
+      ${st.payments.length ? st.payments.map(x => { const doc = Repos.purchases.get(x.purchaseId);
+        return `<tr><td class="num">${D.fmt(x.date)}</td><td class="num">${U.esc(doc ? doc.code : '—')}</td>
+        <td>${U.esc(PayMethods.label(x.method))}</td><td class="num">${Money.fmt(x.amount)}</td></tr>`; }).join('')
+        : '<tr><td colspan="4">لا دفعات</td></tr>'}
+    </tbody></table>
+    <div class="doc-total"><span>${st.due > 0 ? 'المتبقّي للمورّد' : 'لا متبقٍّ للمورّد'}</span>
+      <span class="num">${Money.fmt(Math.max(0, st.due))}</span></div>
+    <div class="doc-sign"><div>توقيع المورّد</div><div>توقيع الإدارة</div></div>
+    <div class="doc-foot">${U.esc(Brand.name())} — طُبع في ${D.fmt(D.today())}</div>
+  </div>`;
+};
+
+Print.payablesHtml = function(){
+  const pay = Svc.purchases.payables();
+  return Print.reportHtml('مستحقات الموردين', [{
+    headers:['المستند','المورّد','التاريخ','الإجمالي','المدفوع','المتبقّي'],
+    rows:pay.rows.map(x => [U.esc(x.p.code), U.esc(x.supplier ? x.supplier.name : '—'), D.fmt(x.p.date),
+      Money.fmt(x.st.total), Money.fmt(x.st.paid), Money.fmt(x.st.due)]),
+    totals:['الإجمالي','','','','', Money.fmt(pay.due)]
+  }, { html:`<div class="doc-note">هذه المبالغ سُجّلت تكلفتها يوم الترحيل، وما زالت لم تُدفع بعد.
+      ولذلك تُعاد إلى السيولة: ما لم يخرج من الجيب لا يُخصم منه.</div>` }],
+    { subtitle:`${pay.count} مستنداً — ${D.fmt(D.today())}` });
+};
+
+/* ملخّص إقفال الفترة: الورقة التي تُرفق بقرار الإقفال وتُقرأ بعد سنة */
+Print.periodCloseHtml = function(key){
+  const closed = Svc.periods.get(key);
+  const ck = Svc.periods.checklist(key);
+  const sm = (closed && closed.snapshot) || ck.summary;
+  const line = (k, v) => `<tr><td>${U.esc(k)}</td><td class="num ta-l">${v}</td></tr>`;
+  return `<div class="doc">
+    ${Brand.printHeader('ملخّص إقفال فترة', D.monthName(key))}
+    <dl class="doc-kv">
+      <dt>الفترة</dt><dd>${U.esc(D.monthName(key))} (${D.fmt(sm.from)} ← ${D.fmt(sm.to)})</dd>
+      <dt>الحالة</dt><dd>${closed ? `مقفلة في ${D.fmt(String(closed.closedAt).slice(0,10))}` : 'لم تُقفل بعد — هذه معاينة'}</dd>
+      ${closed && closed.closedBy ? `<dt>أقفلتها</dt><dd>${U.esc(closed.closedBy)}</dd>` : ''}
+    </dl>
+    <h3 class="doc-title">قائمة الأرباح</h3>
+    <table class="doc-tbl doc-sums"><tbody>
+      ${line('الإيرادات', Money.fmt(sm.revenue))}
+      ${line('المصروفات', Money.fmt(sm.expense))}
+      <tr><td><strong>صافي الربح المثبَّت</strong></td><td class="num ta-l"><strong>${Money.fmt(sm.net)}</strong></td></tr>
+    </tbody></table>
+    <h3 class="doc-title">الحركة النقدية</h3>
+    <table class="doc-tbl doc-sums"><tbody>
+      ${line('مقبوض نقداً', Money.fmt(sm.cashIn))}
+      ${line('مقبوض بغير النقد', Money.fmt(sm.nonCashIn))}
+      ${line('مصروف نقداً', Money.fmt(sm.cashOut))}
+      ${line('مصروف بغير النقد', Money.fmt(sm.nonCashOut))}
+      <tr><td><strong>المتوقّع في الدرج آخر الفترة</strong></td>
+        <td class="num ta-l"><strong>${Money.fmt(sm.endingExpectedCash)}</strong></td></tr>
+    </tbody></table>
+    <h3 class="doc-title">خارج قائمة الأرباح</h3>
+    <table class="doc-tbl doc-sums"><tbody>
+      ${line('ضخّ رأس مال', Money.fmt(sm.capitalIn))}
+      ${line('استرجاع رأس مال', Money.fmt(sm.capitalOut))}
+      ${line('توزيعات أرباح', Money.fmt(sm.distributions))}
+      ${line('مشتريات مُرحَّلة', Money.fmt(sm.purchases))}
+      ${line('مدفوع للموردين', Money.fmt(sm.supplierPaid))}
+    </tbody></table>
+    <div class="doc-note">رأس المال ليس إيراداً ولا مصروفاً، وتوزيع الأرباح تصرُّفٌ في ربحٍ تحقّق —
+      فلا يدخل أيٌّ منهما صافي الربح أعلاه.</div>
+    ${(closed && closed.acknowledged && closed.acknowledged.length) || ck.warnings.length ? `
+      <h3 class="doc-title">تنبيهات أُقرّت عند الإقفال</h3>
+      <ul>${((closed && closed.acknowledged) || ck.warnings).map(w => `<li>${U.esc(w.text)}</li>`).join('')}</ul>` : ''}
+    <div class="doc-sign"><div>توقيع المالكة</div><div>توقيع المحاسبة</div></div>
+    <div class="doc-foot">${U.esc(Brand.name())} — طُبع في ${D.fmt(D.today())}</div>
+  </div>`;
+};
+
 Print.partnerStatementHtml = function(partnerId){
   const st = Svc.distributions.statement(partnerId);
   if (!st) return '';
@@ -12601,20 +14249,24 @@ Print.partnerStatementHtml = function(partnerId){
     <table class="doc-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
       ${st.periods.length ? st.periods.map(x => `<tr><td>${U.esc(x.label)}</td>
         <td class="num">${Money.fmt(x.net)}</td><td class="num">${Money.fmt(x.share)}</td>
-        <td class="num">${Money.fmt(x.paid)}${x.apportioned ? ' *' : ''}</td><td class="num">${Money.fmt(x.remaining)}</td></tr>`).join('')
+        <td class="num">${Money.fmt(x.paid)}${x.legacyUnallocated ? ' *' : ''}</td><td class="num">${Money.fmt(x.remaining)}</td></tr>`).join('')
         : '<tr><td colspan="5">لا فترة مقفلة بعد — لا استحقاق مثبَّت</td></tr>'}
     </tbody><tfoot><tr><td>الإجمالي</td><td class="num">${Money.fmt(U.sum(st.periods, p => p.net))}</td>
-      <td class="num">${Money.fmt(st.entitled)}</td><td class="num">${Money.fmt(st.paid)}</td>
-      <td class="num">${Money.fmt(st.remaining)}</td></tr></tfoot></table>
-    ${st.periods.some(p => p.apportioned) ? `<div class="doc-note">* توزيعٌ واحد غطّى أكثر من شهر، فقُسم على أشهره
-      بنسبة نصيبها في كلٍّ منها. الإجماليات أعلاه مضبوطة، والتفصيل الشهري تقديري.</div>` : ''}
+      <td class="num">${Money.fmt(st.entitled)}</td><td class="num">${Money.fmt(st.allocatedTotal)}</td>
+      <td class="num">${Money.fmt(U.round2(st.entitled - st.allocatedTotal))}</td></tr></tfoot></table>
+    <div class="doc-note">أرقام «المقبوض» أعلاه مأخوذة من تفصيل كل توزيع كما كُتب يوم وُزّع — لا تُقدَّر عند الطباعة.</div>
+    ${st.unallocatedTotal ? `<div class="doc-note">* ${st.unallocatedCount} توزيعاً قديماً مجموعه
+      ${Money.fmt(st.unallocatedTotal)} سُجّل قبل أن يُطلب تفصيل الأشهر، وغطّى أكثر من شهر. السجل لا يحمل
+      ما يكفي لمعرفة نصيب كل شهر منه، فلم يُقسَم تخميناً: مجموعه داخل «الموزَّع لها» وخارج التفصيل الشهري.</div>` : ''}
 
     <h3 class="doc-title">التوزيعات المدفوعة</h3>
-    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
-      ${st.distributions.length ? st.distributions.map(d => `<tr><td class="num">${D.fmt(d.date)}</td>
+    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th><th>تفصيل الأشهر</th></tr></thead><tbody>
+      ${st.distributions.length ? st.distributions.map(d => { const al = Svc.distributions.allocationsOf(d);
+        return `<tr><td class="num">${D.fmt(d.date)}</td>
         <td class="num">${D.fmt(d.periodFrom)} ← ${D.fmt(d.periodTo)}</td>
-        <td>${U.esc(PayMethods.label(d.method))}</td><td class="num">${Money.fmt(d.amount)}</td></tr>`).join('')
-        : '<tr><td colspan="4">لا توزيعات</td></tr>'}
+        <td>${U.esc(PayMethods.label(d.method))}</td><td class="num">${Money.fmt(d.amount)}</td>
+        <td>${al.length ? U.esc(al.map(a => `${D.monthName(a.key)}: ${Money.fmt(a.amount)}`).join('، ')) : 'بلا تفصيل'}</td></tr>`; }).join('')
+        : '<tr><td colspan="5">لا توزيعات</td></tr>'}
     </tbody></table>
 
     ${(() => {
@@ -12657,19 +14309,24 @@ Screens.partnerStatement = function(partnerId){
       ${st.periods.length ? `<table class="mini-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
         ${st.periods.map(x => `<tr><td>${U.esc(x.label)}</td><td class="num">${Money.fmt(x.net)}</td>
           <td class="num">${Money.fmt(x.share)}</td>
-          <td class="num">${Money.fmt(x.paid)}${x.apportioned ? ' <span class="t-sub" title="توزيع غطّى عدة أشهر — قُسم بنسبة النصيب">*</span>' : ''}</td>
+          <td class="num">${Money.fmt(x.paid)}${x.legacyUnallocated ? ' <span class="t-sub" title="توزيع قديم بلا تفصيل يغطي هذا الشهر">*</span>' : ''}</td>
           <td class="num ${x.remaining > 0 ? 'money-neg' : ''}">${Money.fmt(x.remaining)}</td></tr>`).join('')}
         </tbody></table>
-        ${st.periods.some(x => x.apportioned) ? `<div class="t-sub" style="margin-top:6px">* توزيعٌ واحد غطّى أكثر من شهر،
-          فقُسم على أشهره بنسبة نصيبها في كلٍّ منها. الإجماليات مضبوطة والتفصيل الشهري تقديري.</div>` : ''}`
+        <div class="t-sub" style="margin-top:6px">المقبوض لكل شهر مأخوذ من تفصيل التوزيع المحفوظ، لا من تقدير وقت العرض.</div>
+        ${st.unallocatedTotal ? `<div class="t-sub" style="margin-top:6px">* ${st.unallocatedCount} توزيعاً قديماً
+          مجموعه ${Money.fmt(st.unallocatedTotal)} سُجّل قبل وجود التفصيل وغطّى أكثر من شهر — داخلٌ في «الموزَّع لها»
+          وخارجٌ عن التفصيل الشهري، لأن السجل لا يقول كم منه يخصّ كل شهر.</div>` : ''}`
         : '<div class="t-sub">لا فترة مقفلة بعد — أقفلي فترة ليثبت استحقاقها.</div>'}
       ${st.openPeriods.length ? `<div class="t-sub" style="margin-top:10px">فترات انتهت ولم تُقفل:
         ${U.esc(st.openPeriods.map(x => D.monthName(x.key)).join('، '))}</div>` : ''}
       <h4 style="font-size:14px;margin:16px 0 8px">التوزيعات</h4>
-      ${st.distributions.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
-        ${st.distributions.map(d => `<tr><td class="num">${D.fmt(d.date)}</td>
+      ${st.distributions.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th><th>تفصيل الأشهر</th></tr></thead><tbody>
+        ${st.distributions.map(d => { const al = Svc.distributions.allocationsOf(d);
+          return `<tr><td class="num">${D.fmt(d.date)}</td>
           <td class="num">${D.fmt(d.periodFrom)} ← ${D.fmt(d.periodTo)}</td>
-          <td>${U.esc(PayMethods.label(d.method))}</td><td class="num"><strong>${Money.fmt(d.amount)}</strong></td></tr>`).join('')}
+          <td>${U.esc(PayMethods.label(d.method))}</td><td class="num"><strong>${Money.fmt(d.amount)}</strong></td>
+          <td class="t-sub">${al.length ? al.map(a => `${U.esc(D.monthName(a.key))}: ${Money.fmt(a.amount)}`).join('، ')
+            : '<span class="pill warn">بلا تفصيل (توزيع قديم)</span>'}</td></tr>`; }).join('')}
         </tbody></table>` : '<div class="t-sub">لا توزيعات بعد.</div>'}`,
     footer:`<button class="btn btn-primary" id="psPrint">${svg(ICON.print,15)} طباعة الكشف</button>
             <button class="btn" id="psDist">توزيع أرباح</button>
