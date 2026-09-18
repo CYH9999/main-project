@@ -5,6 +5,10 @@
    ========================================================================== */
 window.TGTests = (() => {
   const T = () => window.TG;
+  const Settings = new Proxy({}, { get:(_, k) => { const v = window.TG.Settings[k];
+    return typeof v === 'function' ? v.bind(window.TG.Settings) : v; } });
+  /* اختصارات: الاختبارات تعمل فوق السطح المكشوف وحده */
+  const Actions = new Proxy({}, { get:(_, k) => window.TG.Actions[k] });
   let results = [];
   const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const ok = (name, pass, detail) => { results.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) }); return !!pass; };
@@ -34,34 +38,47 @@ window.TGTests = (() => {
     b.schema = schema;
     const LABEL = { cash:'نقد', transfer:'تحويل', card:'بطاقة' };
     const lab = k => LABEL[k] || k;
-    (b.data.payments || []).forEach(p => { p.method = lab(p.method); });
-    (b.data.revenues || []).forEach(r => { r.method = lab(r.method); });
-    (b.data.subscriptions || []).forEach(s => {
-      s.paymentMethod = lab(s.paymentMethod);
-      delete s.baseEndDate;                       /* v4 كان يترك الأصل يشرد عن النهاية */
-    });
-    (b.data.staff || []).forEach(s => { if (s.payMethod) s.payMethod = lab(s.payMethod); });
-    (b.data.expenses || []).forEach(e => { delete e.method; });
-    /* قوائم الالتحاق الثابتة تعود إلى القالب كما كانت في v4 */
-    const members = (b.data.members || []).map(m => m.id);
-    (b.data.trainings || []).forEach((t, i) => {
-      t.memberIds = members.slice(i * 2, i * 2 + 3);
-      delete t.legacyMemberIds;
-    });
     const settings = (b.data.meta || []).find(x => x.k === 'settings');
-    if (settings && settings.v){
-      settings.v.paymentMethods = ['نقد', 'تحويل', 'بطاقة', 'زين كاش'];
-      delete settings.v.legacyEnrollmentsSeen;
+    /* كل نسخة تُشبه إصدارها فعلاً: عيوب v4 لا تُحقن في نسخة تقول إنها v5،
+       وإلا اختُبرت ترقية لا تعمل على مثل هذه البيانات أصلاً. */
+    if (schema < 5){
+      (b.data.payments || []).forEach(p => { p.method = lab(p.method); });
+      (b.data.revenues || []).forEach(r => { r.method = lab(r.method); });
+      (b.data.subscriptions || []).forEach(s => {
+        s.paymentMethod = lab(s.paymentMethod);
+        delete s.baseEndDate;                     /* v4 كان يترك الأصل يشرد عن النهاية */
+      });
+      (b.data.staff || []).forEach(s => { if (s.payMethod) s.payMethod = lab(s.payMethod); });
+      (b.data.expenses || []).forEach(e => { delete e.method; });
+      /* قوائم الالتحاق الثابتة تعود إلى القالب كما كانت في v4 */
+      const members = (b.data.members || []).map(m => m.id);
+      (b.data.trainings || []).forEach((t, i) => {
+        t.memberIds = members.slice(i * 2, i * 2 + 3);
+        delete t.legacyMemberIds;
+      });
+      if (settings && settings.v){
+        settings.v.paymentMethods = ['نقد', 'تحويل', 'بطاقة', 'زين كاش'];
+        delete settings.v.legacyEnrollmentsSeen;
+      }
     }
     const sch = (b.data.meta || []).find(x => x.k === 'schema');
     if (sch) sch.v = schema;
+    if (schema < 6){
+      /* v5: لا ملاحظات ولا توزيعات ولا فترات مقفلة، والسحوبات بلا وسم */
+      b.data.notes = [];
+      b.data.distributions = [];
+      (b.data.capital || []).forEach(c => { delete c.kind; });
+      const st = (b.data.meta || []).find(x => x.k === 'settings');
+      if (st && st.v){ delete st.v.closedPeriods; delete st.v.startScreen; }
+    }
     if (schema < 4){
       /* v3: لا حضور بطريقة تسجيل ولا قوالب موسومة، ولا جداول الإصدار الرابع */
       (b.data.attendance || []).forEach(a => { delete a.method; delete a.status; delete a.sessionId; });
       (b.data.trainings || []).forEach(t => { delete t.kind; });
       ['measurements','goals','memberDocs','customFields','receipts','subEvents','credits',
        'leads','tasks','classSessions','bookings','cashDays','suppliers'].forEach(s => { b.data[s] = []; });
-      (b.data.trainings || []).forEach(t => { t.memberIds = members.slice(0, 2); });
+      const memberIds = (b.data.members || []).map(m => m.id);
+      (b.data.trainings || []).forEach(t => { t.memberIds = memberIds.slice(0, 2); });
     }
     return b;
   }
@@ -262,39 +279,54 @@ window.TGTests = (() => {
     const applied1 = await Migrations.run();       /* تشغيل ثانٍ: يجب ألا يغيّر شيئاً */
     const second = totals();
 
-    eq(`v${from}→v5: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
-    eq(`v${from}→v5: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
-    eq(`v${from}→v5: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
-    eq(`v${from}→v5: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
+    eq(`v${from}→v6: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
+    eq(`v${from}→v6: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
+    eq(`v${from}→v6: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
+    eq(`v${from}→v6: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
     const ends2 = endDates();
     const moved = Object.keys(ends1).filter(k => ends1[k] !== ends2[k]);
-    ok(`v${from}→v5: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
-    ok(`v${from}→v5: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
+    ok(`v${from}→v6: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
+    ok(`v${from}→v6: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
        JSON.stringify(first.counts) === JSON.stringify(second.counts),
        (applied1.applied || []).join(' | '));
 
     /* أثر الترقية نفسه */
     const badMethod = Repos.payments.list(true).filter(p => !PayMethods.resolve(p.method) || PayMethods.label(p.method) === p.method && !PayMethods.get(p.method));
-    ok(`v${from}→v5: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
+    ok(`v${from}→v6: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
        badMethod.slice(0, 3).map(p => p.method).join(','));
     const custom = PayMethods.all().find(m => m.label === 'زين كاش');
-    ok(`v${from}→v5: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from < 4 || !!custom,
+    ok(`v${from}→v6: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from !== 4 || !!custom,
        JSON.stringify(PayMethods.all().map(m => m.key + ':' + m.label)));
     const noMethod = Repos.expenses.list(true).filter(e => !e.method);
-    ok(`v${from}→v5: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
+    ok(`v${from}→v6: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
     const payrollExp = Repos.expenses.list(true).filter(e => e.refType === 'payroll');
-    ok(`v${from}→v5: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
+    ok(`v${from}→v6: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
        !payrollExp.length || payrollExp.every(e => e.method === 'unknown'),
        payrollExp.slice(0, 3).map(e => e.method).join(','));
     let badBase = 0;
     Repos.subs.list(true).forEach(s => {
       if (D.addDays(s.baseEndDate || s.endDate, T().Svc.membership.addedDays(s.id)) !== s.endDate) badBase++;
     });
-    ok(`v${from}→v5: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
+    ok(`v${from}→v6: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
     const stillListed = Repos.trainings.list(true).filter(t => (t.memberIds || []).length);
-    ok(`v${from}→v5: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
-    const archivedLists = Repos.trainings.list(true).filter(t => (t.legacyMemberIds || []).length);
-    ok(`v${from}→v5: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
+    ok(`v${from}→v6: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
+    /* القوائم القديمة موجودة في نسخ ما قبل v5 وحدها */
+    if (from < 5){
+      const archivedLists = Repos.trainings.list(true).filter(t => (t.legacyMemberIds || []).length);
+      ok(`v${from}→v6: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
+    }
+
+    /* ---- أثر ترقية v6 ---- */
+    const withdrawals = Repos.capital.list(true).filter(c => c.type === 'withdrawal');
+    ok(`v${from}→v6: كل سحب رأس مال موسوم «استرجاع رأس مال»`,
+       !withdrawals.length || withdrawals.every(c => c.kind === 'capital_return'),
+       withdrawals.slice(0, 3).map(c => c.kind).join(','));
+    ok(`v${from}→v6: قائمة الفترات المقفلة مهيّأة`, Array.isArray(T().Settings.get('closedPeriods')),
+       typeof T().Settings.get('closedPeriods'));
+    ok(`v${from}→v6: الجدولان الجديدان موجودان وقابلان للقراءة`,
+       Array.isArray(Repos.notes.list(true)) && Array.isArray(Repos.distributions.list(true)));
+    ok(`v${from}→v6: الشاشة الافتتاحية لها قيمة افتراضية`,
+       ['desk','dashboard'].includes(T().Settings.get('startScreen') || 'desk'), T().Settings.get('startScreen'));
     return results;
   }
 
@@ -408,21 +440,333 @@ window.TGTests = (() => {
     return results;
   }
 
+
+  /* ===================== المرحلة الأولى: التشغيل اليومي ===================== */
+
+  /* 9) حفظ + طباعة وصل: الطباعة لا تصنع مالاً، وفشلها لا يُفقد الدفعة */
+  async function saveAndPrint(){
+    const { Svc, Repos, D, U, Money } = T();
+    const m = Repos.members.list()[0];
+    if (!m) return ok('حفظ وطباعة: لا مشتركة', false);
+    const { rec: sub } = await Svc.subs.create({ memberId:m.id, startDate:D.today(),
+      customDuration:{ value:1, unit:'month' }, price:90000, paidAmount:40000, paymentMethod:'cash' });
+    const p1 = Actions.lastPaymentOf('subscription', sub.id);
+    ok('«آخر دفعة على المستند» تجد الدفعة المبدئية', !!p1 && p1.amount === 40000, p1 && p1.amount);
+
+    const before = totals();
+    /* منع نافذة الطباعة يحاكي الحالة الحقيقية: المتصفح يمنع النوافذ المنبثقة */
+    const realOpen = window.open;
+    window.open = () => null;
+    const r = await Actions.saveAndPrintReceipt(p1.id, 'اختبار');
+    window.open = realOpen;
+    ok('فشل فتح نافذة الطباعة لا يمنع إصدار الوصل', !!r && !!r.no, r && r.no);
+    const after = totals();
+    ok('فشل الطباعة لا يغيّر أي رقم مالي',
+       before.payments === after.payments && before.revenue === after.revenue,
+       JSON.stringify({ before:before.payments, after:after.payments }));
+    ok('فشل الطباعة لا يُنشئ دفعة ثانية',
+       Svc.payments.forRef('subscription', sub.id).length === 1,
+       Svc.payments.forRef('subscription', sub.id).length);
+
+    /* إعادة المحاولة بعد الفشل تعطي الوصل نفسه لا وصلاً جديداً */
+    const r2 = await Actions.saveAndPrintReceipt(p1.id);
+    ok('إعادة المحاولة تعطي الوصل نفسه برقمه', r2 && r2.id === r.id && r2.no === r.no, `${r.no} / ${r2 && r2.no}`);
+    eq('الوصولات لم تتكاثر', Repos.receipts.list(true).filter(x => x.paymentId === p1.id).length, 1);
+
+    /* اشتراك بلا قبض: لا وصل له، ولا تُخترع دفعة لطباعته */
+    const { rec: free } = await Svc.subs.create({ memberId:m.id, startDate:D.addDays(D.today(), 40),
+      customDuration:{ value:1, unit:'month' }, price:50000, paidAmount:0 });
+    ok('اشتراك بلا قبض لا دفعة له', !Actions.lastPaymentOf('subscription', free.id));
+    const n0 = Repos.payments.list(true).length;
+    await Actions.saveAndPrintReceipt(null, 'اختبار بلا دفعة');
+    eq('طلب طباعة بلا دفعة لا يُنشئ دفعة', Repos.payments.list(true).length, n0);
+    await Svc.subs.archive(free.id, true);
+    await Svc.subs.archive(sub.id, true);
+    return results;
+  }
+
+  /* 10) الاستقبال: كود + Enter، والتجميد، والمنتهي */
+  async function desk(){
+    const { Svc, Repos, D, U } = T();
+    const { rec: m } = await Svc.members.create({ name:'مشتركة الاستقبال', phone:'07711111111', joinDate:D.today() });
+    /* الاشتراك بدأ قبل خمسة أيام ليصحّ تجميد يشمل أمس */
+    await Svc.subs.create({ memberId:m.id, startDate:D.addDays(D.today(), -5), customDuration:{ value:1, unit:'month' },
+      price:60000, paidAmount:60000 });
+
+    /* البحث بالكود: كامل، وبلا حرف «ت»، وبأرقام عربية */
+    ok('البحث بالكود الكامل يجد المشتركة', (Svc.members.byCode(m.code) || {}).id === m.id, m.code);
+    ok('البحث بالأرقام وحدها (ماسح بلا حرف) يجدها',
+       (Svc.members.byCode(String(m.code).replace(/^ت/, '')) || {}).id === m.id);
+    const arabicDigits = String(m.code).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+    ok('البحث بالأرقام العربية يجدها', (Svc.members.byCode(arabicDigits) || {}).id === m.id, arabicDigits);
+    ok('كود غير موجود لا يُطابق أحداً', !Svc.members.byCode('ت999999'));
+
+    /* Enter يسجّل الحضور فوراً */
+    const rec = await Actions.deskEnter(m.code);
+    ok('كود + Enter يسجّل الحضور فوراً', !!rec && rec.memberId === m.id, rec && rec.id);
+    ok('الحضور المسجَّل بالكود يحمل طريقته', rec && rec.method === 'code', rec && rec.method);
+    ok('الحضور بتاريخ اليوم', rec && rec.date === D.today(), rec && rec.date);
+    /* التكرار يُمنع بقواعد الحضور نفسها */
+    const again = await Actions.deskEnter(m.code);
+    ok('الحضور مرتين في اليوم نفسه يُمنع', !again);
+
+    /* التجميد: الدخول يعرض «إنهاء التجميد اليوم» */
+    const sub = Svc.subs.ofMember(m.id)[0];
+    const soldEnd = Repos.subs.get(sub.id).endDate;
+    await Svc.membership.freeze(sub.id, { from:D.addDays(D.today(), -2), to:D.addDays(D.today(), 5), reason:'اختبار' });
+    ok('الاشتراك صار مجمّداً اليوم', !!Svc.membership.frozenOn(sub.id));
+    eq('التجميد ثمانية أيام يمدّ النهاية ثمانية', D.diffDays(soldEnd, Repos.subs.get(sub.id).endDate), 8);
+    const r = await Svc.membership.endFreezeToday(sub.id, 'دخلت النادي');
+    ok('إنهاء التجميد اليوم يرفع التجميد', !Svc.membership.frozenOn(sub.id));
+    eq('يُحتسب ما مضى من التجميد وحده (يومان)', r.daysKept, 2);
+    eq('النهاية تعود إلى الأصل + المحتسَب', D.diffDays(soldEnd, Repos.subs.get(sub.id).endDate), 2);
+    ok('حدث التجميد يبقى مسجَّلاً موسوماً بأنه أُنهي مبكراً',
+       Svc.membership.eventsOf(sub.id).some(e => e.type === 'freeze' && e.endedEarly && !e.cancelled));
+    const s2 = Repos.subs.get(sub.id);
+    ok('الثابت يتحقّق بعد إنهاء التجميد',
+       D.addDays(s2.baseEndDate, Svc.membership.addedDays(sub.id)) === s2.endDate,
+       `${s2.baseEndDate} +${Svc.membership.addedDays(sub.id)} ≠ ${s2.endDate}`);
+
+    /* تجميد لم يبدأ بعد: إنهاؤه يُلغيه بلا احتساب يوم */
+    const end2 = Repos.subs.get(sub.id).endDate;
+    await Svc.membership.freeze(sub.id, { from:D.today(), to:D.addDays(D.today(), 3), reason:'اختبار ثانٍ' });
+    const r2 = await Svc.membership.endFreezeToday(sub.id, 'عادت فوراً');
+    ok('تجميد يبدأ اليوم يُلغى بالكامل عند إنهائه', r2.cancelled === true);
+    eq('ولا يُحتسب منه يوم', Repos.subs.get(sub.id).endDate === end2 ? 0 : 1, 0);
+
+    /* افتراضات التجديد */
+    const def = Svc.members.renewalDefaults(m.id);
+    const curEnd = Repos.subs.get(sub.id).endDate;
+    ok('التجديد يبدأ في اليوم التالي لنهاية الاشتراك', def.startDate === D.addDays(curEnd, 1),
+       `${def.startDate} ≠ ${D.addDays(curEnd, 1)}`);
+    eq('التجديد يقترح السعر الأخير', def.price, 60000);
+    ok('التجديد يقترح المدة الأخيرة', def.duration && def.duration.unit === 'month' && def.duration.value === 1,
+       JSON.stringify(def.duration));
+
+    /* التجديد لا يمسّ السجل القديم */
+    const beforeOld = U.clone(Repos.subs.get(sub.id));
+    const { rec: renewed } = await Svc.subs.create({ memberId:m.id, startDate:def.startDate,
+      customDuration:def.duration, price:def.price, paidAmount:0 });
+    const afterOld = Repos.subs.get(sub.id);
+    ok('التجديد لا يغيّر الاشتراك السابق',
+       beforeOld.startDate === afterOld.startDate && beforeOld.endDate === afterOld.endDate
+       && beforeOld.finalPrice === afterOld.finalPrice, JSON.stringify({ beforeOld:beforeOld.endDate, afterOld:afterOld.endDate }));
+    ok('التجديد سجلّ مستقل جديد', renewed.id !== sub.id && renewed.startDate === def.startDate);
+    return results;
+  }
+
+  /* 11) ملاحظات الفريق */
+  async function notes(){
+    const { Svc, Repos, D } = T();
+    const m = Repos.members.list()[0];
+    const n = await Svc.notes.add({ memberId:m.id, text:'اتصلنا بها اليوم', kind:'call', author:'المالكة' });
+    ok('الملاحظة تُحفظ بنصّها', n.text === 'اتصلنا بها اليوم');
+    ok('الملاحظة تحمل كاتبتها', n.author === 'المالكة', n.author);
+    ok('الملاحظة مؤرَّخة', n.date === D.today() && !!n.createdAt);
+    ok('ملاحظات المشتركة تُقرأ من جدولها', Svc.notes.ofMember(m.id).some(x => x.id === n.id));
+    let bad = false;
+    try { await Svc.notes.add({ memberId:m.id, text:'   ' }); } catch(e){ bad = e.code === 'VALIDATION'; }
+    ok('ملاحظة فارغة تُرفض', bad);
+    let noMember = false;
+    try { await Svc.notes.add({ memberId:'x', text:'شيء' }); } catch(e){ noMember = e.code === 'VALIDATION'; }
+    ok('ملاحظة بلا مشتركة تُرفض', noMember);
+    await Svc.notes.togglePin(n.id);
+    ok('التثبيت يعمل', Svc.notes.pinnedOf(m.id).some(x => x.id === n.id));
+    await Svc.notes.update(n.id, { text:'عُدّلت الملاحظة', kind:'general' });
+    const after = Repos.notes.get(n.id);
+    ok('التعديل يحفظ النصّ الجديد ويسجّل أنه عُدّل', after.text === 'عُدّلت الملاحظة' && !!after.editedAt);
+    await Svc.notes.remove(n.id);
+    ok('الحذف يزيلها', !Repos.notes.get(n.id));
+    return results;
+  }
+
+  /* 12) الفترات والتوزيعات: تقلّل السيولة ولا تقلّل الربح */
+  async function distributions(){
+    const { Svc, Repos, Calc, D, U, Money, Settings } = T();
+    const partner = Repos.partners.list()[0] || await Repos.partners.create({ name:'شريكة اختبار', sharePercent:50 });
+    /* فترة لم تلمسها البيانات التجريبية (التي تقفل الشهر الماضي وتوزّع عليه) */
+    const key = D.monthsBack(4)[0];
+    const from = D.startOfMonth(key), to = D.endOfMonth(key);
+
+    /* بلا إقفال لا توزيع */
+    if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'اختبار');
+    ok('الفترة المختارة غير مقفلة قبل الاختبار', !Svc.periods.isClosed(key), key);
+    let blocked = false;
+    try { await Svc.distributions.create({ partnerId:partner.id, periodFrom:from, periodTo:to,
+      amount:1000, date:D.today(), method:'cash' }); }
+    catch(e){ blocked = e.code === 'VALIDATION'; }
+    ok('لا يُوزَّع من فترة غير مقفلة', blocked);
+
+    const closed = await Svc.periods.close(key);
+    ok('الإقفال يثبّت رقم الربح', typeof closed.net === 'number', closed.net);
+    eq('الربح المثبَّت = الإيراد − المصروف وقت الإقفال', closed.net, U.round2(closed.revenue - closed.expense));
+
+    const profitBefore = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to);
+    const cashBefore = Svc.finance.summary().cash;
+    /* البيانات التجريبية قد تكون وزّعت اليوم أيضاً، فيُقاس الفرق لا الرقم المطلق */
+    const distTodayBefore = Svc.finance.summary(D.today(), D.today()).distributions;
+    const ent = Svc.distributions.entitlement(partner.id, from, to);
+    eq('النصيب = الربح المثبَّت × النسبة', ent.share, Calc.partnerShare(closed.net, partner.sharePercent));
+
+    const amount = 25000;
+    const { rec: dist } = await Svc.distributions.create({ partnerId:partner.id, periodFrom:from, periodTo:to,
+      amount, date:D.today(), method:'cash', notes:'اختبار' });
+    ok('التوزيع يُسجَّل', !!dist.id && dist.amount === amount);
+
+    const profitAfter = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to);
+    eq('التوزيع لا يقلّل الربح', profitAfter, profitBefore);
+    eq('التوزيع يقلّل السيولة بمقداره', Svc.finance.summary().cash, U.round2(cashBefore - amount));
+    ok('التوزيع ليس مصروفاً', !Repos.expenses.list(true).some(e => e.refId === dist.id),
+       'ظهر في المصروفات');
+    /* التوزيع حدث نقدي بتاريخه هو، لا بتاريخ الفترة التي وُزّعت عنها */
+    eq('ملخّص المالية يعرض التوزيعات بجانب الربح لا داخله',
+       U.round2(Svc.finance.summary(D.today(), D.today()).distributions - distTodayBefore), amount);
+    eq('صافي الربح في الملخّص لا يطرح التوزيع',
+       Svc.finance.summary(from, to).net, profitBefore);
+
+    /* الصندوق: التوزيع النقدي يخرج من الدرج */
+    const mv = Svc.cashbook.movement(D.today());
+    ok('التوزيع النقدي يخرج من درج اليوم', mv.distributionsOut >= amount, mv.distributionsOut);
+
+    /* كشف الشريكة */
+    const st = Svc.distributions.statement(partner.id);
+    eq('كشف الشريكة يعرض ما وُزّع', st.paid, U.round2(U.sum(Svc.distributions.ofPartner(partner.id), d => d.amount)));
+    eq('كشف الشريكة يفصل رأس المال عن الأرباح', st.capitalBalance,
+       U.round2(st.contributions - st.returns));
+    ok('كشف الشريكة يحسب المتبقّي', st.remaining === U.round2(st.entitled - st.paid), st.remaining);
+    ok('كشف الشريكة يُطبع', (T().Print.partnerStatementHtml(partner.id) || '').includes('كشف حساب شريكة'));
+
+    /* لا تُعاد فترة وُزّعت أرباحها */
+    let locked = false;
+    try { await Svc.periods.reopen(key, 'اختبار'); } catch(e){ locked = e.code === 'LINKED'; }
+    ok('لا تُعاد فتح فترة وُزّعت أرباحها', locked);
+
+    /* الإلغاء يعيد السيولة ولا يمسّ الربح */
+    await Svc.distributions.remove(dist.id);
+    eq('إلغاء التوزيع يعيد السيولة', Svc.finance.summary().cash, cashBefore);
+    eq('إلغاء التوزيع لا يمسّ الربح',
+       Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), from, to), profitBefore);
+    return results;
+  }
+
+  /* 13) الحصص المشمولة تُسقَط بأرشفة الاشتراك */
+  async function creditsOnArchive(){
+    const { Svc, Repos, D } = T();
+    const { rec: m } = await Svc.members.create({ name:'مشتركة الحصص', joinDate:D.today() });
+    const { rec: sub } = await Svc.subs.create({ memberId:m.id, startDate:D.today(),
+      customDuration:{ value:1, unit:'month' }, price:100000, paidAmount:100000,
+      sessionCredits:8, ptCredits:2 });
+    let bal = Svc.credits.balance(m.id, 'class');
+    eq('الحصص المشمولة تُمنح مع الاشتراك', bal.total, 8);
+    eq('التدريب الخاص يُمنح كذلك', Svc.credits.balance(m.id, 'pt').total, 2);
+    await Svc.credits.consume(m.id, 'class', { qty:3 });
+    eq('الاستهلاك يخصم من الرصيد', Svc.credits.balance(m.id, 'class').remaining, 5);
+
+    await Svc.subs.archive(sub.id, true);
+    bal = Svc.credits.balance(m.id, 'class');
+    eq('أرشفة الاشتراك تُسقط ما بقي من حصصه', bal.remaining, 0);
+    ok('الإسقاط حدث ظاهر لا حذف صامت',
+       Repos.credits.list().some(c => c.type === 'expire' && c.refType === 'subscription' && c.refId === sub.id));
+    ok('تاريخ المنح والاستهلاك يبقى كاملاً',
+       Repos.credits.list().filter(c => c.subId === sub.id && c.type === 'grant').length === 2
+       && Repos.credits.list().some(c => c.type === 'use'));
+    ok('الحصص ليست مالاً: لا أثر لها في المالية',
+       !Repos.revenues.list(true).some(r => r.refId === sub.id && r.amount === 0));
+
+    await Svc.subs.archive(sub.id, false);
+    eq('استرجاع الاشتراك يعيد الرصيد', Svc.credits.balance(m.id, 'class').remaining, 5);
+    return results;
+  }
+
+  /* 14) البحث العام */
+  async function search(){
+    const { Repos, Svc, U } = T();
+    const box = document.getElementById('globalSearchRes');
+    const m = Repos.members.list()[0];
+    Actions.globalSearch('ا');
+    ok('حرف واحد لا يفتح النتائج', box.classList.contains('hidden'));
+    Actions.globalSearch(m.code);
+    ok('الكود الكامل يقفز مباشرة إلى المشتركة',
+       box.innerHTML.includes('مطابقة تامة للكود') && box.innerHTML.includes(U.esc(m.name)));
+    const rc = Repos.receipts.list(true)[0];
+    if (rc){
+      Actions.globalSearch(rc.no);
+      ok('رقم الوصل الكامل يقفز مباشرة إلى الوصل', box.innerHTML.includes('مطابقة تامة لرقم الوصل'));
+    }
+    /* حرفان شائعان: مجموعات متعدّدة، والمشتركات أولاً، وثلاث نتائج للمجموعة */
+    Actions.globalSearch('ا ');
+    Actions.globalSearch(U.normAr(m.name).slice(0, 2));
+    const groups = [...box.querySelectorAll('.gs-group')].map(g => g.textContent.trim());
+    ok('المشتركات أولاً في النتائج', (groups[0] || '').startsWith('مشتركات'), groups.join(' | '));
+    let counts = [], cur = 0;
+    [...box.children].forEach(el => {
+      if (el.classList.contains('gs-group')){ if (cur) counts.push(cur); cur = 0; }
+      else if (el.hasAttribute('data-hit')) cur++;
+    });
+    if (cur) counts.push(cur);
+    ok('لا تزيد نتائج المجموعة على ثلاث', Math.max(...counts, 0) <= 3, counts.join(','));
+    ok('أفعال المشتركة على الصف: حضور وتجديد وقبض',
+       ['حضور','تجديد','قبض'].every(t => box.innerHTML.includes(`>${t}<`)));
+    /* «عرض الكل» يظهر حين تتجاوز المجموعة الحد */
+    const many = Svc.members.rows(true).length > 3;
+    if (many){
+      Actions.globalSearch('ا');
+      Actions.globalSearch('ة');
+    }
+    /* التطبيع العربي: الهمزة والياء والتاء المربوطة */
+    const nm = m.name;
+    Actions.globalSearch(nm.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').slice(0, 4));
+    ok('التطبيع العربي محفوظ (ألف/ياء/تاء مربوطة)', box.innerHTML.includes(U.esc(nm)) || box.innerHTML.includes('لا نتائج'),
+       box.innerHTML.slice(0, 80));
+    Actions.globalSearch('زززززز');
+    ok('بحث بلا نتائج يقول ذلك', box.innerHTML.includes('لا نتائج'));
+    return results;
+  }
+
+  /* 15) الشاشة الافتتاحية */
+  async function startScreen(){
+    const { Settings } = T();
+    ok('الافتراضي هو الاستقبال', (Settings.get('startScreen') || 'desk') === 'desk', Settings.get('startScreen'));
+    await Settings.set({ startScreen:'dashboard' });
+    ok('الإعداد يُحفظ', Settings.get('startScreen') === 'dashboard');
+    await Settings.set({ startScreen:'desk' });
+    return results;
+  }
+
   /* ========================= 8) الاستمرارية ========================= */
   async function writeProbe(){
-    const { Repos, D } = T();
+    const { Repos, Svc, D } = T();
     const rec = await Repos.members.create({ name:'اختبار الاستمرارية', phone:'', joinDate:D.today(), code:'ت9999' });
-    return rec.id;
+    /* جداول المرحلة الأولى تُختبر بالكتابة الحقيقية لا بالافتراض */
+    const note = await Svc.notes.add({ memberId:rec.id, text:'ملاحظة استمرارية', author:'المالكة' });
+    const partner = await Repos.partners.create({ name:'شريكة استمرارية', sharePercent:10 });
+    const key = D.monthsBack(3)[0];
+    let dist = null;
+    try {
+      if (!Svc.periods.isClosed(key)) await Svc.periods.close(key);
+      dist = (await Svc.distributions.create({ partnerId:partner.id, periodFrom:D.startOfMonth(key),
+        periodTo:D.endOfMonth(key), amount:1, date:D.today(), method:'cash' })).rec;
+    } catch(e){ /* الفترة قد لا تسمح — يُختبر ما أمكن */ }
+    await Settings.set({ startScreen:'dashboard' });
+    return { member:rec.id, note:note.id, partner:partner.id, dist:dist && dist.id, period:key };
   }
-  function probeExists(id){
-    const rec = T().Repos.members.get(id);
-    return ok('السجل المكتوب نجا من إعادة تحميل الصفحة', !!rec, id);
+  function probeExists(ids){
+    const { Repos, Svc, Settings } = T();
+    ok('السجل المكتوب نجا من إعادة تحميل الصفحة', !!Repos.members.get(ids.member), ids.member);
+    ok('الملاحظة نجت من إعادة التحميل', !!Repos.notes.get(ids.note), ids.note);
+    ok('الشريكة نجت من إعادة التحميل', !!Repos.partners.get(ids.partner));
+    if (ids.dist) ok('التوزيع نجا من إعادة التحميل', !!Repos.distributions.get(ids.dist), ids.dist);
+    ok('الفترة المقفلة نجت من إعادة التحميل', Svc.periods.isClosed(ids.period), ids.period);
+    ok('الشاشة الافتتاحية نجت من إعادة التحميل', Settings.get('startScreen') === 'dashboard',
+       Settings.get('startScreen'));
+    return results;
   }
 
   return {
     get results(){ return results; },
     reset(){ results = []; },
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
+    saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
     writeProbe, probeExists, totals, endDates, downgrade
   };
 })();

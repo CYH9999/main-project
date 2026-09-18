@@ -10061,15 +10061,19 @@ Views.settings = {
 /* ============================================================================
    Forms / Screens / Actions
    ============================================================================ */
+/* رفضٌ تشغيليّ لا عطل: «مسجّلة حضوراً أصلاً» و«الاشتراك مسدَّد» و«الحصة مكتملة»
+   أحداث طبيعية يقولها النظام للمستخدمة، لا أخطاء برمجية. تسجيلها أخطاءً يملأ
+   سجل الأخطاء بضجيج فيضيع فيه العطل الحقيقي. */
+const REFUSAL_CODES = ['VALIDATION','DUPLICATE','FULL','CAPACITY','LINKED','LOCKED','CLOSED',
+                       'NO_CREDITS','STOCK','NOT_FROZEN','CURRENCY_LOCKED','ARCHIVED','FORBIDDEN'];
 async function guard(scope, fn, okMsg){
   try { const r = await fn(); if (okMsg) UI.toast(okMsg); return r; }
   catch(e){
     const isValidation = e instanceof AppError && e.code === 'VALIDATION';
+    const isRefusal = e instanceof AppError && REFUSAL_CODES.includes(e.code);
     if (isValidation && scope) UI.showErrors(scope, e.details);
-    else UI.toast(e.message || 'حدث خطأ غير متوقع', 'err');
-    /* «الاسم مطلوب» ليست عطلاً في البرنامج بل حدثاً طبيعياً من المستخدمة.
-       تسجيلها كخطأ يملأ سجل الأخطاء بضجيج فيضيع فيه العطل الحقيقي. */
-    if (isValidation) Log.warn(e.message, e.details || null);
+    else UI.toast(e.message || 'حدث خطأ غير متوقع', isRefusal ? 'warn' : 'err');
+    if (isRefusal) Log.warn(e.message, e.details || null);
     else Log.error(e.message, e.details || e);
     return null;
   }

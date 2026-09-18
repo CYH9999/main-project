@@ -96,7 +96,7 @@ group('ثوابت الاشتراك', async (browser, url) => {
   record('ثوابت الاشتراك', rows, errors);
 });
 
-group('الترقية v4 ⇐ v5', async (browser, url) => {
+group('الترقية v4 ⇐ v6', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -105,10 +105,22 @@ group('الترقية v4 ⇐ v5', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v4 ⇐ v5', rows, errors);
+  record('الترقية v4 ⇐ v6', rows, errors);
 });
 
-group('الترقية v3 ⇐ v5', async (browser, url) => {
+group('الترقية v5 ⇐ v6', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.migrations(5);
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الترقية v5 ⇐ v6', rows, errors);
+});
+
+group('الترقية v3 ⇐ v6', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -117,7 +129,7 @@ group('الترقية v3 ⇐ v5', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v3 ⇐ v5', rows, errors);
+  record('الترقية v3 ⇐ v6', rows, errors);
 });
 
 group('نموذج الحصص', async (browser, url) => {
@@ -310,6 +322,301 @@ group('النماذج والشاشات المنبثقة', async (browser, url) =
   });
   await ctx.close();
   record('النماذج والشاشات المنبثقة', rows, errors);
+});
+
+const P1 = [
+  ['حفظ وطباعة وصل', 'saveAndPrint', 25],
+  ['الاستقبال السريع', 'desk', 25],
+  ['ملاحظات الفريق', 'notes', 20],
+  ['الفترات وتوزيعات الشركاء', 'distributions', 25],
+  ['الحصص المشمولة', 'creditsOnArchive', 20],
+  ['البحث العام', 'search', 25],
+  ['الشاشة الافتتاحية', 'startScreen', 10]
+];
+P1.forEach(([name, fn, seed]) => group(name, async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await page.evaluate(async ([f, n]) => {
+    await window.TG.Seed.loadDemo(n);
+    window.TGTests.reset();
+    await window.TGTests[f]();
+    return window.TGTests.results;
+  }, [fn, seed]);
+  await ctx.close();
+  record(name, rows, errors);
+}));
+
+group('المسار الحرج الكامل للمرحلة الأولى', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    const { Svc, Repos, D, U, Calc, Settings, Actions, Print, DB } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+    const rev = () => r2(U.sum(Repos.revenues.list(true), x => x.amount));
+    const pay = () => r2(U.sum(Repos.payments.list(true), x => x.amount));
+
+    /* 1) مشتركة بأقل المعلومات: الاسم وحده */
+    const { rec: m } = await Svc.members.create({ name:'نور الهدى' });
+    ok('1. مشتركة تُنشأ بالاسم وحده', !!m.id && !!m.code && !m.phone, m.code);
+
+    /* 2) فتح ملفها */
+    window.TG.go('member', { id:m.id }); window.TG.renderRoute();
+    const profileHtml = () => document.getElementById('viewRoot').innerHTML;
+    ok('2. ملف المشتركة يفتح باسمها', profileHtml().includes(U.esc(m.name)));
+
+    /* 3) اشتراك */
+    const { rec: sub } = await Svc.subs.create({ memberId:m.id, startDate:D.today(),
+      customDuration:{ value:1, unit:'month' }, price:120000, paidAmount:0 });
+    ok('3. الاشتراك يُسجَّل بمستحقّه كاملاً', Svc.subs.balance(sub).total === 120000);
+
+    /* 4) دفعة جزئية */
+    const p1 = await Svc.payments.add({ refType:'subscription', refId:sub.id, memberId:m.id,
+      date:D.today(), amount:50000, method:'cash' });
+    let bal = Svc.subs.balance(Repos.subs.get(sub.id));
+    ok('4. الدفعة الجزئية تُسجَّل والمتبقّي يُحسب', bal.paid === 50000 && bal.due === 70000, JSON.stringify(bal));
+
+    /* 5) حفظ + طباعة وصل (مع منع النافذة لمحاكاة الواقع) */
+    const realOpen = window.open; window.open = () => null;
+    const rc1 = await Actions.saveAndPrintReceipt(p1.id, 'تم القبض');
+    window.open = realOpen;
+    ok('5. «حفظ وطباعة وصل» يصدر وصلاً مرقّماً', !!rc1 && !!rc1.no, rc1 && rc1.no);
+
+    /* 6) الدفعة محفوظة فعلاً على القرص */
+    const onDisk = (await DB.adapter.getAll('payments')).some(x => x.id === p1.id);
+    ok('6. الدفعة محفوظة على القرص لا في الذاكرة فقط', onDisk);
+
+    /* 7) الوصل موجود */
+    ok('7. الوصل موجود ومربوط بالدفعة', !!Svc.receipts.forPayment(p1.id));
+
+    /* 8) إعادة فتح الملف */
+    window.TG.go('member', { id:m.id, tab:'money' }); window.TG.renderRoute();
+    const money = profileHtml();
+    ok('8. تبويب «المالية والوصولات» يفتح', money.includes('دفتر الحساب'));
+
+    /* 9) الوصل مرئي مباشرة من تبويب المالية */
+    ok('9. رقم الوصل ظاهر في تبويب المالية', money.includes(U.esc(rc1.no)));
+    ok('9ب. زر طباعة الوصل متاح على صف الدفعة', money.includes('data-receipt='));
+
+    /* 10) قبض المتبقّي */
+    const p2 = await Svc.payments.add({ refType:'subscription', refId:sub.id, memberId:m.id,
+      date:D.today(), amount:70000, method:'transfer' });
+    bal = Svc.subs.balance(Repos.subs.get(sub.id));
+    ok('10. قبض المتبقّي يُغلق المستند', bal.due === 0 && bal.paid === 120000, JSON.stringify(bal));
+
+    /* 11) طباعة/إعادة طباعة الوصل الثاني */
+    const revBefore = rev(), payBefore = pay();
+    const rc2 = await Svc.receipts.ensure(p2.id);
+    ok('11. الوصل الثاني برقم مختلف', rc2.no !== rc1.no, `${rc1.no} / ${rc2.no}`);
+    await Svc.receipts.markPrinted(rc2.id);
+    const n1 = Repos.receipts.get(rc2.id).reprints;
+    await Svc.receipts.markPrinted(rc2.id);
+    ok('11ب. إعادة الطباعة تزيد العدّاد', Repos.receipts.get(rc2.id).reprints === n1 + 1);
+
+    /* 12) لا إيراد مكرّر */
+    ok('12. الطباعة وإعادتها لا تُنشئان إيراداً', rev() === revBefore && pay() === payBefore,
+       JSON.stringify({ revBefore, now:rev() }));
+    const revLines = Repos.revenues.list(true).filter(x => x.paymentId === p2.id).length;
+    ok('12ب. لكل دفعة سطر إيراد واحد', revLines === 1, revLines);
+
+    /* 13) تجميد */
+    const soldEnd = Repos.subs.get(sub.id).endDate;
+    await Svc.membership.freeze(sub.id, { from:D.today(), to:D.addDays(D.today(), 6), reason:'سفر' });
+    ok('13. التجميد يمدّ النهاية سبعة أيام', D.diffDays(soldEnd, Repos.subs.get(sub.id).endDate) === 7);
+
+    /* 14) محاولة الحضور أثناء التجميد */
+    ok('14. النظام يعرف أنها مجمّدة اليوم', !!Svc.membership.frozenOn(sub.id));
+    ok('14ب. حالتها تُقرأ «مجمّد»', Svc.members.status(m.id).status.key === 'FROZEN',
+       Svc.members.status(m.id).status.key);
+
+    /* 15) إنهاء التجميد */
+    const r = await Svc.membership.endFreezeToday(sub.id, 'دخلت النادي');
+    ok('15. إنهاء التجميد اليوم يرفعه', !Svc.membership.frozenOn(sub.id));
+    ok('15ب. تجميد بدأ اليوم يُلغى بلا احتساب', r.cancelled === true);
+    ok('15ج. النهاية تعود كما بيعت', Repos.subs.get(sub.id).endDate === soldEnd,
+       `${Repos.subs.get(sub.id).endDate} ≠ ${soldEnd}`);
+
+    /* 16) الحضور بالكود + Enter */
+    const att = await Actions.deskEnter(m.code);
+    ok('16. كود + Enter يسجّل الحضور', !!att && att.memberId === m.id);
+
+    /* 17) التحقّق من الحضور */
+    ok('17. الحضور مسجَّل بتاريخ اليوم وبطريقة الكود',
+       att.date === D.today() && att.method === 'code', `${att.date}/${att.method}`);
+    ok('17ب. الحضور محفوظ على القرص', (await DB.adapter.getAll('attendance')).some(x => x.id === att.id));
+
+    /* 18) التجديد */
+    const def = Svc.members.renewalDefaults(m.id);
+    const oldSnapshot = U.clone(Repos.subs.get(sub.id));
+    const { rec: renew } = await Svc.subs.create({ memberId:m.id, startDate:def.startDate,
+      customDuration:def.duration, price:def.price, paidAmount:def.price });
+    ok('18. التجديد يُنشئ اشتراكاً جديداً', renew.id !== sub.id);
+
+    /* 19) بداية التجديد صحيحة */
+    ok('19. التجديد يبدأ في اليوم التالي للنهاية الحالية',
+       renew.startDate === D.addDays(oldSnapshot.endDate, 1), `${renew.startDate} vs ${oldSnapshot.endDate}`);
+
+    /* 20) السجل القديم لم يتغيّر */
+    const after = Repos.subs.get(sub.id);
+    ok('20. الاشتراك السابق لم يتغيّر',
+       after.startDate === oldSnapshot.startDate && after.endDate === oldSnapshot.endDate
+       && after.finalPrice === oldSnapshot.finalPrice && after.baseEndDate === oldSnapshot.baseEndDate);
+
+    /* 21) البحث العام */
+    const box = document.getElementById('globalSearchRes');
+    Actions.globalSearch(m.name.slice(0, 3));
+    ok('21. البحث يجدها والمشتركات أولاً',
+       box.innerHTML.includes(U.esc(m.name)) && (box.querySelector('.gs-group') || {}).textContent.startsWith('مشتركات'));
+
+    /* 22) فتحها مباشرة بالكود */
+    Actions.globalSearch(m.code);
+    ok('22. الكود الكامل يقفز إليها مباشرة', box.innerHTML.includes('مطابقة تامة للكود'));
+
+    /* 23) الأفعال السياقية */
+    ok('23. صف المشتركة يحمل حضور/تجديد/قبض',
+       (() => { Actions.globalSearch(m.name.slice(0, 3));
+         return ['حضور','تجديد','قبض'].every(t => box.innerHTML.includes(`>${t}<`)); })());
+
+    /* 24) الصندوق اليومي */
+    const cash = Svc.cashbook.preview(D.today());
+    ok('24. المتوقّع = الافتتاحي + الداخل − الخارج',
+       r2(cash.expected) === r2(cash.opening + cash.cashIn - cash.cashOut), JSON.stringify(cash));
+    ok('24ب. جدول الطرق يفصل النقدي عن غيره',
+       (cash.byMethod || []).some(x => x.key === 'cash') && (cash.byMethod || []).some(x => x.key === 'transfer'),
+       JSON.stringify((cash.byMethod || []).map(x => x.key)));
+
+    /* 25) فاتورة بيع */
+    const prod = Repos.products.list()[0]
+      || (await Svc.inventory.saveProduct(null, { name:'ماء', unit:'قنينة', price:1000, cost:500, minStock:1, openingQty:30 })).rec;
+    const stockBefore = Svc.inventory.onHand(prod.id);
+    const { rec: sale } = await Svc.sales.create({ date:D.today(), memberId:m.id,
+      lines:[{ productId:prod.id, qty:2, unitPrice:1000, discount:0 }], discount:0,
+      paidAmount:'', paymentMethod:'card' });
+    ok('25. الفاتورة تُسجَّل وتخصم المخزون',
+       Svc.sales.balance(sale).due === 0 && Svc.inventory.onHand(prod.id) === stockBefore - 2);
+
+    /* 26) وصل الفاتورة */
+    const salePay = Actions.lastPaymentOf('sale', sale.id);
+    const rc3 = await Svc.receipts.ensure(salePay.id);
+    ok('26. فاتورة البيع لها وصل مرقّم', !!rc3.no && rc3.refType === 'sale', rc3.no);
+
+    /* 27) النقدي وغير النقدي */
+    const mv = Svc.cashbook.movement(D.today());
+    const cardPaid = r2(U.sum(Repos.payments.list().filter(x => x.date === D.today() && x.method === 'card'), x => x.amount));
+    ok('27. البطاقة لا تدخل الدرج', cardPaid > 0 && mv.nonCash >= cardPaid, `nonCash=${mv.nonCash} card=${cardPaid}`);
+    ok('27ب. النقدي وحده في cashIn',
+       r2(mv.cashIn) === r2(U.sum(mv.rows.paymentsIn, x => x.amount) + U.sum(mv.rows.otherIn, x => x.amount)
+                            + U.sum(mv.rows.capIn, x => x.amount)), mv.cashIn);
+
+    /* 28) توزيع أرباح */
+    const partner = Repos.partners.list()[0] || await Repos.partners.create({ name:'شريكة', sharePercent:50 });
+    const key = D.monthsBack(5)[0];
+    if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'تهيئة الاختبار');
+    await Svc.periods.close(key);
+    const profitBefore = Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(),
+      D.startOfMonth(key), D.endOfMonth(key));
+    const cashBefore = Svc.finance.summary().cash;
+    const { rec: dist } = await Svc.distributions.create({ partnerId:partner.id,
+      periodFrom:D.startOfMonth(key), periodTo:D.endOfMonth(key), amount:10000,
+      date:D.today(), method:'cash' });
+    ok('28. التوزيع يُسجَّل', !!dist.id);
+
+    /* 29) السيولة تنقص */
+    ok('29. التوزيع يقلّل السيولة', r2(Svc.finance.summary().cash) === r2(cashBefore - 10000),
+       `${cashBefore} → ${Svc.finance.summary().cash}`);
+
+    /* 30) الربح لا ينقص */
+    ok('30. التوزيع لا يقلّل الربح',
+       r2(Calc.netProfit(Repos.revenues.list(), Repos.expenses.list(), D.startOfMonth(key), D.endOfMonth(key))) === r2(profitBefore));
+    ok('30ب. التوزيع لا يظهر مصروفاً', !Repos.expenses.list(true).some(e => e.amount === 10000 && e.refId === dist.id));
+
+    /* 31) طباعة كشف الشريكة */
+    const html = Print.partnerStatementHtml(partner.id);
+    ok('31. كشف الشريكة يُطبع ويحوي الاستحقاق والتوزيع',
+       html.includes('كشف حساب شريكة') && html.includes('استحقاق الأرباح') && html.includes('التوزيعات المدفوعة'));
+
+    return out;
+  });
+  await ctx.close();
+  record('المسار الحرج الكامل للمرحلة الأولى', rows, errors);
+});
+
+group('النسخ الاحتياطي والاستعادة', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    const { Backup, DB, STORE_NAMES, Repos, U, Svc, Settings } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    await Svc.members.create({ name:'قبل النسخة' });
+    await window.TG.Seed.loadDemo(15);
+    const m = Repos.members.list()[0];
+    await Svc.notes.add({ memberId:m.id, text:'ملاحظة قبل النسخة', author:'المالكة' });
+
+    const before = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
+    const periodsBefore = Svc.periods.list().length;
+    const b = Backup.build(false);
+    ok('النسخة تشمل كل الجداول', STORE_NAMES.every(s => Array.isArray(b.data[s])),
+       STORE_NAMES.filter(s => !Array.isArray(b.data[s])).join('، '));
+    ok('النسخة تشمل جدول الملاحظات', (b.data.notes || []).length > 0, (b.data.notes || []).length);
+    ok('النسخة تشمل جدول التوزيعات', Array.isArray(b.data.distributions));
+    ok('النسخة تحمل رقم المخطط الحالي', b.schema === window.TG.APP.schema, b.schema);
+
+    /* تخريب متعمّد ثم استعادة */
+    await Svc.members.create({ name:'بعد النسخة' });
+    await Backup.restore(b);
+    const after = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
+    /* سجل الأحداث يُستثنى: الاستعادة نفسها حدث يُسجَّل، وهذا مقصود */
+    const diff = STORE_NAMES.filter(s => s !== 'audit' && before[s] !== after[s]);
+    ok('الاستعادة تُرجع عدد السجلات كما كان', !diff.length,
+       diff.map(s => `${s}:${before[s]}→${after[s]}`).join('، '));
+    ok('الاستعادة نفسها تُسجَّل في سجل الأحداث', after.audit > before.audit, `${before.audit}→${after.audit}`);
+    ok('الاستعادة تُرجع الملاحظات', Repos.notes.list().some(n => n.text === 'ملاحظة قبل النسخة'));
+    ok('الاستعادة تُرجع الفترات المقفلة', Svc.periods.list().length === periodsBefore,
+       `${periodsBefore} → ${Svc.periods.list().length}`);
+    ok('السجل المضاف بعد النسخة لم يعد', !Repos.members.list(true).some(x => x.name === 'بعد النسخة'));
+
+    /* إعادة التهيئة تمسح الجداول الجديدة أيضاً */
+    await window.TG.Seed.factoryReset();
+    /* يبقى حدث واحد: «إعادة تهيئة كاملة» — الأثر الوحيد المقصود بقاؤه */
+    const left = STORE_NAMES.filter(s => s !== 'meta' && s !== 'audit' && DB.count(s) > 0);
+    ok('إعادة التهيئة تفرّغ كل الجداول ومنها الجديدة', !left.length, left.join('، '));
+    ok('لا يبقى بعد إعادة التهيئة إلا حدث تسجيلها',
+       DB.count('audit') <= 1 && DB.all('audit').every(a => a.action === 'factory-reset'),
+       `audit=${DB.count('audit')}`);
+    ok('إعادة التهيئة تمسح الفترات المقفلة', Svc.periods.list().length === 0, Svc.periods.list().length);
+    return out;
+  });
+  await ctx.close();
+  record('النسخ الاحتياطي والاستعادة', rows, errors);
+});
+
+group('التقارير والتصديرات', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    const { Reports, Exporter, D, U, Repos, Svc, Calc } = window.TG;
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    await window.TG.Seed.loadDemo(20);
+    const key = D.monthKey(D.today());
+    const r = Reports.build(key);
+    ok('التقرير يُبنى بلا خطأ', !!r && !!r.fin, r && r.key);
+    ok('التقرير يفصل قيمة الاشتراكات عن المقبوض منها',
+       typeof r.members.subsValue === 'number' && typeof r.members.subsRevenue === 'number',
+       JSON.stringify({ v:r.members.subsValue, p:r.members.subsRevenue }));
+    const revSubs = U.round2(U.sum(Calc.inRange(Repos.revenues.list(), r.from, r.to)
+      .filter(x => x.source === 'subscription'), x => x.amount));
+    ok('«المقبوض من الاشتراكات» يطابق سطور الإيراد', U.round2(r.members.subsRevenue) === revSubs,
+       `${r.members.subsRevenue} ≠ ${revSubs}`);
+    /* التصديرات تُبنى بلا رمي */
+    let threw = '';
+    try {
+      Exporter.subRows(Repos.subs.list().slice(0, 5).map(s => ({ s, member:Repos.members.get(s.memberId) })));
+      Exporter.dueRows(Svc.payments.openDues().slice(0, 5));
+    } catch(e){ threw = e.message; }
+    ok('صفوف التصدير تُبنى بلا خطأ', !threw, threw);
+    return out;
+  });
+  await ctx.close();
+  record('التقارير والتصديرات', rows, errors);
 });
 
 group('رسم كل الشاشات', async (browser, url) => {
