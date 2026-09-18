@@ -455,6 +455,10 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
 .gsearch-res .gs-item b{display:block;font-size:13px;font-weight:600}
 .gsearch-res .gs-item small{display:block;font-size:11.5px;color:var(--muted)}
 .gsearch-res .gs-empty{padding:18px;text-align:center;color:var(--muted);font-size:13px}
+/* أفعال الاستقبال داخل صف المشتركة: تظهر بلا أن تفتح الصف نفسه */
+.gsearch-res .gs-item [data-act]{flex:0 0 auto;padding:3px 9px;font-size:11.5px;border:1px solid var(--line);
+  border-radius:var(--r-sm);background:var(--surface);color:var(--rose-700);cursor:pointer}
+.gsearch-res .gs-item [data-act]:hover{background:var(--rose-100);border-color:var(--rose-500)}
 
 
 /* ===== src/styles/70-documents.css =================================================== */
@@ -4326,13 +4330,14 @@ Svc.periods = {
     const expense = Calc.expenses(Repos.expenses.list(), from, to);
     return { key, from, to, revenue, expense, net:U.round2(revenue - expense) };
   },
-  async close(key){
+  async close(key, opts){
     if (!/^\d{4}-\d{2}$/.test(String(key))) throw new AppError('الفترة غير صحيحة','VALIDATION', { key:'اختاري شهراً' });
     if (D.cmp(D.endOfMonth(key), D.today()) > 0)
       throw new AppError('لا تُقفل فترة لم تنتهِ بعد','VALIDATION', { key:'الشهر لم ينتهِ' });
     if (this.isClosed(key)) return this.get(key);
     const p = this.profitOf(key);
-    const rec = Object.assign({}, p, { closedAt:new Date().toISOString(), closedBy:Auth.session.actorName || '' });
+    const rec = Object.assign({}, p, { closedAt:new Date().toISOString(), closedBy:Auth.session.actorName || '',
+      isDemo:!!(opts && opts.isDemo) });
     await Settings.set({ closedPeriods:U.sortBy([...this.list(), rec], x => x.key) });
     await Audit.log('period','close',`إقفال فترة ${D.monthName(key)} — الربح ${Money.fmt(p.net)}`, key);
     return rec;
@@ -4708,9 +4713,19 @@ const Seed = {
         summary.revenues++;
       }
 
-      step = 'رأس المال';
+      step = 'رأس المال والشركاء';
+      /* شريكتان بنسبتيهما: بدونهما تبقى شاشة «الشركاء والأرباح» فارغة بلا معنى */
+      const demoPartners = [];
+      for (const pr of [{ name:'أم تبارك', sharePercent:60, notes:'الشريكة المؤسِّسة' },
+                        { name:'هدى الربيعي', sharePercent:40, notes:'شريكة برأس مال' }]){
+        demoPartners.push(await Repos.partners.create(Object.assign({}, pr, { isDemo:true })));
+        summary.partners = (summary.partners || 0) + 1;
+      }
       await Svc.finance.addCapital({ date:D.addDays(today, -450), amount:15000000, type:'injection',
-        description:'رأس مال التأسيس', isDemo:true });
+        partnerId:demoPartners[0].id, description:'رأس مال التأسيس', isDemo:true });
+      summary.capital++;
+      await Svc.finance.addCapital({ date:D.addDays(today, -430), amount:5000000, type:'injection',
+        partnerId:demoPartners[1].id, description:'مساهمة الشريكة الثانية', isDemo:true });
       summary.capital++;
 
       step = 'جدول التدريبات';
@@ -4860,6 +4875,32 @@ const Seed = {
         try { await Svc.receipts.issue(pm.id); summary.receipts = (summary.receipts||0) + 1; } catch(e){}
       }
 
+      step = 'ملاحظات الفريق وتوزيعات الشركاء';
+      const noteTexts = ['تفضّل التمرين صباحاً','وعدناها بخصم عند التجديد','تشكو من ألم في الركبة — تمارين خفيفة',
+        'اتصلنا بها وذكّرناها بالتجديد','طلبت مدرّبة خاصة'];
+      const noteKinds = ['general','promise','health','call','general'];
+      for (let i = 0; i < Math.min(5, memberList.length); i++){
+        await Svc.notes.add({ memberId:memberList[i].id, text:noteTexts[i], kind:noteKinds[i],
+          date:D.addDays(today, -i * 3), author:'المالكة', pinned:i === 2, isDemo:true });
+        summary.notes = (summary.notes || 0) + 1;
+      }
+      /* فترة مقفلة وتوزيع عليها: يجعل شاشة الشركاء والأرباح ذات معنى من أول تشغيل */
+      const demoPeriod = D.monthsBack(2)[0];
+      try {
+        await Svc.periods.close(demoPeriod, { isDemo:true });
+        const prt = demoPartners[0] || Repos.partners.list()[0];
+        if (prt){
+          const ent = Svc.distributions.entitlement(prt.id, D.startOfMonth(demoPeriod), D.endOfMonth(demoPeriod));
+          if (ent.share > 0){
+            await Svc.distributions.create({ partnerId:prt.id,
+              periodFrom:D.startOfMonth(demoPeriod), periodTo:D.endOfMonth(demoPeriod),
+              amount:U.round2(ent.share / 2), date:D.today(), method:'cash',
+              notes:'توزيع تجريبي', isDemo:true });
+            summary.distributions = 1;
+          }
+        }
+      } catch(e){ Log.warn('تعذّر إنشاء توزيع تجريبي', e); }
+
       step = 'الموردون';
       for (const nm of ['شركة المكمّلات الحديثة','مخزن الملابس الرياضية','موزّع المشروبات']){
         await Svc.suppliers.save(null, { name:nm, phone:'0773'+String(1000000 + Math.floor(rnd()*8999999)), isDemo:true });
@@ -4918,9 +4959,11 @@ const Seed = {
     });
     Repos.attendance.list(true).forEach(a => { if (marked.members.has(a.memberId)) marked.attendance.add(a.id); });
     /* جداول الإصدار الرابع: ما يتبع مشتركة تجريبية تجريبيٌّ مثلها، وإن لم يحمل العلم */
-    ['measurements','goals','memberDocs','credits'].forEach(st => {
+    ['measurements','goals','memberDocs','credits','notes'].forEach(st => {
       DB.all(st).forEach(r => { if (marked.members.has(r.memberId)) marked[st].add(r.id); });
     });
+    /* التوزيعات تتبع شريكتها التجريبية */
+    Repos.distributions.list(true).forEach(x => { if (marked.partners.has(x.partnerId)) marked.distributions.add(x.id); });
     Repos.subEvents.list(true).forEach(e => { if (marked.subscriptions.has(e.subId)) marked.subEvents.add(e.id); });
     Repos.bookings.list(true).forEach(b => {
       if (marked.classSessions.has(b.sessionId) || marked.members.has(b.memberId)) marked.bookings.add(b.id);
@@ -4938,7 +4981,9 @@ const Seed = {
         try { if (DB.get(st, id)){ await DB.remove(st, id); n++; } }
         catch(e){ failed.push(`${st}:${id}`); }
       }
-    await Settings.set({ demoLoaded:false });
+    /* الفترات المقفلة تجريبياً تُرفع من الإعدادات أيضاً: «حذف كامل» يعني الإعدادات كذلك */
+    const keptPeriods = Svc.periods.list().filter(p => !p.isDemo);
+    await Settings.set({ demoLoaded:false, closedPeriods:keptPeriods });
     await Audit.log('system','demo-clear',`حذف ${n} سجلاً تجريبياً${failed.length?` (فشل ${failed.length})`:''}`);
     if (failed.length) throw new AppError(`حُذف ${n} سجلاً لكن تعذّر حذف ${failed.length} سجلاً — أعيدي المحاولة`,'DEMO_CLEAR_PARTIAL', failed);
     return n;
@@ -5311,6 +5356,13 @@ const Integrity = {
     });
     DB.all('subEvents').forEach(e => {
       if (!has('subscriptions', e.subId)) issues.push({ type:'حدث اشتراك بلا اشتراك', id:e.id, fix:'deleteOrphan', store:'subEvents' });
+    });
+    /* جداول المرحلة الأولى: الملاحظة بلا مشتركة والتوزيع بلا شريكة يتيمان */
+    DB.all('notes').forEach(n => {
+      if (!has('members', n.memberId)) issues.push({ type:'ملاحظة بلا مشتركة', id:n.id, fix:'deleteOrphan', store:'notes' });
+    });
+    DB.all('distributions').forEach(x => {
+      if (!has('partners', x.partnerId)) issues.push({ type:'توزيع أرباح بلا شريكة', id:x.id, fix:'deleteOrphan', store:'distributions' });
     });
     DB.all('bookings').forEach(b => {
       if (!has('classSessions', b.sessionId)) issues.push({ type:'حجز بلا حصة', id:b.id, fix:'deleteOrphan', store:'bookings' });
@@ -8217,6 +8269,10 @@ Views.finance = {
   cash(body){
     const today = D.today();
     const p = Svc.cashbook.preview(today);
+    /* «ماذا دخل وماذا خرج اليوم؟» يُجاب من السطور نفسها لا من رقم مجمّع */
+    const todayPays = U.sortBy(Repos.payments.list().filter(x => x.date === today), x => x.createdAt, -1);
+    const todayOut = U.sortBy(Repos.expenses.list().filter(x => x.date === today), x => x.createdAt, -1);
+    const todayDist = Repos.distributions.list().filter(x => x.date === today);
     const missing = Svc.cashbook.missing(14);
     const sum = Svc.cashbook.summary();
     const rows = Svc.cashbook.recent(30);
@@ -8260,6 +8316,38 @@ Views.finance = {
             <td class="num">${Money.fmt(U.round2(m.in - m.out))}</td></tr>`).join('')}
           </tbody></table>` : ''}
       </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>حركة اليوم بالتفصيل</h3><div class="sp"></div>
+        ${todayPays.length ? `<button class="btn btn-sm" id="cashPrintAll">${svg(ICON.print, 15)} طباعة كل الوصولات (${todayPays.length})</button>` : ''}
+        <button class="btn btn-sm" id="cashDayPrint">${svg(ICON.print, 15)} طباعة كشف اليوم</button></div><div class="card-body">
+        <h4 style="font-size:13px;margin:0 0 8px">المقبوض اليوم</h4>
+        ${todayPays.length ? `<table class="mini-tbl"><thead><tr><th>الوقت</th><th>من</th><th>البيان</th><th>المبلغ</th><th>الطريقة</th><th>الوصل</th><th></th></tr></thead><tbody>
+          ${todayPays.map(p => { const rc = Svc.receipts.forPayment(p.id);
+            const mm = p.memberId ? Repos.members.get(p.memberId) : null;
+            const doc = p.refType === 'sale' ? Repos.sales.get(p.refId) : Repos.subs.get(p.refId);
+            return `<tr><td class="num">${U.esc(String(p.createdAt).slice(11, 16))}</td>
+              <td>${U.esc(mm ? mm.name : ((doc && doc.customerName) || 'زبونة عابرة'))}</td>
+              <td class="t-sub">${U.esc(Svc.payments.REF_LABEL[p.refType] || '')}${doc ? ' — ' + U.esc(doc.code || doc.planName || '') : ''}</td>
+              <td class="num"><strong>${Money.fmt(p.amount)}</strong></td>
+              <td>${U.esc(PayMethods.label(p.method))}${Svc.cashbook.isCash(p.method) ? '' : ' <span class="pill">خارج الدرج</span>'}</td>
+              <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">لم يُصدَر</span>'}</td>
+              <td class="ta-l"><button class="btn btn-sm" data-rcp="${p.id}">${svg(ICON.print, 13)} وصل</button></td></tr>`; }).join('')}
+          </tbody><tfoot><tr><th colspan="3">الإجمالي</th><th class="num">${Money.fmt(U.sum(todayPays, p => p.amount))}</th>
+            <th colspan="3" class="t-sub">منها نقداً ${Money.fmt(U.sum(todayPays.filter(p => Svc.cashbook.isCash(p.method)), p => p.amount))}</th></tr></tfoot></table>`
+          : '<div class="t-sub">لم يُقبض شيء اليوم بعد.</div>'}
+        ${todayOut.length ? `<h4 style="font-size:13px;margin:16px 0 8px">المصروف اليوم</h4>
+          <table class="mini-tbl"><thead><tr><th>البيان</th><th>الجهة</th><th>المبلغ</th><th>الطريقة</th></tr></thead><tbody>
+          ${todayOut.map(e => `<tr><td>${U.esc(e.description)}</td><td class="t-sub">${U.esc(e.payee || '')}</td>
+            <td class="num money-neg">${Money.fmt(e.amount)}</td>
+            <td>${U.esc(PayMethods.label(e.method))}${Svc.cashbook.isCash(e.method) ? '' : ' <span class="pill">خارج الدرج</span>'}</td></tr>`).join('')}
+          </tbody></table>` : ''}
+        ${todayDist.length ? `<h4 style="font-size:13px;margin:16px 0 8px">توزيعات أرباح اليوم</h4>
+          <table class="mini-tbl"><thead><tr><th>الشريكة</th><th>عن الفترة</th><th>المبلغ</th><th>الطريقة</th></tr></thead><tbody>
+          ${todayDist.map(x => `<tr><td>${U.esc((Repos.partners.get(x.partnerId) || {}).name || '—')}</td>
+            <td class="num">${D.fmt(x.periodFrom)} ← ${D.fmt(x.periodTo)}</td>
+            <td class="num money-neg">${Money.fmt(x.amount)}</td><td>${U.esc(PayMethods.label(x.method))}</td></tr>`).join('')}
+          </tbody></table>
+          <div class="t-sub" style="margin-top:6px">التوزيع يخرج من الدرج اليوم، ولا يُخصم من الربح في أي تقرير.</div>` : ''}
+      </div></div>
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>سجل الإقفالات</h3><div class="sp"></div>
         <button class="btn btn-sm" id="cashPrint">${svg(ICON.print, 15)} طباعة</button></div><div class="card-body">
         ${rows.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>افتتاحي</th><th>داخل</th><th>خارج</th><th>متوقّع</th><th>معدود</th><th>الفرق</th><th>ملاحظات</th><th></th></tr></thead><tbody>
@@ -8285,6 +8373,11 @@ Views.finance = {
       await guard(null, () => Svc.cashbook.reopen(b.dataset.reopen, reason), 'أُعيد فتح اليوم');
       renderRoute();
     });
+    body.querySelectorAll('[data-rcp]').forEach(b => b.onclick = () => Actions.printReceiptForPayment(b.dataset.rcp));
+    const pa = body.querySelector('#cashPrintAll');
+    if (pa) pa.onclick = () => Actions.printDayReceipts(today);
+    const dp = body.querySelector('#cashDayPrint');
+    if (dp) dp.onclick = () => Print.open(`كشف صندوق ${D.fmt(today)}`, Print.cashDayHtml(today));
     const pr = body.querySelector('#cashPrint');
     if (pr) pr.onclick = () => Print.open('سجل إقفال الصندوق', Print.reportHtml('سجل إقفال الصندوق', [{
       headers:['التاريخ','افتتاحي','داخل','خارج','متوقّع','معدود','الفرق','ملاحظات'],
@@ -12368,6 +12461,72 @@ Actions.printStatement = function(memberId){
   Print.open(`كشف حساب ${m.name}`, Print.statementHtml(memberId));
 };
 
+/* ------------------------- كشف الصندوق اليومي --------------------------
+   ورقة واحدة تُرفق بالدرج آخر اليوم: ماذا دخل، وماذا خرج، وبأي طريقة،
+   وما المتوقّع مقابل المعدود. النقدي وغير النقدي مفصولان لأن التحويل لم
+   يدخل الدرج أصلاً، ومجهول الطريقة معزول لأن تخمينه يصنع فرقاً بلا تفسير. */
+Print.cashDayHtml = function(date){
+  const p = Svc.cashbook.preview(date);
+  const mv = p.movement;
+  const pays = U.sortBy(Repos.payments.list().filter(x => x.date === date), x => x.createdAt);
+  const row = (k, v, cls) => `<tr><td>${U.esc(k)}</td><td class="num ta-l ${cls || ''}">${v}</td></tr>`;
+  return `<div class="doc">
+    ${Brand.printHeader('كشف الصندوق اليومي', `${D.dayName(date)} ${D.fmt(date)}`)}
+    <table class="doc-tbl doc-sums"><tbody>
+      ${row('الرصيد الافتتاحي', Money.fmt(p.opening))}
+      ${row('+ المقبوض نقداً', Money.fmt(p.cashIn))}
+      ${row('− المصروف نقداً', Money.fmt(p.cashOut))}
+      ${row('= المتوقّع في الدرج', `<strong>${Money.fmt(p.expected)}</strong>`)}
+      ${p.counted != null ? row('المعدود فعلاً', Money.fmt(p.counted)) : ''}
+      ${p.counted != null ? row('الفرق', `<strong>${Money.fmt(p.difference)}</strong>`, p.difference < 0 ? 'money-neg' : '') : ''}
+    </tbody></table>
+    ${mv.byMethod && mv.byMethod.length ? `<h3 class="doc-title">حسب طريقة الدفع</h3>
+      <table class="doc-tbl"><thead><tr><th>الطريقة</th><th>داخل</th><th>خارج</th><th>الصافي</th></tr></thead><tbody>
+      ${mv.byMethod.map(x => `<tr><td>${U.esc(x.label)}${x.key === PayMethods.CASH_KEY ? ' (الدرج)' : ''}</td>
+        <td class="num">${Money.fmt(x.in)}</td><td class="num">${Money.fmt(x.out)}</td>
+        <td class="num">${Money.fmt(U.round2(x.in - x.out))}</td></tr>`).join('')}
+      </tbody></table>` : ''}
+    <h3 class="doc-title">المقبوضات</h3>
+    <table class="doc-tbl"><thead><tr><th>الوقت</th><th>من</th><th>الطريقة</th><th>الوصل</th><th>المبلغ</th></tr></thead><tbody>
+      ${pays.length ? pays.map(x => { const rc = Svc.receipts.forPayment(x.id);
+        const mm = x.memberId ? Repos.members.get(x.memberId) : null;
+        return `<tr><td class="num">${U.esc(String(x.createdAt).slice(11, 16))}</td>
+          <td>${U.esc(mm ? mm.name : 'زبونة عابرة')}</td>
+          <td>${U.esc(PayMethods.label(x.method))}</td>
+          <td class="num">${rc ? U.esc(rc.no) : '—'}</td>
+          <td class="num">${Money.fmt(x.amount)}</td></tr>`; }).join('')
+        : '<tr><td colspan="5">لا مقبوضات</td></tr>'}
+    </tbody><tfoot><tr><td colspan="4">الإجمالي</td><td class="num">${Money.fmt(U.sum(pays, x => x.amount))}</td></tr></tfoot></table>
+    ${mv.unknownOut ? `<div class="doc-note">${Money.fmt(mv.unknownOut)} من المصروفات لا تُعرف طريقة صرفها، ولم تُخصم من الدرج.</div>` : ''}
+    <div class="doc-sign"><div>توقيع المستلمة</div><div>توقيع المديرة</div></div>
+    <div class="doc-foot">${U.esc(Brand.name())} — طُبع في ${D.fmt(D.today())}</div>
+  </div>`;
+};
+
+/* طباعة كل وصولات اليوم في ورقة واحدة: كل وصل بصفحته، ورقم واحد لكل دفعة.
+   الطباعة الجماعية لا تُنشئ مالاً ولا أرقاماً جديدة — تُصدر ما لم يُصدَر بعد. */
+Actions.printDayReceipts = async function(date){
+  const pays = U.sortBy(Repos.payments.list().filter(x => x.date === date), x => x.createdAt);
+  if (!pays.length) return UI.toast('لا مقبوضات اليوم','warn');
+  const receipts = [];
+  for (const p of pays){
+    const r = await guard(null, () => Svc.receipts.ensure(p.id));
+    if (r) receipts.push(r);
+  }
+  if (!receipts.length) return UI.toast('تعذّر إصدار الوصولات','err');
+  const fmt = Settings.get('receiptFormat') || 'a4';
+  const html = receipts.map((r, i) =>
+    `<div class="${i < receipts.length - 1 ? 'page-break' : ''}">${Print.receiptHtml(r, { format:fmt })}</div>`).join('');
+  const w = Print.open(`وصولات ${D.fmt(date)}`, html, { slip:fmt === 'slip' });
+  if (!w){
+    UI.toast(`صدرت ${receipts.length} وصولات — لم تُفتح نافذة الطباعة، وتعيدينها من سجل اليوم`,'warn', 9000);
+    return;
+  }
+  for (const r of receipts) await Svc.receipts.markPrinted(r.id).catch(e => Log.warn('تعذّر تسجيل الطباعة', e));
+  UI.toast(`طُبعت ${receipts.length} وصولات`, 'ok');
+  renderRoute();
+};
+
 /* ---------------------------- كشف حساب شريكة ---------------------------
    يجيب عن أربعة أسئلة لا خامس لها: كم ضخّت؟ كم استرجعت؟ كم استحقّت من
    الأرباح؟ وكم قُبض منها فعلاً؟ ولا يخلط بين استرجاع رأس المال وتوزيع الربح. */
@@ -12591,66 +12750,135 @@ Screens.memberDues = function(memberId){
   });
 };
 
-/* البحث العام: يشمل الآن المهتمّات والوصولات والحصص والمستندات وحقول النادي */
-Actions.globalSearch = function(q){ /*v4*/
+/* ============================== البحث العام ==============================
+   قاعدة العرض: ثلاث نتائج لكل مجموعة لا أكثر، والمشتركات أولاً دائماً لأنهنّ
+   تسعة من كل عشرة أسئلة في الاستقبال. ولكل مجموعة «عرض الكل» يفتح شاشتها
+   بالبحث نفسه بدل قائمة تطول حتى تصير عديمة الفائدة.
+
+   والمطابقة التامة تقفز مباشرة: كود مشتركة كامل أو رقم وصل كامل لا يحتاج
+   قائمة يُختار منها — هو نفسه الجواب.
+
+   التطبيع العربي يمرّ كما هو (U.normAr): التشكيل والألف والياء والتاء
+   المربوطة والأرقام العربية كلها تُطبَّع قبل المقارنة. */
+Actions.globalSearch = function(q){ /*v5*/
   const box = $('globalSearchRes');
+  const raw = U.norm(q);
   const query = U.normAr(q);
   if (!query || query.length < 2){ box.classList.add('hidden'); box.innerHTML = ''; return; }
-  const hits = [];
-  const add = (kind, icon, title, sub, go) => hits.push({ kind, icon, title, sub, go });
 
-  Svc.members.rows(true).forEach(r => {
+  const close = () => { box.classList.add('hidden'); const el = $('globalSearch'); if (el) el.value = ''; };
+
+  /* ---------- القفز المباشر: كود مشتركة كامل أو رقم وصل كامل ---------- */
+  const exactMember = Svc.members.byCode(raw);
+  if (exactMember){
+    box.innerHTML = `<div class="gs-group">مطابقة تامة للكود</div>
+      <button class="gs-item" data-jump="member">${svg(ICON.users, 15)}<span class="grow">
+        <b>${U.esc(exactMember.name)}</b><small>${U.esc(exactMember.code)} — افتحي ملفها</small></span></button>`;
+    box.classList.remove('hidden');
+    box.querySelector('[data-jump]').onclick = () => { close(); Screens.memberProfile(exactMember.id); };
+    return;
+  }
+  const exactReceipt = Repos.receipts.list(true).find(r => U.normAr(r.no) === query);
+  if (exactReceipt){
+    box.innerHTML = `<div class="gs-group">مطابقة تامة لرقم الوصل</div>
+      <button class="gs-item" data-jump="rc">${svg(ICON.print, 15)}<span class="grow">
+        <b>وصل ${U.esc(exactReceipt.no)}</b><small>${Money.fmt(exactReceipt.amount)} — طباعة</small></span></button>`;
+    box.classList.remove('hidden');
+    box.querySelector('[data-jump]').onclick = () => { close(); Actions.printReceipt(exactReceipt.id); };
+    return;
+  }
+
+  /* ---------- البحث العام، مجموعةً مجموعة والمشتركات أولاً ---------- */
+  const groups = [];
+  const addGroup = (kind, icon, rows, seeAll) => { if (rows.length) groups.push({ kind, icon, rows, seeAll }); };
+
+  const memberRows = Svc.members.rows(true).filter(r => {
     const m = r.m;
-    const hay = [m.name, m.phone, m.phone2, m.code, m.email, m.city, Fields.searchText('member', m)].map(U.normAr).join(' ');
-    if (hay.includes(query))
-      add('مشتركة', ICON.users, m.name, `${m.code} — ${m.phone || 'بلا رقم'} — ${r.st.status.ar}`, () => Screens.memberProfile(m.id));
-  });
-  Repos.leads.list().forEach(l => {
-    if ([l.name, l.phone, l.code, l.source].map(U.normAr).join(' ').includes(query))
-      add('مهتمّة', ICON.gift, l.name, `${l.phone || 'بلا رقم'} — ${Svc.leads.stage(l.stage).ar}`, () => go('crm'));
-  });
-  Repos.staff.list(true).forEach(s => {
-    if ([s.name, s.phone, s.role].map(U.normAr).join(' ').includes(query))
-      add('من الفريق', ICON.staff, s.name, s.role || '', () => Screens.staffProfile(s.id));
-  });
-  Repos.receipts.list(true).forEach(r => {
-    if (U.normAr(r.no).includes(query))
-      add('وصل', ICON.print, `وصل ${r.no}`, `${Money.fmt(r.amount)} — ${(r.snapshot && r.snapshot.member && r.snapshot.member.name) || ''}`,
-          () => Actions.printReceipt(r.id));
-  });
-  Repos.sales.list(true).forEach(s => {
-    if (U.normAr(s.code).includes(query))
-      add('فاتورة', ICON.coins, `فاتورة ${s.code}`, `${Money.fmt(s.total)} — ${D.fmt(s.date)}`, () => Screens.sale(s.id));
-  });
-  Repos.products.list(true).forEach(p => {
-    if ([p.name, p.sku, p.category].map(U.normAr).join(' ').includes(query))
-      add('صنف', ICON.box, p.name, `${p.sku || ''} — الرصيد ${U.round2(Svc.inventory.onHand(p.id))}`, () => go('inventory'));
-  });
-  Repos.exercises.list(true).forEach(x => {
-    if ([x.name, x.category, x.muscles].map(U.normAr).join(' ').includes(query))
-      add('تمرين', ICON.dumbbell, x.name, x.category || '', () => Screens.exercise(x.id));
-  });
-  Svc.classes.between(D.addDays(D.today(), -7), D.addDays(D.today(), 30)).forEach(s => {
-    if (U.normAr(s.title).includes(query))
-      add('حصة', ICON.clock, s.title, `${D.fmt(s.date)} — ${s.startTime}`, () => go('classes', { date:s.date }));
-  });
+    return [m.name, m.phone, m.phone2, m.code, m.email, m.city, Fields.searchText('member', m)]
+      .map(U.normAr).join(' ').includes(query);
+  }).map(r => ({
+    title:r.m.name,
+    sub:`${r.m.code} — ${r.m.phone || 'بلا رقم'} — ${r.st.status.ar}`,
+    go:() => Screens.memberProfile(r.m.id),
+    /* أفعال الاستقبال الثلاثة على الصف نفسه: لا داعي لفتح الملف لتسجيل حضور */
+    actions:[
+      { t:'حضور',  fn:() => Actions.deskCheckIn(r.m.id, { method:'staff' }) },
+      { t:'تجديد', fn:() => Forms.subscription(null, r.m.id) },
+      { t:'قبض',   fn:() => Screens.memberDues(r.m.id) }
+    ]
+  }));
+  addGroup('مشتركات', ICON.users, memberRows, () => { State.f.members.q = raw; go('members'); });
 
-  if (!hits.length){
+  addGroup('مهتمّات', ICON.gift, Repos.leads.list()
+    .filter(l => [l.name, l.phone, l.code, l.source].map(U.normAr).join(' ').includes(query))
+    .map(l => ({ title:l.name, sub:`${l.phone || 'بلا رقم'} — ${Svc.leads.stage(l.stage).ar}`, go:() => go('crm') })),
+    () => go('crm'));
+
+  addGroup('الفريق', ICON.staff, Repos.staff.list(true)
+    .filter(s => [s.name, s.phone, s.role].map(U.normAr).join(' ').includes(query))
+    .map(s => ({ title:s.name, sub:s.role || '', go:() => Screens.staffProfile(s.id) })),
+    () => go('staff'));
+
+  addGroup('وصولات', ICON.print, Repos.receipts.list(true)
+    .filter(r => U.normAr(r.no).includes(query)
+      || U.normAr((r.snapshot && r.snapshot.member && r.snapshot.member.name) || '').includes(query))
+    .map(r => ({ title:`وصل ${r.no}`,
+      sub:`${Money.fmt(r.amount)} — ${(r.snapshot && r.snapshot.member && r.snapshot.member.name) || ''}${r.voided ? ' — مُبطَل' : ''}`,
+      go:() => Actions.printReceipt(r.id) })));
+
+  addGroup('فواتير', ICON.coins, Repos.sales.list(true)
+    .filter(s => [s.code, s.customerName].map(U.normAr).join(' ').includes(query))
+    .map(s => ({ title:`فاتورة ${s.code}`, sub:`${Money.fmt(s.total)} — ${D.fmt(s.date)}`, go:() => Screens.sale(s.id) })),
+    () => go('pos'));
+
+  addGroup('أصناف', ICON.box, Repos.products.list(true)
+    .filter(p => [p.name, p.sku, p.category].map(U.normAr).join(' ').includes(query))
+    .map(p => ({ title:p.name, sub:`${p.sku || ''} — الرصيد ${U.round2(Svc.inventory.onHand(p.id))}`,
+      go:() => Screens.stockHistory(p.id) })),
+    () => go('inventory'));
+
+  addGroup('تمارين', ICON.dumbbell, Repos.exercises.list(true)
+    .filter(x => [x.name, x.category, x.muscles].map(U.normAr).join(' ').includes(query))
+    .map(x => ({ title:x.name, sub:x.category || '', go:() => Screens.exercise(x.id) })),
+    () => go('exercises'));
+
+  addGroup('حصص', ICON.clock, Svc.classes.between(D.addDays(D.today(), -7), D.addDays(D.today(), 30))
+    .filter(s => U.normAr(s.title).includes(query))
+    .map(s => ({ title:s.title, sub:`${D.fmt(s.date)} — ${s.startTime}`, go:() => go('classes', { date:s.date }) })),
+    () => go('classes'));
+
+  if (!groups.length){
     box.innerHTML = `<div class="gs-empty">لا نتائج لـ «${U.esc(q)}»</div>`;
     box.classList.remove('hidden'); return;
   }
-  const groups = U.groupBy(hits.slice(0, 40), h => h.kind);
-  box.innerHTML = Object.entries(groups).map(([kind, rows]) => `
-    <div class="gs-group">${U.esc(kind)}</div>
-    ${rows.map((h, i) => `<button class="gs-item" data-hit="${kind}:${i}">
-      ${svg(h.icon, 15)}<span class="grow"><b>${U.esc(h.title)}</b><small>${U.esc(h.sub)}</small></span></button>`).join('')}`).join('');
+
+  const MAX = 3;
+  const flat = [];
+  box.innerHTML = groups.map((grp, gi) => {
+    const shown = grp.rows.slice(0, MAX);
+    const more = grp.rows.length - shown.length;
+    return `<div class="gs-group">${U.esc(grp.kind)} <span style="opacity:.7">(${grp.rows.length})</span></div>
+      ${shown.map(r => { const i = flat.push(r) - 1;
+        return `<button class="gs-item" data-hit="${i}">${svg(grp.icon, 15)}<span class="grow">
+          <b>${U.esc(r.title)}</b><small>${U.esc(r.sub || '')}</small></span>
+          ${(r.actions || []).map((a, ai) => `<span class="btn btn-sm" data-act="${i}:${ai}">${U.esc(a.t)}</span>`).join('')}</button>`;
+      }).join('')}
+      ${more > 0 && grp.seeAll ? `<button class="gs-item" data-all="${gi}"><span class="grow">
+        <b>عرض الكل (${grp.rows.length})</b><small>فتح الشاشة بالبحث نفسه</small></span></button>` : ''}`;
+  }).join('');
   box.classList.remove('hidden');
-  box.querySelectorAll('[data-hit]').forEach(b => b.onclick = () => {
-    const [kind, i] = b.dataset.hit.split(':');
-    box.classList.add('hidden');
-    const el = $('globalSearch'); if (el) el.value = '';
-    groups[kind][Number(i)].go();
+
+  box.querySelectorAll('[data-hit]').forEach(b => b.onclick = ev => {
+    /* زر الفعل داخل الصف لا يفتح الصف نفسه */
+    if (ev.target.closest('[data-act]')) return;
+    close(); flat[Number(b.dataset.hit)].go();
   });
+  box.querySelectorAll('[data-act]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    const [i, ai] = el.dataset.act.split(':').map(Number);
+    close(); flat[i].actions[ai].fn();
+  });
+  box.querySelectorAll('[data-all]').forEach(b => b.onclick = () => { close(); groups[Number(b.dataset.all)].seeAll(); });
 };
 
 
