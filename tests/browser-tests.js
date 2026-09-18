@@ -1349,6 +1349,28 @@ window.TGTests = (() => {
       Actions.globalSearch(rc.no);
       ok('رقم الوصل الكامل يقفز مباشرة إلى الوصل', box.innerHTML.includes('مطابقة تامة لرقم الوصل'));
     }
+    /* كيانات المرحلة الثانية دخلت البحث: المورّد ومستند الشراء. بلا ذلك يبقى
+       ما اشتراه النادي غير قابل للعثور عليه إلا بالتنقّل اليدوي. */
+    const sup = Svc.suppliers.list()[0];
+    if (sup){
+      Actions.globalSearch(U.normAr(sup.name).slice(0, 4));
+      ok('البحث يجد المورّد بالاسم',
+         [...box.querySelectorAll('.gs-group')].some(g => g.textContent.includes('موردون')),
+         [...box.querySelectorAll('.gs-group')].map(g => g.textContent.trim()).join(' | '));
+    }
+    const pur = Svc.purchases.list(true)[0];
+    if (pur){
+      Actions.globalSearch(pur.code);
+      ok('رقم مستند الشراء الكامل يقفز مباشرة',
+         box.innerHTML.includes('مطابقة تامة لرقم مستند الشراء'), pur.code);
+      const supName = (Repos.suppliers.get(pur.supplierId) || {}).name || '';
+      if (supName){
+        Actions.globalSearch(U.normAr(supName).slice(0, 4));
+        ok('البحث يجد مستندات الشراء باسم مورّدها',
+           [...box.querySelectorAll('.gs-group')].some(g => g.textContent.includes('مستندات شراء')),
+           [...box.querySelectorAll('.gs-group')].map(g => g.textContent.trim()).join(' | '));
+      }
+    }
     /* حرفان شائعان: مجموعات متعدّدة، والمشتركات أولاً، وثلاث نتائج للمجموعة */
     Actions.globalSearch('ا ');
     Actions.globalSearch(U.normAr(m.name).slice(0, 2));
@@ -1390,6 +1412,209 @@ window.TGTests = (() => {
   }
 
   /* ========================= 8) الاستمرارية ========================= */
+  /* ================== المرحلة 3أ: الهوية البصرية المتحرّكة ==================
+     الـGIF ليس صورة أكبر: هو حركة تبقى تعمل ما دامت الصفحة مفتوحة. فما
+     يُختبر هنا ليس «هل رُفع الملف» بل: هل بقي متحرّكاً حيث يجب أن يتحرّك،
+     وثابتاً حيث لا تجوز الحركة (الورقة المطبوعة وتفضيل تقليل الحركة)،
+     وهل نجا من إعادة التحميل والنسخة، وهل رُفض الكبير قبل أن يُثقل الجهاز. */
+  function gifFile(name){
+    /* GIF متحرّك حقيقي: إطاران 2×2 مع كتلة NETSCAPE للتكرار */
+    const b64 = 'R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
+              + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name || 'brand.gif', { type:'image/gif' });
+  }
+  function pngFile(name){
+    /* PNG ثابت 1×1 */
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name || 'brand.png', { type:'image/png' });
+  }
+
+  async function branding(){
+    const { Brand, Svc, Repos, Backup, U, Settings } = T();
+    const mediaBefore = Repos.media.list(true).length;
+
+    /* ---------- 1) الشعار الثابت: دورة حياة كاملة ---------- */
+    const png = await Brand.setMedia('logo', pngFile('logo.png'));
+    ok('الشعار الثابت يُرفع ويُحفظ وسائطَ', !!png.id && !!Repos.media.get(png.id), png.id);
+    ok('الشعار الثابت لا يُعلَّم متحرّكاً', png.animated === false && !png.posterUrl);
+    ok('الشعار الثابت يحمل أبعاده', png.width > 0 && png.height > 0, `${png.width}×${png.height}`);
+    ok('الشعار يظهر في الشريط الجانبي', Brand.logoHtml(40).includes(png.dataUrl.slice(22, 48)));
+    ok('الشعار يظهر في الترويسة المطبوعة', Brand.printHeader('س','ص').includes('<img'));
+    ok('الوسائط مربوطة بالهوية فلا تُعدّ يتيمة', Svc.media.usedBy(png.id).length === 1,
+       JSON.stringify(Svc.media.usedBy(png.id)));
+
+    /* ---------- 2) الشعار المتحرّك: يُرفع ويُعلَّم ويُستخرج إطاره ---------- */
+    const gif = await Brand.setMedia('logo', gifFile('logo.gif'));
+    ok('الشعار المتحرّك يُرفع', !!gif.id && gif.type === 'image/gif');
+    ok('الشعار المتحرّك يُعلَّم متحرّكاً', gif.animated === true && Brand.isAnimated('logo'));
+    ok('يُستخرج إطار ثابت عند الرفع', !!gif.posterUrl && String(gif.posterUrl).startsWith('data:image/png'),
+       String(gif.posterUrl || '').slice(0, 22));
+    ok('الاستبدال لا يترك الشعار القديم يتيماً', !Repos.media.get(png.id), png.id);
+    eq('لم يتضخّم جدول الوسائط بالاستبدال', Repos.media.list(true).length, mediaBefore + 1);
+
+    /* ---------- 3) الحركة حيث تجوز، والثبات حيث لا تجوز ---------- */
+    ok('الشاشة تعرض الملف المتحرّك نفسه',
+       Brand.renderUrl('logo', false).startsWith('data:image/gif'), Brand.renderUrl('logo', false).slice(0, 22));
+    ok('الطباعة تأخذ الإطار الثابت لا الملف المتحرّك',
+       Brand.renderUrl('logo', true) === gif.posterUrl);
+    ok('الترويسة المطبوعة خالية من الصورة المتحرّكة',
+       !Brand.printHeader('وصل','معاينة').includes('data:image/gif'));
+    ok('وصل الطباعة خالٍ من الصورة المتحرّكة',
+       !T().Print.receiptHtml({ no:'و1', issuedAt:new Date().toISOString(), amount:1000, reprints:0,
+         snapshot:{ gym:{ name:Brand.name() }, member:{ name:'س', code:'ت1' },
+           doc:{ kind:'subscription', title:'اشتراك', detail:'' }, payment:{ amount:1000, method:'cash', date:T().D.today() } } },
+         { format:'a4' }).includes('data:image/gif'));
+
+    /* ---------- 4) اللافتة: ثابتة ثم متحرّكة ---------- */
+    const bpng = await Brand.setMedia('banner', pngFile('banner.png'));
+    ok('اللافتة الثابتة تُرفع', !!bpng.id && bpng.animated === false);
+    ok('اللافتة الثابتة تُرسم', Brand.bannerHtml().includes('brand-banner'));
+    const bgif = await Brand.setMedia('banner', gifFile('banner.gif'));
+    ok('اللافتة المتحرّكة تُرفع وتُعلَّم', bgif.animated === true && Brand.isAnimated('banner'));
+    ok('اللافتة تُرسم متحرّكة على الشاشة', Brand.bannerHtml().includes('data-motion="live"')
+       && Brand.bannerHtml().includes('data:image/gif'));
+    ok('اللافتة تُرسم ثابتة عند الطباعة', Brand.bannerHtml(true).includes('data-motion="still"')
+       && !Brand.bannerHtml(true).includes('data:image/gif'));
+
+    /* ---------- 5) الحدود: الكبير والنوع غير المدعوم يُرفضان بوضوح ---------- */
+    const big = new File([new Uint8Array(Svc.media.ANIMATED_MAX + 1024)], 'big.gif', { type:'image/gif' });
+    let bigErr = null;
+    try { await Brand.setMedia('logo', big); } catch(e){ bigErr = e; }
+    ok('الصورة المتحرّكة الكبيرة تُرفض', bigErr && bigErr.code === 'GIF_TOO_BIG', bigErr && bigErr.code);
+    ok('رسالة الرفض تذكر الحدّ بالعربية', bigErr && /ميغابايت/.test(bigErr.message), bigErr && bigErr.message.slice(0, 40));
+    ok('الرفض لا يغيّر الشعار القائم', Brand.info('logo').id === gif.id);
+    ok('الرفض لا يترك وسائط نصف محفوظة', Repos.media.list(true).length === mediaBefore + 2,
+       Repos.media.list(true).length);
+    let typeErr = null;
+    try { await Brand.setMedia('logo', new File([new Uint8Array(10)], 'x.bmp', { type:'image/bmp' })); }
+    catch(e){ typeErr = e; }
+    ok('النوع غير المدعوم يُرفض', typeErr && typeErr.code === 'BAD_TYPE', typeErr && typeErr.code);
+    /* الحدّ العام ما زال قائماً للوسائط الأخرى */
+    ok('حدّ الصور المتحرّكة أصغر من الحدّ العام', Svc.media.ANIMATED_MAX < Svc.media.MAX,
+       `${Svc.media.ANIMATED_MAX} < ${Svc.media.MAX}`);
+
+    /* ---------- 6) النسخة الاحتياطية والاستعادة ---------- */
+    const snapshot = { logo:Brand.info('logo'), banner:Brand.info('banner') };
+    const backup = Backup.build(true);
+    ok('النسخة تحمل الوسائط المتحرّكة',
+       (backup.data.media || []).some(x => x.type === 'image/gif' && x.animated === true));
+    ok('النسخة تحمل الإطار الثابت معها',
+       (backup.data.media || []).filter(x => x.animated).every(x => !!x.posterUrl));
+    await Brand.clearMedia('logo');
+    await Brand.clearMedia('banner');
+    ok('الإزالة تُفرّغ الهوية', !Brand.info('logo').exists && !Brand.info('banner').exists);
+    ok('الإزالة لا تترك وسائط يتيمة', Svc.media.usage().orphans === 0, Svc.media.usage().orphans);
+    ok('بلا شعار تُرسم العلامة المدمجة لا مربّع مكسور', Brand.logoHtml(40).includes('<svg'));
+    await Backup.restore(backup);
+    ok('الاستعادة تُرجع الشعار المتحرّك',
+       Brand.info('logo').exists && Brand.info('logo').animated, JSON.stringify(Brand.info('logo')));
+    ok('الاستعادة تُرجع اللافتة المتحرّكة', Brand.info('banner').exists && Brand.info('banner').animated);
+    ok('الاستعادة تُرجع الإطار الثابت', Brand.info('logo').hasPoster && Brand.info('banner').hasPoster);
+    eq('حجم الشعار المستعاد كما كان', Brand.info('logo').size, snapshot.logo.size);
+    ok('الاستعادة لا تُنتج وسائط يتيمة', Svc.media.usage().orphans === 0, Svc.media.usage().orphans);
+
+    /* ---------- 7) وسائط قديمة بلا الحقول الجديدة: لا شيء ينكسر ---------- */
+    const legacy = await Repos.media.create({ name:'legacy.gif', type:'image/gif', size:120, kind:'image',
+      dataUrl:'data:image/gif;base64,R0lGODlhAQABAAAAACw=' });   /* بلا animated ولا posterUrl */
+    ok('الوسائط القديمة تُعرف متحرّكة من نوعها', Svc.media.isAnimated(legacy));
+    ok('بلا إطار محفوظ يُستعمل الأصل ولا تنكسر الطباعة',
+       Svc.media.stillUrl(legacy) === legacy.dataUrl);
+    await Settings.set({ branding:Object.assign({}, Brand.get(), { logoMediaId:legacy.id }) });
+    ok('الترويسة المطبوعة تُبنى على وسائط قديمة بلا خطأ', Brand.printHeader('س','ص').includes('<img'));
+    ok('وصف المعاينة يقول إن الإطار غير متاح',
+       Brand.info('logo').animated && Brand.info('logo').hasPoster === false);
+
+    /* ---------- 8) وسائط مكسورة: الصفحة تصمد ---------- */
+    await Settings.set({ branding:Object.assign({}, Brand.get(), { logoMediaId:'med_missing', bannerMediaId:'med_missing' }) });
+    ok('معرّف وسائط محذوف لا يكسر الشعار', Brand.logoHtml(40).includes('<svg'));
+    ok('معرّف وسائط محذوف لا يكسر اللافتة', Brand.bannerHtml() === '');
+    ok('معرّف وسائط محذوف لا يكسر الترويسة', Brand.printHeader('س','ص').includes('doc-head'));
+    ok('وصف المعاينة يقول إنه لا يوجد', Brand.info('logo').exists === false);
+    await Backup.restore(backup);                       /* إعادة الحال لبقية المجموعة */
+    return results;
+  }
+
+  /* ============== المرحلة 3أ: التقييم الأولي عند التسجيل ==============
+     المطلوب ليس نظام قياسات ثانياً — بل أن يصل مسار التسجيل إلى نظام القياسات
+     القائم. فما يُختبر: أن القياس المُدخَل وقت التسجيل يصير قراءةً عادية في
+     السجل نفسه، وأن غيابه لا يمنع الحفظ، وأن الخطأ يُكشف قبل إنشاء المشتركة. */
+  async function onboarding(){
+    const { Svc, Repos, D, U } = T();
+    const types = Svc.measure.types();
+    ok('أنواع القياس تُقرأ من الإعدادات القائمة', types.length > 0 && types.some(t => t.key === 'weight'),
+       types.map(t => t.key).join(','));
+
+    /* ---------- السيناريو أ: تسجيل سريع بلا قياسات ---------- */
+    const a = await Svc.members.create({ name:'مشتركة بلا قياس', joinDate:D.today() });
+    ok('أ: المشتركة تُنشأ بالاسم وحده', !!a.rec.id && !!a.rec.code, a.rec.code);
+    eq('أ: لا قياسات بعد التسجيل', Svc.measure.ofMember(a.rec.id).length, 0);
+    /* ثم تُقاس لاحقاً من المسار القائم نفسه */
+    const later = await Svc.measure.addBatch(a.rec.id, D.today(), { weight:70 }, 'قياس لاحق');
+    eq('أ: القياس اللاحق يُسجَّل من المسار القائم', Svc.measure.ofMember(a.rec.id).length, 1);
+    eq('أ: القياس اللاحق قراءة واحدة لا أكثر', later.length, 1);
+
+    /* ---------- السيناريو ب: تسجيل مع قياسات أولية ---------- */
+    const b = await Svc.members.create({ name:'مشتركة بقياس', joinDate:D.today() });
+    const made = await Svc.measure.addBatch(b.rec.id, D.today(), { weight:'68.5', height:'165' }, 'تقييم أولي');
+    eq('ب: القياسات الأولية تُسجَّل قراءتين', made.length, 2);
+    eq('ب: تدخل سجل القياسات نفسه', Svc.measure.ofMember(b.rec.id).length, 2);
+    ok('ب: لا كيان «قياس تسجيل» منفصل — الجدول واحد',
+       made.every(r => !!Repos.measurements.get(r.id)));
+    ok('ب: كل قراءة تحمل وحدتها من الإعدادات',
+       made.every(r => !!r.unit && r.unit === Svc.measure.typeOf(r.type).unit),
+       made.map(r => `${r.type}:${r.unit}`).join(','));
+    ok('ب: كل قراءة مؤرَّخة', made.every(r => D.isISO(r.date)));
+    ok('ب: القيمة الأحدث تظهر في «آخر القراءات»',
+       Object.keys(Svc.measure.latest(b.rec.id)).sort().join(',') === 'height,weight');
+    const bmi = Svc.measure.bmi(b.rec.id);
+    ok('ب: مؤشّر الكتلة يُحسب من القراءتين', !!bmi && bmi.value > 0, bmi && bmi.value);
+    eq('ب: لا قراءة مكرّرة تُنشأ بعد التسجيل', Svc.measure.ofMember(b.rec.id).length, 2);
+
+    /* ---------- التحقّق قبل الإنشاء: القيمة الخاطئة تُكشف ---------- */
+    const bad = Svc.measure.checkBatch(D.today(), { weight:'-5' });
+    ok('القيمة السالبة تُرفض قبل الإنشاء', !bad.ok && !!bad.errors.m_weight, JSON.stringify(bad.errors));
+    const huge = Svc.measure.checkBatch(D.today(), { weight:'5000' });
+    ok('القيمة المستحيلة تُرفض', !huge.ok && !!huge.errors.m_weight);
+    const future = Svc.measure.checkBatch(D.addDays(D.today(), 3), { weight:'70' });
+    ok('التاريخ المستقبلي يُرفض', !future.ok && !!future.errors.date, JSON.stringify(future.errors));
+    const partial = Svc.measure.checkBatch(D.today(), { weight:'70', height:'' });
+    ok('الإدخال الجزئي مقبول — الفارغ يُتجاهَل', partial.ok && partial.count === 1, JSON.stringify(partial));
+    const none = Svc.measure.checkBatch(D.today(), {});
+    ok('لا قياسات أصلاً: لا خطأ — الحفظ لا يتوقّف عليها', none.ok && none.count === 0);
+    ok('قواعد التحقّق واحدة لا اثنتان',
+       await (async () => { try { await Svc.measure.addBatch(b.rec.id, D.today(), { weight:'-5' }); return false; }
+                            catch(e){ return e.code === 'VALIDATION' && !!e.details.m_weight; } })());
+
+    /* ---------- الإدخال الجزئي يُحفظ فعلاً ---------- */
+    const c = await Svc.members.create({ name:'مشتركة بقياس جزئي', joinDate:D.today() });
+    const partialSaved = await Svc.measure.addBatch(c.rec.id, D.today(), { weight:'72' }, '');
+    eq('الإدخال الجزئي يُحفظ قراءة واحدة', partialSaved.length, 1);
+    ok('بلا طول لا مؤشّر كتلة — ولا اختراع قيمة', Svc.measure.bmi(c.rec.id) === null);
+
+    /* ---------- القياس الأولي تاريخٌ لا حالة: لا يُدهس بقراءة لاحقة ---------- */
+    const first = Svc.measure.ofMember(b.rec.id, 'weight')[0];
+    await Svc.measure.addBatch(b.rec.id, D.today(), { weight:'66' }, 'بعد شهر');
+    const all = Svc.measure.ofMember(b.rec.id, 'weight');
+    eq('القراءة الأولى باقية بعد قراءة جديدة', all.length, 2);
+    ok('القراءة الأولى لم تتغيّر قيمتها',
+       !!Repos.measurements.get(first.id) && Repos.measurements.get(first.id).value === first.value);
+    const prog = Svc.measure.progress(b.rec.id, 'weight');
+    ok('التقدّم يُقاس من القراءة الأولى', !!prog && prog.first.value === 68.5 && prog.last.value === 66,
+       JSON.stringify(prog && { f:prog.first.value, l:prog.last.value, d:prog.delta }));
+    ok('السلسلة الرسومية تشمل القراءتين', Svc.measure.series(b.rec.id, 'weight').length === 2);
+
+    /* ---------- المشتركات القديمة لا تتأثر ---------- */
+    const old = Repos.members.list().filter(x => x.isDemo)[0];
+    if (old) ok('المشتركة القديمة بلا قياسات تبقى صالحة', Svc.measure.ofMember(old.id).length >= 0);
+    return results;
+  }
+
   async function writeProbe(){
     const { Repos, Svc, D } = T();
     const rec = await Repos.members.create({ name:'اختبار الاستمرارية', phone:'', joinDate:D.today(), code:'ت9999' });
@@ -1424,6 +1649,7 @@ window.TGTests = (() => {
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
     capitalMethods, purchases, allocations, periodClose, integrityP2,
+    branding, onboarding,
     writeProbe, probeExists, totals, endDates, downgrade
   };
 })();

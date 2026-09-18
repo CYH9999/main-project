@@ -648,7 +648,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.0.0', schema:7, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.1.0', schema:7, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -2795,6 +2795,59 @@ Svc.payroll = {
    لحذف فحصُ السلامة شعارَ النادي باعتباره وسائط يتيمة. */
 Svc.media = {
   MAX: 30 * 1024 * 1024,
+  /* ---------------------------- الصور المتحرّكة ----------------------------
+     الـGIF المتحرّك ليس صورة أكبر قليلاً — هو عشرات الإطارات في ملف واحد،
+     يفكّها المتصفح في الذاكرة ويعيد رسمها ما دامت الصفحة مفتوحة. لذلك لا
+     يُقاس بحدّ الثلاثين ميغابايت العام: ملفٌ بهذا الحجم يبقى يتحرّك في
+     الشريط الجانبي طوال اليوم فيُثقل جهاز الاستقبال.
+
+     ثلاثة حدود عملية، لا تقنية تُشرح للمستخدمة:
+       · 3 ميغابايت للملف المتحرّك.
+       · 2400 بكسل لأكبر بُعد — ما فوقه لا يُرى على الشاشة ويُكلّف ذاكرة.
+       · إطار ثابت يُستخرج مرة واحدة عند الرفع ويُحفظ مع الوسائط نفسها،
+         فتبقى الطباعة وتفضيل «تقليل الحركة» مستقرّين بلا فكّ الحركة وقتها. */
+  ANIMATED_MAX: 3 * 1024 * 1024,
+  MAX_DIM: 2400,
+  POSTER_DIM: 1200,
+  ANIMATED_TYPES: ['image/gif', 'image/apng'],
+  isAnimatedType(type){ return this.ANIMATED_TYPES.includes(String(type || '').toLowerCase()); },
+  /* أبعاد الصورة تُقرأ من المتصفح نفسه: لا مكتبة ولا خادم */
+  measure(dataUrl){
+    return new Promise(res => {
+      if (typeof Image === 'undefined') return res({ width:0, height:0 });
+      const img = new Image();
+      img.onload = () => res({ width:img.naturalWidth || 0, height:img.naturalHeight || 0 });
+      img.onerror = () => res({ width:0, height:0 });
+      img.src = dataUrl;
+    });
+  },
+  /* الإطار الأول: يُرسم على canvas مرة واحدة عند الرفع. المتصفح يرسم أول
+     إطار الـGIF، فنحصل على صورة ثابتة بلا فكّ ترميز يدوي ولا اعتماد خارجي.
+     وإن تعذّر (canvas ممنوع، صورة تالفة) يعود null ويُستعمل الأصل — الوظيفة
+     لا تنكسر، وتُوثَّق الحالة في التقرير. */
+  poster(dataUrl, maxDim){
+    return new Promise(res => {
+      if (typeof Image === 'undefined' || typeof document === 'undefined') return res(null);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const lim = maxDim || this.POSTER_DIM;
+          const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+          if (!w0 || !h0) return res(null);
+          const k = Math.min(1, lim / Math.max(w0, h0));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(w0 * k));
+          c.height = Math.max(1, Math.round(h0 * k));
+          const ctx = c.getContext('2d');
+          if (!ctx) return res(null);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          res(c.toDataURL('image/png'));
+        } catch(e){ Log.warn('تعذّر استخراج إطار ثابت من الصورة المتحرّكة', e); res(null); }
+      };
+      img.onerror = () => res(null);
+      img.src = dataUrl;
+    });
+  },
   /* كل حقل في النظام يشير إلى وسائط. إضافة ميزة جديدة تحمل صورة = سطر هنا. */
   REFS: [
     { store:'exercises',  field:'mediaId',       label:'تمرين' },
@@ -2804,8 +2857,15 @@ Svc.media = {
     { store:'staff',      field:'photoMediaId',  label:'صورة موظفة' },
     { store:'staff',      field:'idMediaId',     label:'مرفق هوية موظفة' }
   ],
-  async saveFile(file){
+  /* opts: { animated:true } يطبّق حدود الصور المتحرّكة ويستخرج الإطار الثابت */
+  async saveFile(file, opts){
+    const o = opts || {};
     if (!file || !isFinite(file.size)) throw new AppError('ملف غير صالح','BAD_FILE');
+    const animated = this.isAnimatedType(file.type);
+    if (animated && o.animated !== false && file.size > this.ANIMATED_MAX)
+      throw new AppError(`الصورة المتحرّكة أكبر من ${Math.round(this.ANIMATED_MAX / 1048576)} ميغابايت — `
+        + `اختاري ملفاً أصغر أو صورة ثابتة. الملفات المتحرّكة الكبيرة تبقى تتحرّك في الذاكرة فتُبطئ النظام.`,
+        'GIF_TOO_BIG', { size:file.size, max:this.ANIMATED_MAX });
     if (file.size > this.MAX) throw new AppError('حجم الملف أكبر من 30 ميغابايت','TOO_BIG');
     const dataUrl = await new Promise((res, rej) => {
       const fr = new FileReader();
@@ -2814,7 +2874,24 @@ Svc.media = {
       fr.readAsDataURL(file);
     });
     const kind = (file.type||'').startsWith('video') ? 'video' : 'image';
-    return Repos.media.create({ name:file.name, type:file.type, size:file.size, kind, dataUrl, isDemo:!!file.isDemo });
+    const rec = { name:file.name, type:file.type, size:file.size, kind, dataUrl, animated, isDemo:!!file.isDemo };
+    if (kind === 'image'){
+      const dim = await this.measure(dataUrl);
+      rec.width = dim.width; rec.height = dim.height;
+      if (o.maxDim && Math.max(dim.width, dim.height) > o.maxDim)
+        throw new AppError(`أبعاد الصورة ${dim.width}×${dim.height} أكبر من الحدّ (${o.maxDim} بكسل) — `
+          + 'صغّريها قبل الرفع.', 'DIM_TOO_BIG', { width:dim.width, height:dim.height, max:o.maxDim });
+      /* الإطار الثابت يُستخرج مرة واحدة هنا، لا في كل طباعة */
+      if (animated) rec.posterUrl = await this.poster(dataUrl);
+    }
+    return Repos.media.create(rec);
+  },
+  /* هل هذه الوسائط متحرّكة؟ النوع هو المرجع، والعلم المحفوظ يكفي للسجلات الجديدة */
+  isAnimated(rec){ return !!(rec && (rec.animated || this.isAnimatedType(rec.type))); },
+  /* الصورة الثابتة لهذه الوسائط: الإطار المحفوظ، وإلا الأصل (لا شيء ينكسر) */
+  stillUrl(rec){
+    if (!rec) return null;
+    return (this.isAnimated(rec) && rec.posterUrl) ? rec.posterUrl : rec.dataUrl;
   },
   get(id){ return Repos.media.get(id); },
   /* الهوية البصرية تعيش في الإعدادات لا في جدول، فتُفحص على حدة */
@@ -3175,15 +3252,28 @@ Svc.measure = {
   },
   /* الاستقبال تقيس عدة أشياء في جلسة واحدة: تُحفظ كسجلات مستقلة بتاريخ واحد،
      والعملية كلٌّ لا يتجزّأ حتى لا تبقى نصف قياسات لو فشل الحفظ في المنتصف. */
+  /* التحقّق وحده، بلا كتابة ولا مشتركة. يُستعمل قبل إنشاء مشتركة جديدة حتى
+     تُكشف القيمة الخاطئة والنموذج ما زال مفتوحاً، بدل أن تُنشأ المشتركة ثم
+     يُرفض قياسها. القواعد واحدة: addBatch نفسها تمرّ من هنا. */
+  checkBatch(date, values){
+    const entries = Object.entries(values || {}).filter(([, v]) => v !== '' && v != null);
+    const errors = {};
+    if (!D.isISO(date)) errors.date = 'التاريخ غير صحيح';
+    else if (D.cmp(date, D.today()) > 0) errors.date = 'لا يمكن تسجيل قياس بتاريخ مستقبلي';
+    for (const [type, value] of entries){
+      const v = this.validate({ memberId:'check', date, type, value });
+      Object.entries(v.errors).forEach(([field, msg]) => {
+        if (field === 'value') errors['m_' + type] = `${this.typeOf(type).label}: ${msg}`;
+        else errors[field] = msg;
+      });
+    }
+    return { ok:Object.keys(errors).length === 0, errors, count:entries.length };
+  },
   async addBatch(memberId, date, values, notes){
     const entries = Object.entries(values || {}).filter(([, v]) => v !== '' && v != null);
     if (!entries.length) throw new AppError('لم تُدخَل أي قيمة', 'VALIDATION', { value:'أدخلي قيمة واحدة على الأقل' });
-    const errors = {};
-    for (const [type, value] of entries){
-      const v = this.validate({ memberId, date, type, value });
-      if (!v.ok) Object.entries(v.errors).forEach(([, msg]) => { errors['m_' + type] = `${this.typeOf(type).label}: ${msg}`; });
-    }
-    if (Object.keys(errors).length) throw new AppError('بيانات القياس غير صحيحة', 'VALIDATION', errors);
+    const chk = this.checkBatch(date, values);
+    if (!chk.ok) throw new AppError('بيانات القياس غير صحيحة', 'VALIDATION', chk.errors);
     const done = [];
     try {
       for (const [type, value] of entries) done.push(await this.add({ memberId, date, type, value, notes }));
@@ -6634,10 +6724,39 @@ const Brand = {
   },
   has(kind){ return !!this.media(kind); },
   dataUrl(kind){ const m = this.media(kind); return m ? m.dataUrl : null; },
+  /* ---------------------------- الحركة والثبات ----------------------------
+     الشعار أو اللافتة قد تكون صورة متحرّكة. وفي موضعين لا تجوز الحركة:
+       · الطباعة — الورقة لا «إطار حالي» لها، فالمطبوع يجب ألا يتعلّق بلحظة
+         الضغط على زر الطباعة.
+       · تفضيل «تقليل الحركة» في النظام — وهذا لا تكفي فيه قاعدة CSS، لأن
+         حركة الـGIF ليست animation ولا transition: يوقفها المتصفح لا الورقة
+         النمطية. فتُقرأ الحالة هنا وتُختار الصورة الثابتة عند الرسم. */
+  reducedMotion(){
+    try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch(e){ return false; }
+  },
+  isAnimated(kind){ return Svc.media.isAnimated(this.media(kind)); },
+  /* الصورة الثابتة: الإطار المحفوظ وقت الرفع، وإلا الأصل */
+  stillUrl(kind){ return Svc.media.stillUrl(this.media(kind)); },
+  /* ما يُرسم فعلاً: ثابت عند الطباعة أو عند تفضيل تقليل الحركة، وإلا الأصل */
+  renderUrl(kind, forceStill){
+    const m = this.media(kind);
+    if (!m) return null;
+    return (forceStill || this.reducedMotion()) ? Svc.media.stillUrl(m) : m.dataUrl;
+  },
+  /* وصف الأصل للمعاينة في الإعدادات — بلا أزرار تقنية لا تعني المستخدمة */
+  info(kind){
+    const m = this.media(kind);
+    if (!m) return { exists:false };
+    return { exists:true, id:m.id, name:m.name || '', type:m.type || '',
+             size:Number(m.size) || 0, width:Number(m.width) || 0, height:Number(m.height) || 0,
+             animated:Svc.media.isAnimated(m), hasPoster:!!m.posterUrl };
+  },
 
   /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور. */
   logoHtml(size=40, forPrint=false){
-    const url = this.dataUrl('logo');
+    /* الطباعة تأخذ الإطار الثابت دائماً: الورقة لا تتحرّك ولا تنتظر إطاراً */
+    const url = this.renderUrl('logo', forPrint);
     if (url) return `<img class="brand-logo" src="${U.esc(url)}" alt="${U.esc(this.name())}"
       style="width:${size}px;height:${size}px;object-fit:contain;display:block">`;
     return `<svg class="brand-mark" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
@@ -6647,11 +6766,12 @@ const Brand = {
       <rect x="29" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/></svg>`;
   },
   /* اللافتة العريضة: تُقصّ ولا تُمطّ، ولا تظهر أصلاً إن لم تُرفع */
-  bannerHtml(){
-    const url = this.dataUrl('banner');
+  bannerHtml(forPrint){
+    const url = this.renderUrl('banner', forPrint);
     if (!url) return '';
+    const still = forPrint || this.reducedMotion();
     return `<div class="brand-banner" role="img" aria-label="لافتة ${U.esc(this.name())}"
-      style="background-image:url('${U.esc(url)}')"></div>`;
+      data-motion="${still ? 'still' : 'live'}" style="background-image:url('${U.esc(url)}')"></div>`;
   },
   contactLine(){
     const b = this.get();
@@ -6669,15 +6789,26 @@ const Brand = {
         ${sub ? `<span>${U.esc(sub)}</span>` : ''}
         <span class="num">${U.esc(D.fmt(D.today()))}</span></div></div>`;
   },
+  /* أنواع الهوية البصرية: الصور المتحرّكة مسموحة هنا وحدها — لا في صور
+     المشتركات ولا الموظفات، فتلك تُعرض في جداول طويلة وتُقصّ في دوائر صغيرة
+     ولا فائدة من تحريكها، وتكلفتها في الذاكرة تتضاعف بعددها. */
+  ACCEPT: { logo:'image/png,image/jpeg,image/webp,image/svg+xml,image/gif',
+            banner:'image/png,image/jpeg,image/webp,image/gif' },
+  accept(kind){ return this.ACCEPT[kind === 'banner' ? 'banner' : 'logo']; },
   async setMedia(kind, file){
     const key = kind === 'banner' ? 'bannerMediaId' : 'logoMediaId';
     const prev = this.get()[key];
-    const saved = await Svc.media.saveFile(file);
+    const ok = String(this.accept(kind)).split(',');
+    if (file && file.type && !ok.includes(String(file.type).toLowerCase()))
+      throw new AppError(`نوع الملف غير مدعوم للهوية البصرية (${U.esc(file.type)}) — `
+        + 'استعملي PNG أو JPEG أو WebP أو GIF.', 'BAD_TYPE');
+    const saved = await Svc.media.saveFile(file, { animated:true, maxDim:Svc.media.MAX_DIM });
     try { await Settings.set({ branding:Object.assign({}, this.get(), { [key]:saved.id }) }); }
     catch(e){ await Svc.media.remove(saved.id).catch(() => {}); throw e; }
     if (prev && prev !== saved.id) await Svc.media.removeIfUnused(prev);
     this.applyToShell();
-    await Audit.log('settings','branding',`تحديث ${kind === 'banner' ? 'لافتة' : 'شعار'} النادي`);
+    await Audit.log('settings','branding',
+      `تحديث ${kind === 'banner' ? 'لافتة' : 'شعار'} النادي${Svc.media.isAnimated(saved) ? ' (صورة متحرّكة)' : ''}`);
     return saved;
   },
   async clearMedia(kind){
@@ -7740,6 +7871,7 @@ Views.member = {
         ['تاريخ الميلاد', !!m.birthDate],
         ['جهة اتصال للطوارئ', !!(m.emergency && U.norm(m.emergency.phone))],
         ['صورة', !!m.photoMediaId],
+        ['قياسات أولية', Svc.measure.ofMember(m.id).length > 0],
         ['اشتراك مسجَّل', liveSubs.length > 0]
       ];
       const done = checks.filter(c => c[1]).length;
@@ -7802,6 +7934,10 @@ Views.member = {
         <div style="flex:1"></div><button class="btn btn-sm btn-primary" data-a="collect">قبض دفعة</button></div></div></div>` : ''}
       ${st.status === STATUS.FROZEN ? `<div class="card" style="border-color:var(--blue-600);margin-bottom:14px"><div class="card-body" style="padding:12px 15px">
         اشتراكها مجمّد حتى <strong class="num">${D.fmt(st.freeze.to)}</strong> — السبب: ${U.esc(st.freeze.reason || '—')}</div></div>` : ''}
+      ${Svc.measure.ofMember(m.id).length ? '' : `<div class="card" style="margin-bottom:14px"><div class="card-body" style="padding:12px 15px">
+        <div class="row" style="gap:10px;align-items:center"><span class="t-sub">القياسات الأولية غير مسجّلة —
+          بلا قراءة أولى لا يظهر تقدّمها لاحقاً.</span>
+        <div style="flex:1"></div><button class="btn btn-sm" data-a="measure">إضافة القياسات</button></div></div></div>`}
       <div class="stat-row">
         <div class="stat"><b>${liveSubs.length}</b><span>اشتراك — متتالية ${run}</span></div>
         <div class="stat pos"><b>${Money.fmt(balance.paid)}</b><span>إجمالي ما دفعته</span></div>
@@ -10732,30 +10868,50 @@ Views.settings = {
     const secBrand = () => {
       const b = Brand.get();
       const logo = Brand.media('logo'), banner = Brand.media('banner');
+      /* بطاقة وصف الأصل: متحرّك أم ثابت، وكم حجمه، وما أبعاده. ثلاث حقائق
+         تكفي المستخدمة لتعرف لماذا يبطئ النظام أو لماذا تبدو الصورة مقصوصة. */
+      const mediaInfo = kind => {
+        const i = Brand.info(kind);
+        if (!i.exists) return '';
+        const kb = i.size ? (i.size >= 1048576 ? `${U.round2(i.size / 1048576)} م.ب` : `${Math.round(i.size / 1024)} ك.ب`) : '—';
+        return `<div class="t-sub" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span class="pill ${i.animated ? 'warn' : ''}">${i.animated ? 'صورة متحرّكة' : 'صورة ثابتة'}</span>
+          <span>${U.esc(kb)}</span>
+          ${i.width && i.height ? `<span class="num">${i.width}×${i.height}</span>` : ''}
+          ${i.animated ? `<span>${i.hasPoster ? 'المطبوع يأخذ الإطار الأول' : 'بلا إطار ثابت — يُطبع الملف كما هو'}</span>` : ''}
+        </div>`;
+      };
       box.innerHTML = `
         <div class="card"><div class="card-head"><h3>الشعار واللافتة</h3></div><div class="card-body">
           <p class="t-sub" style="margin-top:0">الصور تُحفظ داخل قاعدة البيانات مثل أي وسائط أخرى، فتدخل النسخة
-            الاحتياطية وتعود مع الاستعادة. تظهر في الشريط الجانبي وفي كل وصل وتقرير مطبوع.</p>
+            الاحتياطية وتعود مع الاستعادة. تظهر في الشريط الجانبي وفي كل وصل وتقرير مطبوع.
+            ويمكن أن تكون متحرّكة (GIF) — بحدّ ${Math.round(Svc.media.ANIMATED_MAX / 1048576)} ميغابايت للملف المتحرّك،
+            والمطبوع يأخذ منها إطاراً ثابتاً دائماً.</p>
           <div class="grid g-2">
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">الشعار</h4>
               <div class="media-drop">
                 ${logo ? `<img src="${U.esc(logo.dataUrl)}" alt="">` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
-                <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" id="bLogo">
+                <input type="file" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
                 ${logo ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
               </div>
+              ${mediaInfo('logo')}
               <div class="t-sub" style="margin-top:6px">يُفضَّل مربّع الشكل وبخلفية شفافة.</div>
             </div>
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">اللافتة العريضة</h4>
               <div class="media-drop wide">
                 ${banner ? `<img src="${U.esc(banner.dataUrl)}" alt="">` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
-                <input type="file" accept="image/png,image/jpeg,image/webp" id="bBanner">
+                <input type="file" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
                 ${banner ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
               </div>
+              ${mediaInfo('banner')}
               <div class="t-sub" style="margin-top:6px">صورة عريضة (نحو 4:1). تُقصّ ولا تُمطّ، وتظهر أعلى شاشة الاستقبال.</div>
             </div>
           </div>
+          ${Brand.reducedMotion() && (Brand.isAnimated('logo') || Brand.isAnimated('banner'))
+            ? `<div class="sens" style="margin-top:12px"><b>تقليل الحركة مفعّل في نظام جهازك.</b>
+               الصور المتحرّكة تُعرَض هنا وفي الشاشات بإطارها الثابت احتراماً لهذا التفضيل — والملف الأصلي محفوظ كما هو.</div>` : ''}
         </div></div>
 
         <div class="card" style="margin-top:14px"><div class="card-head"><h3>بيانات تظهر في المستندات</h3></div><div class="card-body">
@@ -10777,7 +10933,14 @@ Views.settings = {
       const upload = async (input, kind) => {
         const f = input.files && input.files[0];
         if (!f) return;
-        await guard(null, () => Brand.setMedia(kind, f), kind === 'banner' ? 'حُدّثت اللافتة' : 'حُدّث الشعار');
+        /* الرفع قد يستغرق لحظة على ملف متحرّك: يُعطَّل الحقل بدل تجميد الشاشة */
+        input.disabled = true;
+        const res = await guard(null, () => Brand.setMedia(kind, f),
+          kind === 'banner' ? 'حُدّثت اللافتة' : 'حُدّث الشعار');
+        input.disabled = false;
+        if (res && Svc.media.isAnimated(res) && !res.posterUrl)
+          UI.toast('تعذّر استخراج إطار ثابت — سيُستعمل الملف نفسه في الطباعة','warn', 7000);
+        if (!res) input.value = '';
         renderRoute();
       };
       box.querySelector('#bLogo').onchange = e => upload(e.target, 'logo');
@@ -12092,6 +12255,21 @@ Forms.member = function(id, opts){ /*v4*/
             <input type="checkbox" name="suspended" ${m && m.suspended ? 'checked' : ''}> إيقاف مؤقت للعضوية</label></div>
         </div></details>
 
+      ${m ? '' : `<details class="sect"><summary>التقييم الأولي والقياسات <span class="tag">اختياري — يمكن تسجيلها لاحقاً</span></summary>
+        <div class="sect-body">
+          <div class="t-sub" style="margin-bottom:12px">إن قِستِها اليوم سجّليها هنا فتدخل سجل قياساتها مباشرة،
+            وإن لم تُقَس بعد فاتركي الحقول فارغة — لا يمنع ذلك حفظ المشتركة، وتُسجَّل القياسات لاحقاً من تبويب «اللياقة».
+            القيم تُحفظ قراءةً مؤرَّخة مثل أي قياس آخر تماماً، ولا تُدهس بقراءة لاحقة.</div>
+          <div class="form-grid">
+            ${UI.field('ms_date','تاريخ القياس', UI.input('ms_date', D.today(), { type:'date' }))}
+            <div></div>
+            ${Svc.measure.types().map(t => UI.field('m_' + t.key, `${t.label} (${t.unit})`,
+                UI.input('m_' + t.key, '', { type:'number', attrs:{ step:'0.1', min:'0' } }))).join('')}
+            <div class="full">${UI.field('ms_notes','ملاحظة على القياس', UI.input('ms_notes',''))}</div>
+          </div>
+          <div class="t-sub" id="msHint" style="margin-top:6px"></div>
+        </div></details>`}
+
       ${Fields.for('member').length ? `<details class="sect" open><summary>حقول النادي</summary>
         <div class="sect-body"><div class="form-grid">${customFieldsHtml('member', m ? m.custom : pre.custom)}</div></div></details>` : ''}
     </div>`,
@@ -12105,11 +12283,45 @@ Forms.member = function(id, opts){ /*v4*/
       const revealErrors = () => ov.querySelectorAll('.sect').forEach(s => {
         if (s.querySelector('.err:not(:empty)')) s.open = true;
       });
+      /* عدّاد حيّ يقول كم قياساً سيُسجَّل — فلا تُفاجأ المستخدمة بعد الحفظ */
+      const msHint = ov.querySelector('#msHint');
+      if (msHint){
+        const sync = () => {
+          const raw = UI.read(ov.querySelector('#memForm'));
+          const n = Svc.measure.types().filter(t => U.norm(raw['m_' + t.key]) !== '').length;
+          msHint.textContent = n ? `سيُسجَّل ${n} قياساً مع إنشاء المشتركة.` : 'لا قياسات — يمكن تسجيلها لاحقاً من تبويب «اللياقة».';
+        };
+        Svc.measure.types().forEach(t => {
+          const el = ov.querySelector(`[name="m_${t.key}"]`);
+          if (el) el.oninput = sync;
+        });
+        sync();
+      }
       ov.querySelector('#memSave').onclick = async () => {
         const scope = ov.querySelector('#memForm');
         const raw = UI.read(scope);
         const cf = readCustom(scope, 'member');
         if (!cf.ok){ UI.showErrors(scope, cf.errors); revealErrors(); return; }
+        /* القياسات الأولية: تُقرأ وتُتحقَّق قبل إنشاء المشتركة، فالخطأ يُكشف
+           والنموذج مفتوح — لا مشتركة تُنشأ ثم يُرفض قياسها. */
+        let msValues = null, msDate = '', msNotes = '';
+        if (!m){
+          msDate = raw.ms_date || D.today();
+          msNotes = raw.ms_notes || '';
+          const vals = {};
+          Svc.measure.types().forEach(t => {
+            const v = raw['m_' + t.key];
+            if (v !== '' && v != null) vals[t.key] = v;
+          });
+          if (Object.keys(vals).length){
+            const chk = Svc.measure.checkBatch(msDate, vals);
+            if (!chk.ok){
+              UI.showErrors(scope, Object.assign({}, chk.errors, chk.errors.date ? { ms_date:chk.errors.date } : {}));
+              revealErrors(); return;
+            }
+            msValues = vals;
+          }
+        }
         const d = {
           name:raw.name, phone:raw.phone, birthDate:raw.birthDate, joinDate:raw.joinDate,
           phone2:raw.phone2, email:raw.email, city:raw.city, address:raw.address,
@@ -12137,16 +12349,33 @@ Forms.member = function(id, opts){ /*v4*/
           const res = await guard(scope, () => m ? Svc.members.update(m.id, d) : Svc.members.create(d));
           if (!res){ for (const u of uploaded) await Svc.media.remove(u.id).catch(() => {}); revealErrors(); btn.disabled = false; return; }
           (res.warnings || []).forEach(w => UI.toast(w, 'warn', 5000));
-          UI.toast(m ? 'تم حفظ التعديلات' : 'تمت إضافة المشتركة');
+          /* القياسات تُكتب عبر خدمة القياسات نفسها — مصدر واحد للحقيقة، ولا
+             كيان «قياس تسجيل» منفصل. وفشلها لا يُلغي مشتركةً حُفظت فعلاً:
+             يُقال الصدق ويُعطى الطريق إلى تسجيلها. */
+          let msDone = 0;
+          if (msValues){
+            try { msDone = (await Svc.measure.addBatch(res.rec.id, msDate, msValues, msNotes)).length; }
+            catch(e){
+              Log.warn('تعذّر حفظ القياسات الأولية', e);
+              UI.toast('حُفظت المشتركة، لكن تعذّر حفظ القياسات — سجّليها من تبويب «اللياقة»','warn', 9000);
+            }
+          }
+          UI.toast(m ? 'تم حفظ التعديلات'
+                     : (msDone ? `تمت إضافة المشتركة مع ${msDone} قياساً` : 'تمت إضافة المشتركة'));
           h.close();
           if (opts && opts.onSaved) return opts.onSaved(res.rec);
           renderRoute();
           if (!m){
+            const opt = [{ key:'sub', label:'تسجيل اشتراكها', primary:true }];
+            /* القياسات لم تُسجَّل؟ يُعرَض الطريق إليها هنا بدل أن تُكتشف لاحقاً */
+            if (!msDone) opt.push({ key:'measure', label:'تسجيل قياساتها' });
+            opt.push({ key:'profile', label:'فتح ملفها' }, { key:'later', label:'لاحقاً' });
             const pick = await UI.choice({ title:'تمت إضافة المشتركة',
-              message:`أُضيفت <strong>${U.esc(res.rec.name)}</strong> بالكود ${U.esc(res.rec.code)}. ماذا بعد؟`,
-              options:[{ key:'sub', label:'تسجيل اشتراكها', primary:true },
-                       { key:'profile', label:'فتح ملفها' }, { key:'later', label:'لاحقاً' }] });
+              message:`أُضيفت <strong>${U.esc(res.rec.name)}</strong> بالكود ${U.esc(res.rec.code)}.`
+                + (msDone ? ` وسُجّل لها ${msDone} قياساً أولياً.` : '') + ' ماذا بعد؟',
+              options:opt });
             if (pick === 'sub') Forms.subscription(null, res.rec.id);
+            else if (pick === 'measure') Forms.measurement(res.rec.id);
             else if (pick === 'profile') Screens.memberProfile(res.rec.id);
           }
         } finally { btn.disabled = false; }
@@ -14539,6 +14768,17 @@ Actions.globalSearch = function(q){ /*v5*/
     box.querySelector('[data-jump]').onclick = () => { close(); Actions.printReceipt(exactReceipt.id); };
     return;
   }
+  /* رقم مستند الشراء الكامل يقفز مثل رقم الوصل تماماً */
+  const exactPurchase = Repos.purchases.list(true).find(p => U.normAr(p.code) === query);
+  if (exactPurchase){
+    const sup = Repos.suppliers.get(exactPurchase.supplierId);
+    box.innerHTML = `<div class="gs-group">مطابقة تامة لرقم مستند الشراء</div>
+      <button class="gs-item" data-jump="pur">${svg(ICON.card, 15)}<span class="grow">
+        <b>مستند ${U.esc(exactPurchase.code)}</b><small>${U.esc(sup ? sup.name : '—')} — ${Money.fmt(exactPurchase.total)}</small></span></button>`;
+    box.classList.remove('hidden');
+    box.querySelector('[data-jump]').onclick = () => { close(); Screens.purchase(exactPurchase.id); };
+    return;
+  }
 
   /* ---------- البحث العام، مجموعةً مجموعة والمشتركات أولاً ---------- */
   const groups = [];
@@ -14582,6 +14822,24 @@ Actions.globalSearch = function(q){ /*v5*/
     .filter(s => [s.code, s.customerName].map(U.normAr).join(' ').includes(query))
     .map(s => ({ title:`فاتورة ${s.code}`, sub:`${Money.fmt(s.total)} — ${D.fmt(s.date)}`, go:() => Screens.sale(s.id) })),
     () => go('pos'));
+
+  addGroup('موردون', ICON.staff, Svc.suppliers.list(true)
+    .filter(x => [x.name, x.phone, x.contact, x.email].map(U.normAr).join(' ').includes(query))
+    .map(x => { const st = Svc.suppliers.stats(x.id);
+      return { title:x.name, sub:`${x.phone || 'بلا رقم'} — ${st.due > 0 ? `عليه متبقٍّ ${Money.fmt(st.due)}` : 'لا متبقٍّ'}`,
+        go:() => Screens.supplierStatement(x.id),
+        actions:[{ t:'شراء', fn:() => Forms.purchase(null, x.id) }] }; }),
+    () => go('inventory', { tab:'suppliers' }));
+
+  addGroup('مستندات شراء', ICON.card, Svc.purchases.list(true)
+    .filter(p => [p.code, p.invoiceNo, (Repos.suppliers.get(p.supplierId) || {}).name].map(U.normAr).join(' ').includes(query))
+    .map(p => { const st = Svc.purchases.balance(p);
+      return { title:`مستند ${p.code}`,
+        sub:`${(Repos.suppliers.get(p.supplierId) || {}).name || '—'} — ${Money.fmt(p.total)}`
+          + `${p.status === 'posted' && st.due > 0 ? ` — متبقٍّ ${Money.fmt(st.due)}` : ''}`
+          + ` — ${Svc.purchases.status(p).ar}`,
+        go:() => Screens.purchase(p.id) }; }),
+    () => go('inventory', { tab:'purchases' }));
 
   addGroup('أصناف', ICON.box, Repos.products.list(true)
     .filter(p => [p.name, p.sku, p.category].map(U.normAr).join(' ').includes(query))

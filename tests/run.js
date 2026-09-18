@@ -205,6 +205,160 @@ group('سلامة بيانات دورة الشراء', async (browser, url) => {
   record('سلامة بيانات دورة الشراء', rows, errors);
 });
 
+/* ---------------------- مجموعات المرحلة الثالثة-أ ---------------------- */
+group('الهوية البصرية المتحرّكة', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.branding();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الهوية البصرية المتحرّكة', rows, errors);
+});
+
+group('التقييم الأولي عند التسجيل', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.onboarding();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('التقييم الأولي عند التسجيل', rows, errors);
+});
+
+/* الحركة قرار المتصفح لا قرار الورقة النمطية: تُختبر في سياقين حقيقيين،
+   واحد يفضّل تقليل الحركة وآخر لا يفضّله. وحركة الـGIF لا توقفها CSS. */
+group('تقليل الحركة', async (browser, url) => {
+  const rows = [];
+  const errors = [];
+  const GIF = 'R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
+            + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=';
+  const upload = async (page, g) => page.evaluate(async b64 => {
+    const bin = atob(b64), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    await window.TG.Brand.setMedia('logo', new File([arr], 'l.gif', { type:'image/gif' }));
+    await window.TG.Brand.setMedia('banner', new File([arr], 'b.gif', { type:'image/gif' }));
+  }, g);
+
+  for (const [label, mode] of [['بلا تفضيل', 'no-preference'], ['تقليل الحركة', 'reduce']]){
+    const ctx = await browser.newContext({ viewport:{ width:1280, height:900 }, reducedMotion:mode });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(String(e.message)));
+    await page.goto(url, { waitUntil:'domcontentloaded' });
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+    await page.evaluate(() => window.TG.ready);
+    await upload(page, GIF);
+    const r = await page.evaluate(() => {
+      const { Brand } = window.TG;
+      window.TG.go('desk'); window.TG.renderRoute();
+      const banner = document.querySelector('.brand-banner');
+      const shell = document.querySelector('.brand-logo');
+      return { reduced:Brand.reducedMotion(),
+               bannerMotion:banner ? banner.dataset.motion : null,
+               bannerHasGif:banner ? getComputedStyle(banner).backgroundImage.includes('image/gif') : null,
+               shellHasGif:!!(shell && String(shell.src).startsWith('data:image/gif')),
+               renderIsStill:Brand.renderUrl('logo') === Brand.stillUrl('logo'),
+               printHasGif:Brand.printHeader('س','ص').includes('data:image/gif') };
+    });
+    const want = mode === 'reduce';
+    rows.push({ name:`${label}: النظام يقرأ التفضيل صحيحاً`, pass:r.reduced === want, detail:String(r.reduced) });
+    rows.push({ name:`${label}: اللافتة ${want ? 'ثابتة' : 'متحرّكة'}`,
+                pass:r.bannerMotion === (want ? 'still' : 'live'), detail:String(r.bannerMotion) });
+    rows.push({ name:`${label}: خلفية اللافتة ${want ? 'بلا GIF' : 'بالـGIF'}`,
+                pass:r.bannerHasGif === !want, detail:String(r.bannerHasGif) });
+    rows.push({ name:`${label}: الشعار في الشريط ${want ? 'ثابت' : 'متحرّك'}`,
+                pass:r.shellHasGif === !want, detail:String(r.shellHasGif) });
+    rows.push({ name:`${label}: الطباعة ثابتة في الحالتين`, pass:r.printHasGif === false, detail:String(r.printHasGif) });
+    await ctx.close();
+  }
+  record('تقليل الحركة', rows, errors);
+});
+
+/* الرفع من الشاشة نفسها بالنقر، ثم إعادة التحميل مرّتين: الحركة تبقى ولا
+   يتضخّم شيء مع كل إقلاع. */
+group('الهوية المتحرّكة في الشاشة', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:1440, height:960 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  page.on('console', m => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errors.push(m.text()); });
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await page.evaluate(() => window.TG.ready);
+  await page.evaluate(() => window.TG.Seed.loadDemo(15));
+  const rows = [];
+
+  /* الرفع عبر حقل الملف الحقيقي في شاشة الإعدادات */
+  await page.evaluate(() => { window.TG.go('settings', { sec:'brand' }); window.TG.renderRoute(); });
+  await page.waitForTimeout(200);
+  const accepts = await page.evaluate(() => ({
+    logo:(document.getElementById('bLogo') || {}).accept || '',
+    banner:(document.getElementById('bBanner') || {}).accept || '' }));
+  rows.push({ name:'حقل الشعار يقبل GIF', pass:/image\/gif/.test(accepts.logo), detail:accepts.logo });
+  rows.push({ name:'حقل اللافتة يقبل GIF', pass:/image\/gif/.test(accepts.banner), detail:accepts.banner });
+
+  const gifPath = require('path').join(require('os').tmpdir(), 'tg-brand.gif');
+  require('fs').writeFileSync(gifPath, Buffer.from(
+    'R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
+    + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=', 'base64'));
+  await page.setInputFiles('#bLogo', gifPath);
+  await page.waitForTimeout(700);
+  await page.evaluate(() => { window.TG.go('settings', { sec:'brand' }); window.TG.renderRoute(); });
+  await page.waitForTimeout(250);
+  const preview = await page.evaluate(() => {
+    const t = document.getElementById('viewRoot').textContent.replace(/\s+/g, ' ');
+    return { animated:/صورة متحرّكة/.test(t), size:/ك\.ب|م\.ب/.test(t), dims:/\d+×\d+/.test(t),
+             frame:/الإطار الأول/.test(t), canRemove:!!document.getElementById('bLogoDel') };
+  });
+  rows.push({ name:'المعاينة تقول إنها متحرّكة', pass:preview.animated, detail:'' });
+  rows.push({ name:'المعاينة تعرض الحجم', pass:preview.size, detail:'' });
+  rows.push({ name:'المعاينة تعرض الأبعاد', pass:preview.dims, detail:'' });
+  rows.push({ name:'المعاينة تشرح سلوك الطباعة', pass:preview.frame, detail:'' });
+  rows.push({ name:'زر الإزالة متاح', pass:preview.canRemove, detail:'' });
+
+  /* إعادة تحميل مرّتين: الحركة تبقى، وعدد الوسائط لا ينمو */
+  const counts = [];
+  for (let i = 0; i < 2; i++){
+    await page.reload({ waitUntil:'domcontentloaded' });
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
+    await page.evaluate(() => window.TG.ready);
+    counts.push(await page.evaluate(() => ({
+      media:window.TG.Repos.media.list(true).length,
+      animated:window.TG.Brand.isAnimated('logo'),
+      poster:window.TG.Brand.info('logo').hasPoster,
+      orphans:window.TG.Svc.media.usage().orphans,
+      backupBytes:JSON.stringify(window.TG.Backup.build(true)).length })));
+  }
+  rows.push({ name:'الحركة تنجو من إعادة التحميل', pass:counts.every(c => c.animated), detail:JSON.stringify(counts.map(c => c.animated)) });
+  rows.push({ name:'الإطار الثابت ينجو من إعادة التحميل', pass:counts.every(c => c.poster), detail:'' });
+  rows.push({ name:'عدد الوسائط لا ينمو مع كل إقلاع',
+              pass:counts[0].media === counts[1].media, detail:counts.map(c => c.media).join('→') });
+  rows.push({ name:'لا وسائط يتيمة بعد الإقلاع', pass:counts.every(c => c.orphans === 0),
+              detail:counts.map(c => c.orphans).join(',') });
+  rows.push({ name:'حجم النسخة لا ينمو مع كل إقلاع',
+              pass:Math.abs(counts[0].backupBytes - counts[1].backupBytes) < 2048,
+              detail:counts.map(c => c.backupBytes).join('→') });
+
+  /* الإزالة من الشاشة */
+  await page.evaluate(() => { window.TG.go('settings', { sec:'brand' }); window.TG.renderRoute(); });
+  await page.waitForTimeout(200);
+  await page.click('#bLogoDel');
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => ({ exists:window.TG.Brand.info('logo').exists,
+    orphans:window.TG.Svc.media.usage().orphans, drawn:window.TG.Brand.logoHtml(40).includes('<svg') }));
+  rows.push({ name:'الإزالة من الشاشة تعمل', pass:!after.exists, detail:'' });
+  rows.push({ name:'الإزالة لا تترك وسائط يتيمة', pass:after.orphans === 0, detail:String(after.orphans) });
+  rows.push({ name:'بعد الإزالة تُرسم العلامة المدمجة', pass:after.drawn, detail:'' });
+
+  try { require('fs').unlinkSync(gifPath); } catch(e){}
+  await ctx0.close();
+  record('الهوية المتحرّكة في الشاشة', rows, errors);
+});
+
 group('نموذج الحصص', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
