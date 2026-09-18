@@ -2717,13 +2717,6 @@ Svc.trainings = {
              booked: seats ? seats.booked : 0,
              capacity: seats ? seats.capacity : (Number((Repos.trainings.get(trainingId)||{}).capacity) || 0),
              left: seats ? seats.left : null };
-  },
-  /* القوالب التي حجزت فيها مشتركة موعداً قادماً */
-  ofMember(memberId){
-    const ids = new Set(Svc.classes.bookingsOfMember(memberId)
-      .filter(b => b.status !== 'cancelled')
-      .map(b => (Repos.sessions.get(b.sessionId) || {}).trainingId).filter(Boolean));
-    return Repos.trainings.list().filter(t => ids.has(t.id));
   }
 };
 
@@ -10807,7 +10800,7 @@ Object.assign(Screens, {
         ${e.notes?`<h4 style="font-size:14px;margin:14px 0 6px">ملاحظات</h4><p style="margin:0">${U.esc(e.notes)}</p>`:''}`
     });
   },
-  /* عرض فاتورة بيع + سجل دفعاتها + طباعة إيصال */
+  /* عرض فاتورة بيع + سجل دفعاتها + طباعة وصل كل دفعة */
   sale(id){
     const sl = Repos.sales.get(id);
     if (!sl) return UI.toast('الفاتورة غير موجودة','err');
