@@ -1664,6 +1664,101 @@ group('رسم كل الشاشات', async (browser, url) => {
   record('رسم كل الشاشات', rows, []);
 });
 
+/* ============== أثر الهوية المتحرّكة على الأداء ==============
+   الصورة المتحرّكة تُخزَّن data URL داخل القاعدة: تُحمَّل في الذاكرة عند كل
+   إقلاع وتُنسخ في كل نسخة احتياطية. فالسؤال ليس «هل تعمل» بل «بكم». يُقاس
+   الفرق قبلها وبعدها على القاعدة نفسها، ويُقارَن بالحدّ الذي فرضناه. */
+group('أثر الهوية المتحرّكة على الأداء', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:1440, height:960 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
+  await page.evaluate(() => window.TG.ready);
+  await page.evaluate(() => window.TG.Seed.loadDemo(60));
+
+  const timeIt = code => page.evaluate(async c => {
+    const f = new Function('return (' + c + ')()');
+    await f();
+    const runs = [];
+    for (let i = 0; i < 3; i++){ const t = performance.now(); await f(); runs.push(performance.now() - t); }
+    return Math.round(Math.min(...runs));
+  }, code.toString());
+
+  const rows = [];
+  const before = {
+    dash: await timeIt(() => { TG.go('dashboard'); TG.renderRoute(); }),
+    desk: await timeIt(() => { TG.go('desk'); TG.renderRoute(); }),
+    backup: await page.evaluate(() => JSON.stringify(window.TG.Backup.build(true)).length)
+  };
+
+  /* صورة متحرّكة بحجم واقعي قريب من الحدّ: نحو 1 ميغابايت */
+  const added = await page.evaluate(async () => {
+    const { Brand, Svc } = window.TG;
+    /* GIF صالح صغير + حشو داخل كتلة تعليق فيكبر الملف بلا أن يفسد */
+    const head = atob('R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
+      + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=');
+    const bytes = [];
+    for (let i = 0; i < head.length; i++) bytes.push(head.charCodeAt(i));
+    const arr = new Uint8Array(bytes);
+    const pad = new Uint8Array(1024 * 1024);          /* حشو يرفع الحجم إلى نحو ميغابايت */
+    const file = new File([arr, pad], 'big-brand.gif', { type:'image/gif' });
+    const t0 = performance.now();
+    const logo = await Brand.setMedia('logo', file);
+    const upMs = Math.round(performance.now() - t0);
+    await Brand.setMedia('banner', file);
+    /* أبعاد الإطار المستخرج تُقاس فعلاً: الحدّ POSTER_DIM يجب أن يُحترم مهما
+       كان الأصل. (الملف هنا ثقيل بالحشو لا بالأبعاد — فالقياس الصادق هو
+       الأبعاد لا الكيلوبايتات، وحجم الإطار يتبع أبعاد الصورة لا وزن الملف.) */
+    const dim = await Svc.media.measure(logo.posterUrl || '');
+    return { upMs, size:logo.size, poster:!!logo.posterUrl,
+             posterIsPng:String(logo.posterUrl || '').startsWith('data:image/png'),
+             posterDim:dim, limit:Svc.media.POSTER_DIM, usage:Svc.media.usage() };
+  });
+  rows.push({ name:`رفع ملف متحرّك بوزن ${Math.round(added.size / 1024)} ك.ب — ${added.upMs}ms (الحد 4000ms)`,
+              pass:added.upMs <= 4000, detail:added.upMs > 4000 ? 'أبطأ من الحد' : '' });
+  rows.push({ name:'الإطار الثابت يُستخرج من ملف ثقيل', pass:added.poster && added.posterIsPng, detail:'' });
+  rows.push({ name:`أبعاد الإطار الثابت ضمن الحدّ (${added.posterDim.width}×${added.posterDim.height} ≤ ${added.limit})`,
+              pass:added.posterDim.width > 0 && added.posterDim.width <= added.limit
+                   && added.posterDim.height <= added.limit,
+              detail:JSON.stringify(added.posterDim) });
+
+  const after = {
+    dash: await timeIt(() => { TG.go('dashboard'); TG.renderRoute(); }),
+    desk: await timeIt(() => { TG.go('desk'); TG.renderRoute(); }),
+    backup: await page.evaluate(() => JSON.stringify(window.TG.Backup.build(true)).length)
+  };
+  /* إقلاع حقيقي على قاعدة فيها هويّة متحرّكة */
+  const t0 = Date.now();
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:120000 });
+  await page.evaluate(() => window.TG.ready);
+  const bootMs = Date.now() - t0;
+
+  rows.push({ name:`الإقلاع بهوية متحرّكة — ${bootMs}ms (الحد 6000ms)`, pass:bootMs <= 6000,
+              detail:bootMs > 6000 ? 'أبطأ من الحد' : '' });
+  rows.push({ name:`لوحة التحكم ${before.dash}ms ⇐ ${after.dash}ms (الحد 1500ms)`,
+              pass:after.dash <= 1500, detail:'' });
+  rows.push({ name:`الاستقبال ${before.desk}ms ⇐ ${after.desk}ms (الحد 1500ms)`,
+              pass:after.desk <= 1500, detail:'' });
+  /* النسخة تكبر بمقدار الأصل + إطاره الثابت — وهذا متوقّع ومقيس لا مفاجأة */
+  const grewKb = Math.round((after.backup - before.backup) / 1024);
+  rows.push({ name:`النسخة الاحتياطية كبرت ${grewKb} ك.ب بصورتين متحرّكتين`,
+              pass:after.backup > before.backup && grewKb < 6000,
+              detail:`${before.backup} → ${after.backup}` });
+  rows.push({ name:'لا وسائط يتيمة بعد الاستبدال المتكرّر',
+              pass:added.usage.orphans === 0, detail:String(added.usage.orphans) });
+  const stable = await page.evaluate(() => ({ animated:window.TG.Brand.isAnimated('logo'),
+    orphans:window.TG.Svc.media.usage().orphans, media:window.TG.Repos.media.list(true).length }));
+  rows.push({ name:'الحركة والوسائط مستقرّة بعد الإقلاع', pass:stable.animated && stable.orphans === 0,
+              detail:JSON.stringify(stable) });
+  console.log(`   ⏱  رفع=${added.upMs}ms · إقلاع=${bootMs}ms · لوحة=${before.dash}→${after.dash}ms · `
+    + `استقبال=${before.desk}→${after.desk}ms · النسخة +${grewKb}ك.ب`);
+  await ctx0.close();
+  record('أثر الهوية المتحرّكة على الأداء', rows, errors);
+});
+
 group('الأداء على قاعدة كبيرة', async (browser, url) => {
   const ctx0 = await browser.newContext({ viewport:{ width:1440, height:960 } });
   const page = await ctx0.newPage();

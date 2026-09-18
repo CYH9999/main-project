@@ -1530,6 +1530,26 @@ window.TGTests = (() => {
     ok('وصف المعاينة يقول إن الإطار غير متاح',
        Brand.info('logo').animated && Brand.info('logo').hasPoster === false);
 
+    /* ---------- 7ب) سلامة البيانات بعد كل ذلك ---------- */
+    const issues = T().Integrity.scan();
+    ok('الهوية البصرية لا تُعدّ وسائط يتيمة',
+       !issues.some(x => x.type === 'وسائط غير مستعملة'
+         && [Brand.info('logo').id, Brand.info('banner').id].includes(x.id)),
+       JSON.stringify(issues.filter(x => x.type === 'وسائط غير مستعملة').slice(0, 3)));
+    ok('لا مستند مشتركة يتيم ولا مرجع مكسور بعد عمل الهوية',
+       !issues.some(x => /مستند|مشتركة|وسائط محذوفة/.test(x.type)),
+       JSON.stringify(issues.slice(0, 4)));
+    ok('حذف مستند مشتركة لا يمسّ وسائط الهوية',
+       await (async () => {
+         const mem = Repos.members.list()[0];
+         if (!mem) return true;
+         const logoId = Brand.info('logo').id;
+         const doc = await Svc.docs.save(null, { memberId:mem.id, type:'أخرى', title:'مستند اختبار',
+           mediaId:logoId });                       /* يشير عمداً إلى وسائط الهوية نفسها */
+         await Svc.docs.remove(doc.id);
+         return !!Repos.media.get(logoId) && Brand.info('logo').exists;
+       })(), 'حُذفت وسائط ما زالت مستعملة');
+
     /* ---------- 8) وسائط مكسورة: الصفحة تصمد ---------- */
     await Settings.set({ branding:Object.assign({}, Brand.get(), { logoMediaId:'med_missing', bannerMediaId:'med_missing' }) });
     ok('معرّف وسائط محذوف لا يكسر الشعار', Brand.logoHtml(40).includes('<svg'));
