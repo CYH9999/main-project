@@ -335,6 +335,17 @@ group('رسم كل الشاشات', async (browser, url) => {
     rows.push({ name: `شاشة ${r} تُرسم بلا خطأ`, pass: !drawn && !fresh.length,
                 detail: [drawn, ...fresh].filter(Boolean).join(' | ') });
   }
+  /* الموردون مدخل ثانٍ لشاشة المخزون */
+  {
+    const mark = errors.length;
+    const bad = await page.evaluate(() => {
+      try { window.TG.go('inventory', { tab:'suppliers' }); window.TG.renderRoute(); return ''; }
+      catch(e){ return 'THROW: ' + (e && e.message); }
+    });
+    await page.waitForTimeout(80);
+    rows.push({ name:'شاشة الموردون تُرسم بلا خطأ', pass: !bad && errors.length === mark,
+                detail: [bad, ...errors.slice(mark)].filter(Boolean).join(' | ') });
+  }
   /* تبويبات المالية والإعدادات: أكثر ما تغيّر في هذه المرحلة */
   for (const tab of ['revenues','expenses','dues','capital','partners','cash']){
     const mark = errors.length;
@@ -346,7 +357,7 @@ group('رسم كل الشاشات', async (browser, url) => {
     rows.push({ name: `تبويب المالية «${tab}» يُرسم بلا خطأ`, pass: !bad && errors.length === mark,
                 detail: [bad, ...errors.slice(mark)].filter(Boolean).join(' | ') });
   }
-  for (const sec of ['general','brand','money','ops','fields','data']){
+  for (const sec of ['general','brand','membership','fields','money','ops','backup','data','roles','audit','danger']){
     const mark = errors.length;
     const bad = await page.evaluate(s => {
       try { window.TG.go('settings', { sec:s }); window.TG.renderRoute(); return ''; }

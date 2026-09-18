@@ -1045,7 +1045,11 @@ const DEFAULT_SETTINGS = {
   /* الخصوصية: إخفاء المعلومات الحسّاسة عن الجداول العامة افتراضياً */
   hideSensitiveInLists:true,
   /* ملاحظة تُعرض مرة واحدة بعد ترقية قوائم الالتحاق القديمة إلى حجوزات */
-  legacyEnrollmentsSeen:false
+  legacyEnrollmentsSeen:false,
+  /* الشاشة التي يفتح عليها البرنامج: desk | dashboard */
+  startScreen:'desk',
+  /* الفترات المحاسبية المقفلة — يثبّت كلٌّ منها ربحه لحظة الإقفال */
+  closedPeriods:[]
 };
 const Settings = {
   data: U.clone(DEFAULT_SETTINGS),
@@ -6085,30 +6089,43 @@ const State = {
   }
 };
 const $ = id => document.getElementById(id);
+/* التنقّل مرتَّب على يوم العمل لا على بنية قاعدة البيانات: أين تقف الموظفة
+   أولاً (الاستقبال)، ثم بمن تتعامل (الناس)، ثم ماذا يجري (الحصص)، ثم المال،
+   ثم المتجر، ثم النظام. والعناصر التي تقود إلى تبويب بعينه تحمل معاملاتها
+   معها (p) فتصل المستخدمة إلى الصندوق اليومي بنقرة لا بثلاث. */
 const NAV = [
-  { k:'desk',      t:'الاستقبال',   i:ICON.check },
-  { k:'dashboard', t:'لوحة التحكم', i:ICON.dash },
-  { g:'المشتركات' },
-  { k:'members',   t:'المشتركات',   i:ICON.users },
-  { k:'subs',      t:'الاشتراكات',  i:ICON.card },
-  { k:'crm',       t:'المهتمّات',    i:ICON.gift },
-  { k:'tasks',     t:'المتابعات',   i:ICON.clock },
-  { k:'offers',    t:'العروض والولاء', i:ICON.gift },
-  { g:'المتجر والمخزون' },
-  { k:'pos',       t:'المبيعات',      i:ICON.coins },
-  { k:'inventory', t:'المخزون',       i:ICON.box },
-  { g:'التشغيل' },
-  { k:'attendance',t:'الحضور',        i:ICON.check },
-  { k:'classes',   t:'الحصص',         i:ICON.clock },
-  { k:'trainings', t:'قوالب التدريبات', i:ICON.clock },
-  { k:'exercises', t:'مكتبة التمارين', i:ICON.dumbbell },
-  { k:'staff',     t:'الفريق',      i:ICON.staff },
-  { k:'payroll',   t:'الرواتب',     i:ICON.wallet },
-  { g:'المال والتقارير' },
-  { k:'finance',   t:'المالية',     i:ICON.coins },
-  { k:'reports',   t:'التقارير',    i:ICON.report },
-  { k:'settings',  t:'الإعدادات',   i:ICON.gear }
+  { g:'الاستقبال' },
+  { k:'desk',       t:'الاستقبال',      i:ICON.check },
+  { k:'tasks',      t:'المتابعات',      i:ICON.clock },
+  { k:'dashboard',  t:'لوحة التحكم',    i:ICON.dash },
+  { g:'الناس' },
+  { k:'members',    t:'المشتركات',      i:ICON.users },
+  { k:'crm',        t:'المهتمّات',       i:ICON.gift },
+  { k:'staff',      t:'الفريق',         i:ICON.staff },
+  { g:'الحصص والتدريب' },
+  { k:'classes',    t:'الحصص',          i:ICON.clock },
+  { k:'trainings',  t:'الجدول الثابت',  i:ICON.clock },
+  { k:'attendance', t:'سجل الحضور',     i:ICON.check },
+  { k:'exercises',  t:'مكتبة التمارين', i:ICON.dumbbell },
+  { g:'المال' },
+  { k:'subs',       t:'سجل الاشتراكات', i:ICON.card },
+  { k:'finance',    t:'الصندوق اليومي', i:ICON.wallet, p:{ tab:'cash' },     id:'fin-cash' },
+  { k:'finance',    t:'الحسابات',       i:ICON.coins,  p:{ tab:'revenues' }, id:'fin-acc' },
+  { k:'finance',    t:'الشركاء والأرباح', i:ICON.report, p:{ tab:'partners' }, id:'fin-partners' },
+  { k:'payroll',    t:'الرواتب',        i:ICON.wallet },
+  { k:'offers',     t:'العروض والولاء', i:ICON.gift },
+  { k:'reports',    t:'التقارير',       i:ICON.report },
+  { g:'المتجر' },
+  { k:'pos',        t:'المبيعات',       i:ICON.coins },
+  { k:'inventory',  t:'الأصناف والمخزون', i:ICON.box },
+  { k:'inventory',  t:'الموردون',       i:ICON.staff, p:{ tab:'suppliers' }, id:'inv-sup' },
+  { g:'النظام' },
+  { k:'settings',   t:'الإعدادات',      i:ICON.gear },
+  { k:'settings',   t:'النسخ الاحتياطي', i:ICON.down, p:{ sec:'backup' }, id:'set-backup' },
+  { k:'settings',   t:'سلامة البيانات', i:ICON.check, p:{ sec:'data' },   id:'set-data' }
 ];
+/* معرّف العنصر: المفتاح وحده لم يعد كافياً بعد أن صار للشاشة الواحدة أكثر من مدخل */
+const navId = n => n.id || n.k;
 function buildNav(){
   const nav = $('nav');
   /* التنقّل يمرّ بنقطة الصلاحيات، وهي تسمح بكل شيء ما دامت الميزة معطّلة.
@@ -6117,8 +6134,13 @@ function buildNav(){
   const visible = items.filter((n, i) => !n.g || (items[i+1] && !items[i+1].g));
   nav.innerHTML = visible.map(n => n.g
     ? `<div class="nav-group">${U.esc(n.g)}</div>`
-    : `<button class="nav-item" data-route="${n.k}">${svg(n.i)}<span class="lbl">${U.esc(n.t)}</span><span class="nav-badge hidden" data-badge="${n.k}"></span></button>`).join('');
-  nav.querySelectorAll('[data-route]').forEach(b => b.onclick = () => go(b.dataset.route));
+    : `<button class="nav-item" data-route="${n.k}" data-nav="${U.esc(navId(n))}"
+        ${n.p ? `data-params='${U.esc(JSON.stringify(n.p))}'` : ''}>${svg(n.i)}<span class="lbl">${U.esc(n.t)}</span><span class="nav-badge hidden" data-badge="${U.esc(navId(n))}"></span></button>`).join('');
+  nav.querySelectorAll('[data-route]').forEach(b => b.onclick = () => {
+    let p = null;
+    try { p = b.dataset.params ? JSON.parse(b.dataset.params) : null; } catch(e){ p = null; }
+    go(b.dataset.route, p || undefined);
+  });
 }
 function navBadges(){
   const rows = Svc.members.rows();
@@ -6129,7 +6151,8 @@ function navBadges(){
   set('members', soon);
   set('offers', rows.filter(r => !r.m.archived && Offers.eligibleForMember(r.m.id, idx[r.m.id] || [], paidIdx).length).length);
   set('payroll', Svc.payroll.ofPeriod(D.monthsBack(2)[0]).filter(p=>p.status!=='paid').length);
-  set('finance', Svc.payments.totalDue().count);
+  /* شارة الذمم تُعلَّق على مدخل «الحسابات» لأنه الذي يفتح تبويب المستحقات */
+  set('fin-acc', Svc.payments.totalDue().count);
   set('inventory', Settings.get('lowStockAlerts') ? Svc.inventory.lowStock().length : 0);
   set('tasks', Svc.tasks.due().length);
   set('crm', Svc.leads.dueFollowUps().length);
@@ -6140,7 +6163,9 @@ function go(route, params){
   location.hash = `#/${route}${q}`;
 }
 function currentRoute(){
-  const h = (location.hash || '#/dashboard').replace(/^#\//,'');
+  /* الشاشة الافتتاحية اختيار النادي: الاستقبال لمن تفتح البرنامج لتعمل عليه
+     طول اليوم، ولوحة التحكم لمن تفتحه لتقرأ أرقامه. */
+  const h = (location.hash || `#/${Settings.get('startScreen') || 'desk'}`).replace(/^#\//,'');
   const [r, qs] = h.split('?');
   /* شاشة قد تستعير صلاحية وحدة أخرى (ملف المشتركة يتبع صلاحية المشتركات) */
   const ok = Views[r] && Auth.can(`${(Views[r] && Views[r].perm) || r}.view`);
@@ -6149,7 +6174,18 @@ function currentRoute(){
 function renderRoute(){
   const { route, params } = currentRoute();
   State.route = route; State.params = params;
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.route === route));
+  /* التمييز يراعي أن لشاشة واحدة عدة مداخل: يُضاء المدخل المطابق لمعاملاته،
+     وإن لم يطابق أيٌّ منها فالمدخل الأول للشاشة هو المُضاء. */
+  (() => {
+    const btns = [...document.querySelectorAll('.nav-item')];
+    const mine = btns.filter(b => b.dataset.route === route);
+    let hit = mine.find(b => {
+      if (!b.dataset.params) return false;
+      try { return Object.entries(JSON.parse(b.dataset.params)).every(([k, v]) => String(params[k]) === String(v)); }
+      catch(e){ return false; }
+    }) || mine.find(b => !b.dataset.params) || mine[0] || null;
+    btns.forEach(b => b.classList.toggle('active', b === hit));
+  })();
   const v = Views[route];
   $('pageTitle').textContent = v.title;
   $('pageSub').textContent = typeof v.sub === 'function' ? v.sub() : (v.sub || '');
@@ -8153,7 +8189,10 @@ Views.payroll = {
 Views.finance = {
   title:'المالية',
   sub(){ const s = Svc.finance.summary(); return `السيولة ${Money.fmt(s.cash)}`; },
-  render(root){
+  render(root, params){
+    /* التبويب يأتي من الرابط حين يُفتح من الشريط الجانبي، ويبقى محفوظاً بعدها */
+    const TABS = ['revenues','expenses','dues','capital','partners','cash'];
+    if (params && TABS.includes(params.tab)) State.f.financeTab = params.tab;
     const tab = State.f.financeTab;
     root.innerHTML = `<div class="tabs">
         <button class="tab ${tab==='revenues'?'active':''}" data-tab="revenues">الإيرادات</button>
@@ -8693,7 +8732,8 @@ Views.pos = {
 Views.inventory = {
   title:'المخزون',
   sub(){ const r = Svc.inventory.rows(); return `${r.length} صنف — قيمة ${Money.fmt(Svc.inventory.totalValue())}`; },
-  render(root){
+  render(root, params){
+    if (params && params.tab === 'suppliers') return this.suppliers(root);
     const f = State.f.inventory;
     const all = Svc.inventory.rows(f.archived);
     const low = all.filter(r => r.low || r.out);
@@ -8774,6 +8814,48 @@ Views.inventory = {
     $('invMove').onclick = () => Forms.stockMove();
     $('invXls').onclick = () => Exporter.xlsx(`المخزون-${D.today()}.xlsx`,
       [{ name:'المخزون', cols:Exporter.PROD_COLS, rows:Exporter.prodRows(f._rows||[]) }]);
+  }
+,
+
+  /* ------------------------------- الموردون -------------------------------
+     شاشة صغيرة عمداً: مَن نشتري منه، وكم اشترينا، ومتى آخر مرة. تاريخ الشراء
+     يُقرأ من حركات المخزون نفسها فلا يوجد جدول موازٍ يشرد عن الحقيقة. */
+  suppliers(root){
+    const rows = Svc.suppliers.list(true).map(s => ({ s, st:Svc.suppliers.stats(s.id) }));
+    const total = U.round2(U.sum(rows, r => r.st.total));
+    root.innerHTML = `<div class="stack">
+      <div class="grid g-3">
+        ${kpi('موردون مسجّلون', rows.filter(r => !r.s.archived).length, `${rows.length} إجمالاً`, 'plum')}
+        ${kpi('إجمالي المشتريات', Money.fmt(total), 'من حركات المخزون', 'neg')}
+        ${kpi('أصناف مشتراة', new Set(rows.flatMap(r => Svc.suppliers.purchases(r.s.id).map(p => p.move.productId))).size, '', 'pos')}
+      </div>
+      <div class="card"><div class="card-head"><h3>الموردون</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="spInv">الأصناف والمخزون</button>
+        <button class="btn btn-sm btn-primary" id="spAdd">${svg(ICON.plus,15,2.4)} مورّد</button></div>
+        <div class="card-body tight" id="spTable"></div></div></div>`;
+
+    UI.table($('spTable'), { state:{ page:1, pageSize:25 }, rows, rowCls:r => r.s.archived ? 'archived-row' : '',
+      cols:[
+        { h:'المورّد', render:r=>`<div class="t-name">${U.esc(r.s.name)}</div>
+            <div class="t-sub">${U.esc([r.s.contact, r.s.phone].filter(Boolean).join(' — ') || 'بلا بيانات اتصال')}</div>` },
+        { h:'عمليات الشراء', render:r=>`<span class="num">${r.st.count}</span>` },
+        { h:'إجمالي الشراء', render:r=>UI.money(r.st.total) },
+        { h:'أصناف', render:r=>`<span class="num">${r.st.products}</span>` },
+        { h:'آخر شراء', render:r=>r.st.last ? `<span class="num">${D.fmt(r.st.last)}</span>` : '<span class="t-sub">—</span>' },
+        { h:'', cls:'ta-l', render:r=>`<div class="t-actions">
+            <button class="btn btn-sm btn-icon" data-spedit="${r.s.id}">${svg(ICON.edit,15)}</button>
+            <button class="btn btn-sm btn-icon ${r.s.archived ? '' : 'btn-danger'}" data-sparch="${r.s.id}">${svg(r.s.archived?ICON.undo:ICON.trash,15)}</button></div>` }
+      ], empty:UI.empty('لا موردون','أضيفي مورّداً ليُنسب إليه الشراء ويُعرف منه تاريخه') });
+
+    root.querySelectorAll('[data-spedit]').forEach(b => b.onclick = () => Forms.supplier(b.dataset.spedit));
+    root.querySelectorAll('[data-sparch]').forEach(b => b.onclick = async () => {
+      const s = Repos.suppliers.get(b.dataset.sparch);
+      if (!s.archived && !await UI.confirm({ title:'أرشفة مورّد', danger:true, confirmText:'أرشفة',
+        message:`سيُخفى «${U.esc(s.name)}» من القوائم، وتبقى مشترياته في سجل المخزون كما هي.` })) return;
+      await guard(null, () => Svc.suppliers.archive(s.id, !s.archived), 'تم التحديث'); renderRoute();
+    });
+    $('spAdd').onclick = () => Forms.supplier();
+    $('spInv').onclick = () => go('inventory');
   }
 };
 
@@ -9444,6 +9526,9 @@ Views.settings = {
       box.innerHTML = `<div class="card"><div class="card-head"><h3>معلومات النادي</h3></div><div class="card-body">
         <div class="form-grid" id="gForm">
           ${UI.field('gymName','اسم النادي', UI.input('gymName', s.gymName))}
+          ${UI.field('startScreen','الشاشة الافتتاحية', UI.select('startScreen', s.startScreen || 'desk',
+            [{ v:'desk', t:'الاستقبال' }, { v:'dashboard', t:'لوحة التحكم' }]),
+            'الشاشة التي يفتح عليها البرنامج عند التشغيل')}
           ${(() => { const locked = Settings.currencyLocked();
             const sel = UI.select('currency', s.currency, [{ v:'IQD', t:'دينار عراقي (د.ع)' }, { v:'USD', t:'دولار أمريكي ($)' }]);
             return UI.field('currency','العملة',
@@ -9459,7 +9544,8 @@ Views.settings = {
       box.querySelector('#gSave').onclick = async () => {
         const d = UI.read(box.querySelector('#gForm'));
         /* الحقل المعطّل لا يُقرأ: لا تُرسَل العملة أصلاً حين تكون مقفلة */
-        const patch = { gymName:U.norm(d.gymName) || 'تبارك جيم' };
+        const patch = { gymName:U.norm(d.gymName) || 'تبارك جيم',
+          startScreen: d.startScreen === 'dashboard' ? 'dashboard' : 'desk' };
         if (!Settings.currencyLocked() && d.currency) patch.currency = d.currency;
         const ok = await guard(box.querySelector('#gForm'), () => save(patch, 'تحديث معلومات النادي'));
         if (ok === null) return;
@@ -11406,6 +11492,25 @@ Forms.staff = function(id){ /*v4*/
 
 /* ===== src/app/flows/08-forms-p1.js ================================================== */
 /* ===================== نماذج المرحلة الأولى ============================= */
+
+/* مورّد: بياناته وحدها — تاريخ شرائه يُقرأ من حركات المخزون لا من جدول موازٍ */
+Forms.supplier = function(id){
+  const s = id ? Repos.suppliers.get(id) : null;
+  const h = UI.modal({ title: s ? `تعديل ${s.name}` : 'مورّد جديد', size:'narrow',
+    body:`<div id="spForm">
+      ${UI.field('name','اسم المورّد', UI.input('name', s ? s.name : ''))}
+      ${UI.field('phone','الهاتف', UI.input('phone', s ? s.phone : ''))}
+      ${UI.field('contact','الشخص المسؤول', UI.input('contact', s ? s.contact : ''))}
+      ${UI.field('address','العنوان', UI.input('address', s ? s.address : ''))}
+      <div class="full">${UI.field('notes','ملاحظات', UI.input('notes', s ? s.notes : ''))}</div>
+    </div>`,
+    footer:`<button class="btn btn-primary" id="spSave">حفظ</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){ ov.querySelector('#spSave').onclick = async () => {
+      const scope = ov.querySelector('#spForm'), d = UI.read(scope);
+      const res = await guard(scope, () => Svc.suppliers.save(s ? s.id : null, d));
+      if (!res) return; UI.toast('حُفظ المورّد'); h.close(); renderRoute(); }; }
+  });
+};
 
 /* ملاحظة على مشتركة: نصّ قصير بتاريخه وكاتبته. لا حقل واحد يُدهس. */
 Forms.memberNote = function(id, memberId){
