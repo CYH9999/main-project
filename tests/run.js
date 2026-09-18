@@ -336,7 +336,7 @@ group('رسم كل الشاشات', async (browser, url) => {
                 detail: [drawn, ...fresh].filter(Boolean).join(' | ') });
   }
   /* تبويبات المالية والإعدادات: أكثر ما تغيّر في هذه المرحلة */
-  for (const tab of ['revenues','expenses','dues','capital','cash']){
+  for (const tab of ['revenues','expenses','dues','capital','partners','cash']){
     const mark = errors.length;
     const bad = await page.evaluate(t => {
       try { window.TG.State.f.financeTab = t; window.TG.go('finance'); window.TG.renderRoute(); return ''; }

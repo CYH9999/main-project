@@ -8159,7 +8159,8 @@ Views.finance = {
         <button class="tab ${tab==='revenues'?'active':''}" data-tab="revenues">الإيرادات</button>
         <button class="tab ${tab==='expenses'?'active':''}" data-tab="expenses">المصروفات</button>
         <button class="tab ${tab==='dues'?'active':''}" data-tab="dues">المستحقات${Svc.payments.totalDue().count?` (${Svc.payments.totalDue().count})`:''}</button>
-        <button class="tab ${tab==='capital'?'active':''}" data-tab="capital">رأس المال والشركاء</button>
+        <button class="tab ${tab==='capital'?'active':''}" data-tab="capital">رأس المال</button>
+        <button class="tab ${tab==='partners'?'active':''}" data-tab="partners">الشركاء والأرباح</button>
         <button class="tab ${tab==='cash'?'active':''}" data-tab="cash">الصندوق اليومي${Svc.cashbook.missing(7).length?` (${Svc.cashbook.missing(7).length})`:''}</button>
       </div><div id="finBody"></div>`;
     root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { State.f.financeTab = b.dataset.tab; renderRoute(); });
@@ -8168,6 +8169,7 @@ Views.finance = {
     else if (tab === 'expenses') this.expenses(body);
     else if (tab === 'dues') this.dues(body);
     else if (tab === 'cash') this.cash(body);
+    else if (tab === 'partners') this.partners(body);
     else this.capital(body);
   },
   /* -------------------------- الصندوق اليومي --------------------------
@@ -8465,24 +8467,17 @@ Views.finance = {
         ${kpi('رأس المال المضخوخ', Money.fmt(Calc.capitalIn(Repos.capital.list())), 'مجموع ما دخل من الملّاك', 'plum')}
         ${kpi('السحوبات', Money.fmt(Calc.withdrawals(Repos.capital.list())), 'لا تُحتسب مصروفاً تشغيلياً', 'neg')}
         ${kpi('رأس المال المتبقي', Money.fmt(s.capitalBalance), 'المضخوخ − المسحوب')}
-        ${kpi('السيولة المتاحة', Money.fmt(s.cash), 'رأس المال + الإيرادات − المصروفات − السحوبات', s.cash>=0?'pos':'neg')}
+        ${kpi('السيولة المتاحة', Money.fmt(s.cash), 'رأس المال + الإيرادات − المصروفات − السحوبات − التوزيعات', s.cash>=0?'pos':'neg')}
       </div>
       <div class="card"><div class="card-body" style="background:var(--rose-50);border-radius:var(--r-lg)">
         <strong>كيف تُقرأ الأرقام:</strong> رأس المال منفصل تماماً عن الإيرادات التشغيلية.
-        صافي الربح = الإيرادات − المصروفات (والرواتب المدفوعة مصروف). السحوبات تنقص السيولة ورأس المال ولا تنقص الربح.
+        صافي الربح = الإيرادات − المصروفات (والرواتب المدفوعة مصروف).
+        السحب يعني «استرجاع مالٍ استُثمر» وينقص رأس المال والسيولة ولا ينقص الربح،
+        وتوزيع الأرباح ينقص السيولة وحدها — وهو في تبويب «الشركاء والأرباح».
       </div></div>
-      <div class="grid g-2">
-        <div class="card"><div class="card-head"><h3>حركات رأس المال</h3><div class="sp"></div>
-          <button class="btn btn-sm btn-primary" id="cAdd">${svg(ICON.plus,15,2.4)} حركة جديدة</button></div>
-          <div id="cTable"></div></div>
-        <div class="card"><div class="card-head"><h3>الشركاء وتوزيع الأرباح</h3><div class="sp"></div>
-          <button class="btn btn-sm btn-primary" id="prAdd">${svg(ICON.plus,15,2.4)} شريك</button></div>
-          <div class="card-body tight" id="prTable"></div>
-          <div class="card-body" style="border-top:1px solid var(--line-2)">
-            <div class="row"><span>صافي ربح ${D.today().slice(0,4)}:</span><strong>${Money.fmt(yearNet)}</strong>
-            <div style="flex:1"></div><span class="chip ${shareSum===100?'chip-active':'chip-soon'}">مجموع الحصص ${U.round2(shareSum)}%</span></div>
-          </div></div>
-      </div></div>`;
+      <div class="card"><div class="card-head"><h3>حركات رأس المال</h3><div class="sp"></div>
+        <button class="btn btn-sm btn-primary" id="cAdd">${svg(ICON.plus,15,2.4)} حركة جديدة</button></div>
+        <div id="cTable"></div></div></div>`;
 
     const cRows = U.sortBy(Repos.capital.list(true), c=>c.date, -1);
     UI.table($('cTable'), { state:State.f.capital, rows:cRows, rowCls:c=>c.archived?'archived-row':'',
@@ -8500,24 +8495,110 @@ Views.finance = {
       await Svc.finance.archiveCapital(c.id, !c.archived); UI.toast('تم التحديث'); renderRoute();
     });
     $('cAdd').onclick = () => Forms.capital();
+  },
 
-    UI.table($('prTable'), { state:{page:1,pageSize:20}, rows:partners,
+  /* ------------------------- الشركاء والأرباح -------------------------
+     الفصل الذي يضيع في أغلب الأنظمة معروضٌ هنا صراحةً: الربح رقمُ أداء،
+     والتوزيع تصرُّفٌ في ربح تحقّق. التوزيع يقلّل السيولة ولا يقلّل الربح،
+     ولا يُوزَّع من فترة ما زالت تتغيّر — فلذلك يسبقه إقفالها. */
+  partners(body){
+    const s = Svc.finance.summary();
+    const partners = Repos.partners.list();
+    const shareSum = U.sum(partners, p => p.sharePercent);
+    const closed = Svc.periods.list();
+    const open = Svc.periods.openMonths(12);
+    const dists = Svc.distributions.list(true);
+    const closedNet = U.round2(U.sum(closed, p => p.net));
+    const paidAll = U.round2(U.sum(dists, d => d.amount));
+    body.innerHTML = `<div class="stack">
+      <div class="grid g-4">
+        ${kpi('ربح الفترات المقفلة', Money.fmt(closedNet), `${closed.length} فترة مقفلة`, closedNet >= 0 ? 'pos' : 'neg')}
+        ${kpi('الموزَّع فعلاً', Money.fmt(paidAll), `${dists.length} توزيعاً`, 'plum')}
+        ${kpi('لم يُوزَّع بعد', Money.fmt(U.round2(closedNet - paidAll)), 'من الفترات المقفلة')}
+        ${kpi('السيولة المتاحة', Money.fmt(s.cash), 'بعد خصم التوزيعات', s.cash >= 0 ? 'pos' : 'neg')}
+      </div>
+      <div class="card"><div class="card-body" style="background:var(--rose-50);border-radius:var(--r-lg)">
+        <strong>قاعدة واحدة تحكم هذه الشاشة:</strong> توزيع الأرباح <u>يقلّل السيولة ولا يقلّل الربح</u>.
+        لو خُصم التوزيع من المصروفات لظهر النادي خاسراً كلما وزّع أرباحه.
+        ولذلك أيضاً لا يُوزَّع إلا من فترة أُقفلت: الرقم الذي يتحرّك لا يُبنى عليه نصيب.
+      </div></div>
+      ${open.length ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-body">
+        <strong>${open.length} فترة انتهت ولم تُقفل بعد.</strong>
+        <div class="t-sub" style="margin:6px 0 10px">أقفليها ليصبح توزيع أرباحها ممكناً برقم ثابت.</div>
+        <button class="btn btn-sm btn-primary" id="pdClose">إقفال فترة</button></div></div>` : ''}
+      <div class="card"><div class="card-head"><h3>الشركاء</h3><div class="sp"></div>
+        <span class="chip ${shareSum === 100 ? 'chip-active' : 'chip-soon'}">مجموع الحصص ${U.round2(shareSum)}%</span>
+        <button class="btn btn-sm" id="pdPeriods">إقفال فترة</button>
+        <button class="btn btn-sm btn-primary" id="prAdd">${svg(ICON.plus,15,2.4)} شريك</button></div>
+        <div class="card-body tight" id="prTable"></div></div>
+      <div class="card"><div class="card-head"><h3>سجل التوزيعات</h3><div class="sp"></div>
+        <button class="btn btn-sm btn-primary" id="dsAdd" ${closed.length ? '' : 'disabled title="أقفلي فترة أولاً"'}>${svg(ICON.plus,15,2.4)} توزيع</button></div>
+        <div class="card-body tight" id="dsTable"></div></div>
+      ${closed.length ? `<div class="card"><div class="card-head"><h3>الفترات المقفلة</h3></div><div class="card-body">
+        <table class="mini-tbl"><thead><tr><th>الفترة</th><th>الإيراد</th><th>المصروف</th><th>صافي الربح المثبَّت</th><th>أُقفلت</th><th></th></tr></thead><tbody>
+        ${U.sortBy(closed, p => p.key, -1).map(p => `<tr><td>${U.esc(D.monthName(p.key))}</td>
+          <td class="num money-pos">${Money.fmt(p.revenue)}</td><td class="num money-neg">${Money.fmt(p.expense)}</td>
+          <td class="num"><strong>${Money.fmt(p.net)}</strong></td>
+          <td class="t-sub num">${D.fmt(String(p.closedAt).slice(0,10))}</td>
+          <td class="ta-l"><button class="btn btn-sm" data-reopen-p="${p.key}">إعادة فتح</button></td></tr>`).join('')}
+        </tbody></table></div></div>` : ''}
+      </div>`;
+
+    UI.table($('prTable'), { state:{ page:1, pageSize:20 }, rows:partners,
       cols:[
-        { h:'الشريك', render:p=>`<div class="t-name">${U.esc(p.name)}</div><div class="t-sub">${U.esc(p.notes||'')}</div>` },
+        { h:'الشريكة', render:p=>`<div class="t-name">${U.esc(p.name)}</div><div class="t-sub">${U.esc(p.notes||'')}</div>` },
         { h:'الحصة', render:p=>`<span class="num">${p.sharePercent}%</span>` },
-        { h:'نصيب أرباح السنة', render:p=>UI.money(Calc.partnerShare(yearNet, p.sharePercent), true) },
-        { h:'مسحوباته', render:p=>UI.money(U.sum(Repos.capital.list().filter(c=>c.partnerId===p.id&&c.type==='withdrawal'), c=>c.amount)) },
+        { h:'رأس مالها', render:p=>{ const st = Svc.distributions.statement(p.id);
+            return `<span class="num">${Money.fmt(st ? st.capitalBalance : 0)}</span>`; } },
+        { h:'استحقاقها', render:p=>{ const st = Svc.distributions.statement(p.id);
+            return `<span class="num">${Money.fmt(st ? st.entitled : 0)}</span>`; } },
+        { h:'المقبوض', render:p=>{ const st = Svc.distributions.statement(p.id);
+            return `<span class="num">${Money.fmt(st ? st.paid : 0)}</span>`; } },
+        { h:'المتبقّي لها', render:p=>{ const st = Svc.distributions.statement(p.id);
+            const v = st ? st.remaining : 0;
+            return `<strong class="num ${v > 0 ? 'money-neg' : ''}">${Money.fmt(v)}</strong>`; } },
         { h:'', cls:'ta-l', render:p=>`<div class="t-actions">
+            <button class="btn btn-sm" data-stmt="${p.id}">كشف الحساب</button>
+            <button class="btn btn-sm btn-primary" data-dist="${p.id}">توزيع</button>
             <button class="btn btn-sm btn-icon" data-edit="${p.id}">${svg(ICON.edit,15)}</button>
             <button class="btn btn-sm btn-icon btn-danger" data-del="${p.id}">${svg(ICON.trash,15)}</button></div>` }
-      ], empty:UI.empty('لا يوجد شركاء','أضيفي الشركاء ونسبهم ليوزّع النظام الأرباح تلقائياً') });
-    $('prTable').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Forms.partner(b.dataset.edit));
-    $('prTable').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      ], empty:UI.empty('لا يوجد شركاء','أضيفي الشريكات ونسبهنّ ليُحسب نصيب كلٍّ منهنّ') });
+
+    UI.table($('dsTable'), { state:{ page:1, pageSize:25 }, rows:dists,
+      cols:[
+        { h:'التاريخ', render:d=>`<span class="num">${D.fmt(d.date)}</span>` },
+        { h:'الشريكة', render:d=>U.esc((Repos.partners.get(d.partnerId) || {}).name || '—') },
+        { h:'عن الفترة', render:d=>`<span class="num">${D.fmt(d.periodFrom)} ← ${D.fmt(d.periodTo)}</span>` },
+        { h:'المبلغ', render:d=>`<strong class="num money-neg">${Money.fmt(d.amount)}</strong>` },
+        { h:'الطريقة', render:d=>U.esc(PayMethods.label(d.method)) },
+        { h:'ملاحظات', render:d=>`<span class="t-sub">${U.esc(d.notes || '')}</span>` },
+        { h:'', cls:'ta-l', render:d=>`<button class="btn btn-sm btn-icon btn-danger" data-dsdel="${d.id}">${svg(ICON.trash,15)}</button>` }
+      ], empty:UI.empty('لا توزيعات','التوزيع يقلّل السيولة ولا يقلّل الربح — ويسبقه إقفال الفترة') });
+
+    const on = (sel, fn) => body.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
+    on('[data-edit]', b => Forms.partner(b.dataset.edit));
+    on('[data-stmt]', b => Screens.partnerStatement(b.dataset.stmt));
+    on('[data-dist]', b => Forms.distribution(b.dataset.dist));
+    on('[data-del]', async b => {
       const p = Repos.partners.get(b.dataset.del);
-      if (!await UI.confirm({ title:'أرشفة شريك', message:`سيُخفى «${U.esc(p.name)}» مع الاحتفاظ بحركاته المالية.`, danger:true, confirmText:'أرشفة' })) return;
+      if (!await UI.confirm({ title:'أرشفة شريكة', message:`سيُخفى «${U.esc(p.name)}» مع الاحتفاظ بحركاتها المالية.`, danger:true, confirmText:'أرشفة' })) return;
       await Repos.partners.archive(p.id, true); UI.toast('تمت الأرشفة'); renderRoute();
     });
-    $('prAdd').onclick = () => Forms.partner();
+    on('[data-dsdel]', async b => {
+      const d = Repos.distributions.get(b.dataset.dsdel);
+      if (!await UI.confirm({ title:'إلغاء توزيع', danger:true, confirmText:'إلغاء التوزيع',
+        message:`سيعود ${Money.fmt(d.amount)} إلى السيولة، ويعود استحقاق الشريكة كما كان. الربح لا يتأثر في الحالتين.` })) return;
+      await guard(null, () => Svc.distributions.remove(d.id), 'أُلغي التوزيع'); renderRoute();
+    });
+    on('[data-reopen-p]', async b => {
+      if (!await UI.confirm({ title:'إعادة فتح فترة', confirmText:'إعادة الفتح',
+        message:'سيعود ربح الفترة متحرّكاً مع أي تعديل لاحق. لا يمكن إعادة فتح فترة وُزّعت أرباحها.' })) return;
+      await guard(null, () => Svc.periods.reopen(b.dataset.reopenP, 'إعادة فتح يدوية'), 'أُعيد فتح الفترة'); renderRoute();
+    });
+    const pc = body.querySelector('#pdClose'); if (pc) pc.onclick = () => Forms.closePeriod();
+    body.querySelector('#pdPeriods').onclick = () => Forms.closePeriod();
+    const da = body.querySelector('#dsAdd'); if (da && !da.disabled) da.onclick = () => Forms.distribution();
+    body.querySelector('#prAdd').onclick = () => Forms.partner();
   }
 };
 
@@ -12180,6 +12261,102 @@ Actions.printStatement = function(memberId){
   const m = Repos.members.get(memberId);
   if (!m) return UI.toast('المشتركة غير موجودة','err');
   Print.open(`كشف حساب ${m.name}`, Print.statementHtml(memberId));
+};
+
+/* ---------------------------- كشف حساب شريكة ---------------------------
+   يجيب عن أربعة أسئلة لا خامس لها: كم ضخّت؟ كم استرجعت؟ كم استحقّت من
+   الأرباح؟ وكم قُبض منها فعلاً؟ ولا يخلط بين استرجاع رأس المال وتوزيع الربح. */
+Print.partnerStatementHtml = function(partnerId){
+  const st = Svc.distributions.statement(partnerId);
+  if (!st) return '';
+  const p = st.partner;
+  return `<div class="doc">
+    ${Brand.printHeader('كشف حساب شريكة', p.name)}
+    <dl class="doc-kv">
+      <dt>الشريكة</dt><dd>${U.esc(p.name)}</dd>
+      <dt>حصّتها من الأرباح</dt><dd class="num">${U.esc(String(st.percent))}%</dd>
+      <dt>تاريخ الكشف</dt><dd class="num">${D.fmt(D.today())}</dd>
+    </dl>
+
+    <h3 class="doc-title">رأس المال</h3>
+    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>الحركة</th><th>البيان</th><th>المبلغ</th></tr></thead><tbody>
+      ${st.capitalRows.length ? st.capitalRows.map(c => `<tr><td class="num">${D.fmt(c.date)}</td>
+        <td>${c.type === 'injection' ? 'ضخ رأس مال' : 'استرجاع رأس مال'}</td>
+        <td>${U.esc(c.description || '')}</td>
+        <td class="num">${c.type === 'injection' ? '' : '− '}${Money.fmt(c.amount)}</td></tr>`).join('')
+        : '<tr><td colspan="4">لا حركات رأس مال</td></tr>'}
+    </tbody><tfoot>
+      <tr><td colspan="3">ما ضُخّ</td><td class="num">${Money.fmt(st.contributions)}</td></tr>
+      <tr><td colspan="3">ما استُرجع</td><td class="num">${Money.fmt(st.returns)}</td></tr>
+      <tr><td colspan="3"><strong>رأس المال القائم</strong></td><td class="num"><strong>${Money.fmt(st.capitalBalance)}</strong></td></tr>
+    </tfoot></table>
+
+    <h3 class="doc-title">استحقاق الأرباح عن الفترات المقفلة</h3>
+    <table class="doc-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
+      ${st.periods.length ? st.periods.map(x => `<tr><td>${U.esc(x.label)}</td>
+        <td class="num">${Money.fmt(x.net)}</td><td class="num">${Money.fmt(x.share)}</td>
+        <td class="num">${Money.fmt(x.paid)}</td><td class="num">${Money.fmt(x.remaining)}</td></tr>`).join('')
+        : '<tr><td colspan="5">لا فترة مقفلة بعد — لا استحقاق مثبَّت</td></tr>'}
+    </tbody><tfoot><tr><td>الإجمالي</td><td class="num"></td>
+      <td class="num">${Money.fmt(st.entitled)}</td><td class="num">${Money.fmt(st.paid)}</td>
+      <td class="num">${Money.fmt(st.remaining)}</td></tr></tfoot></table>
+
+    <h3 class="doc-title">التوزيعات المدفوعة</h3>
+    <table class="doc-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
+      ${st.distributions.length ? st.distributions.map(d => `<tr><td class="num">${D.fmt(d.date)}</td>
+        <td class="num">${D.fmt(d.periodFrom)} ← ${D.fmt(d.periodTo)}</td>
+        <td>${U.esc(PayMethods.label(d.method))}</td><td class="num">${Money.fmt(d.amount)}</td></tr>`).join('')
+        : '<tr><td colspan="4">لا توزيعات</td></tr>'}
+    </tbody></table>
+
+    <div class="doc-total"><span>${st.remaining > 0 ? 'المتبقّي لها من الأرباح' : 'لا متبقٍّ من الأرباح'}</span>
+      <span class="num">${Money.fmt(Math.max(0, st.remaining))}</span></div>
+    <div class="doc-note">استرجاع رأس المال ليس توزيع ربح: الأول إعادة مالٍ استُثمر، والثاني نصيب من ربحٍ تحقّق.
+      وتوزيع الأرباح يقلّل سيولة النادي ولا يقلّل ربحه.</div>
+    ${st.openPeriods.length ? `<div class="doc-note">فترات انتهت ولم تُقفل بعد فلا استحقاق مثبَّت عنها:
+      ${U.esc(st.openPeriods.map(x => D.monthName(x.key)).join('، '))}.</div>` : ''}
+    <div class="doc-sign"><div>توقيع الشريكة</div><div>توقيع الإدارة</div></div>
+    <div class="doc-foot">${U.esc(Brand.name())} — طُبع في ${D.fmt(D.today())}</div>
+  </div>`;
+};
+
+/* كشف الشريكة على الشاشة: الأرقام نفسها التي تُطبع، بلا حساب ثانٍ في القالب */
+Screens.partnerStatement = function(partnerId){
+  const st = Svc.distributions.statement(partnerId);
+  if (!st) return UI.toast('الشريكة غير موجودة','err');
+  UI.modal({
+    title:`كشف حساب ${st.partner.name}`, size:'wide',
+    body:`<div class="grid g-4" style="margin-bottom:14px">
+        ${kpi('رأس المال القائم', Money.fmt(st.capitalBalance), `ضُخّ ${Money.fmt(st.contributions)} واستُرجع ${Money.fmt(st.returns)}`, 'plum')}
+        ${kpi('استحقاق الأرباح', Money.fmt(st.entitled), `${st.percent}% من ${st.periods.length} فترة مقفلة`, 'pos')}
+        ${kpi('الموزَّع لها', Money.fmt(st.paid), `${st.distributions.length} توزيعاً`)}
+        ${kpi('المتبقّي لها', Money.fmt(st.remaining), st.remaining > 0 ? 'لم يُوزَّع بعد' : 'مسدَّد', st.remaining > 0 ? 'neg' : 'pos')}
+      </div>
+      <div class="card" style="background:var(--rose-50);border-color:var(--rose-100);margin-bottom:14px"><div class="card-body" style="padding:11px 14px">
+        <span class="t-sub">استرجاع رأس المال ليس توزيع ربح. والتوزيع يقلّل السيولة ولا يقلّل الربح.</span></div></div>
+      <h4 style="font-size:14px;margin:0 0 8px">الاستحقاق حسب الفترة</h4>
+      ${st.periods.length ? `<table class="mini-tbl"><thead><tr><th>الفترة</th><th>صافي ربح النادي</th><th>نصيبها</th><th>المقبوض</th><th>المتبقّي</th></tr></thead><tbody>
+        ${st.periods.map(x => `<tr><td>${U.esc(x.label)}</td><td class="num">${Money.fmt(x.net)}</td>
+          <td class="num">${Money.fmt(x.share)}</td><td class="num">${Money.fmt(x.paid)}</td>
+          <td class="num ${x.remaining > 0 ? 'money-neg' : ''}">${Money.fmt(x.remaining)}</td></tr>`).join('')}
+        </tbody></table>` : '<div class="t-sub">لا فترة مقفلة بعد — أقفلي فترة ليثبت استحقاقها.</div>'}
+      ${st.openPeriods.length ? `<div class="t-sub" style="margin-top:10px">فترات انتهت ولم تُقفل:
+        ${U.esc(st.openPeriods.map(x => D.monthName(x.key)).join('، '))}</div>` : ''}
+      <h4 style="font-size:14px;margin:16px 0 8px">التوزيعات</h4>
+      ${st.distributions.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>عن الفترة</th><th>الطريقة</th><th>المبلغ</th></tr></thead><tbody>
+        ${st.distributions.map(d => `<tr><td class="num">${D.fmt(d.date)}</td>
+          <td class="num">${D.fmt(d.periodFrom)} ← ${D.fmt(d.periodTo)}</td>
+          <td>${U.esc(PayMethods.label(d.method))}</td><td class="num"><strong>${Money.fmt(d.amount)}</strong></td></tr>`).join('')}
+        </tbody></table>` : '<div class="t-sub">لا توزيعات بعد.</div>'}`,
+    footer:`<button class="btn btn-primary" id="psPrint">${svg(ICON.print,15)} طباعة الكشف</button>
+            <button class="btn" id="psDist">توزيع أرباح</button>
+            <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
+    onMount(ov, h){
+      ov.querySelector('#psPrint').onclick = () =>
+        Print.open(`كشف حساب ${st.partner.name}`, Print.partnerStatementHtml(partnerId));
+      ov.querySelector('#psDist').onclick = () => { h.close(); Forms.distribution(partnerId); };
+    }
+  });
 };
 
 
