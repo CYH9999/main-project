@@ -242,6 +242,75 @@ group('التصديرات المحاسبية', async (browser, url) => {
   record('التصديرات المحاسبية', rows, errors);
 });
 
+/* ---------------------- مجموعات المرحلة الثالثة-د ---------------------- */
+group('تدقيق الإصدار — الاستعادة الصادقة', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    window.TGTests.reset();
+    await window.TGTests.releaseAudit();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('تدقيق الإصدار — الاستعادة الصادقة', rows, errors);
+});
+
+/* شاشة 360 بكسل: أضيق جهاز حديث شائع. الجدول العريض يُمرَّر داخل بطاقته،
+   والصفحة نفسها لا تُجرّ أفقياً، ولا يسقط زرّ خارج الحافة. */
+group('العرض الضيّق 360', async (browser, url) => {
+  const ctx0 = await browser.newContext({ viewport:{ width:360, height:740 } });
+  const page = await ctx0.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  page.on('console', m => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errors.push(m.text()); });
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+  await page.evaluate(() => window.TG.ready);
+  await page.evaluate(() => window.TG.Seed.loadDemo(30));
+  const rows = await page.evaluate(async () => {
+    const out = [];
+    const ok = (name, pass, detail) => out.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const screens = [['لوحة التحكم','dashboard'], ['الاستقبال','desk'], ['المشتركات','members'],
+      ['الاشتراكات','subs'], ['المبيعات','pos'], ['المخزون','inventory'],
+      ['الإيرادات','finance',{tab:'revenues'}], ['المصروفات','finance',{tab:'expenses'}],
+      ['المستحقات','finance',{tab:'dues'}], ['الصندوق اليومي','finance',{tab:'cash'}],
+      ['المشتريات','inventory',{tab:'purchases'}], ['التقارير','reports'], ['الإعدادات','settings']];
+    for (const [name, r, p] of screens){
+      if (p && p.tab && r === 'finance') window.TG.State.f.financeTab = p.tab;
+      window.TG.go(r, p || undefined); window.TG.renderRoute();
+      await new Promise(x => setTimeout(x, 130));
+      const de = document.documentElement;
+      ok(`${name}: لا تمرير أفقي للصفحة على 360 بكسل`, de.scrollWidth <= de.clientWidth + 2,
+         `${de.scrollWidth} > ${de.clientWidth}`);
+      const lost = [...document.querySelectorAll('#viewRoot button')].filter(b => {
+        const x = b.getBoundingClientRect();
+        if (!x.width) return false;
+        let n = b.parentElement, scrolled = false;
+        while (n && n !== document.body){ if (/auto|scroll/.test(getComputedStyle(n).overflowX)){ scrolled = true; break; } n = n.parentElement; }
+        return !scrolled && (x.right > de.clientWidth + 2 || x.left < -2);
+      });
+      ok(`${name}: لا زرّ خارج الحافة`, lost.length === 0, lost.length + ' زر');
+    }
+    /* شريط الصفحات هو ما كان يجرّ الصفحة: يجب أن يلتفّ لا أن يمتدّ */
+    window.TG.go('members'); window.TG.renderRoute();
+    await new Promise(x => setTimeout(x, 130));
+    const pager = document.querySelector('.pager');
+    ok('شريط الصفحات يلتفّ على الشاشة الضيّقة', !!pager && getComputedStyle(pager).flexWrap === 'wrap',
+       pager ? getComputedStyle(pager).flexWrap : 'لا يوجد');
+    if (pager){
+      const pb = pager.getBoundingClientRect();
+      ok('وشريط الصفحات لا يتجاوز بطاقته', pb.width <= pager.parentElement.getBoundingClientRect().width + 2,
+         `${Math.round(pb.width)} > ${Math.round(pager.parentElement.getBoundingClientRect().width)}`);
+      const next = [...pager.querySelectorAll('button')].pop();
+      ok('وزرّ «التالي» يبقى داخل الشاشة',
+         !next || (next.getBoundingClientRect().right <= document.documentElement.clientWidth + 2
+                && next.getBoundingClientRect().left >= -2));
+    }
+    return out;
+  });
+  await ctx0.close();
+  record('العرض الضيّق 360', rows, errors);
+});
+
 /* ---------------------- مجموعات المرحلة الثالثة-أ ---------------------- */
 group('الهوية البصرية المتحرّكة', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);

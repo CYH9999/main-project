@@ -586,6 +586,13 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
      حيث لا يمكن الوصول إليه ولا رؤيته. يلتفّ هنا فتبقى كل الأزرار قابلة للضغط. */
   .card-head{flex-wrap:wrap;row-gap:8px}
   .card-head .sp{flex-basis:100%;height:0}
+  /* شريط الصفحات مثله: «عرض 1–25 من 45» وزرّا السابق والتالي في صفٍّ واحد
+     يبلغ عرضه نحو 292 بكسل. على شاشة 360 بكسل يتجاوز بطاقته فيجرّ الصفحة
+     كلها أفقياً — والجدول نفسه بريء، فغلافه (.tbl-wrap) يُمرّره داخل بطاقته
+     كما ينبغي. يلتفّ الشريط هنا فيبقى زرّ «التالي» قابلاً للضغط، ولا تُجرّ
+     الصفحة على الهواتف الصغيرة. */
+  .pager{flex-wrap:wrap;row-gap:8px}
+  .pager .sp{flex-basis:100%;height:0}
 }
 
 /* ------------------------- مساحة اللمس على الشاشات اللمسية -------------------
@@ -679,7 +686,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.4.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.4.1', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -5938,10 +5945,17 @@ const Backup = {
     const v = this.validate(obj);
     if (!v.ok) throw new AppError(v.errors[0],'BACKUP_INVALID', v.errors);
     const snapshot = Object.fromEntries(STORE_NAMES.map(s => [s, DB.all(s)]));
+    /* سجلٌ بلا معرّف لا يمكن استعادته: لا مفتاح له يُخزَّن به، واختراع مفتاح
+       يخترع سجلاً. فيُستبعَد — لكن لا يُستبعَد صامتاً. يُعدّ ويُقال عدده،
+       لأن «تمت الاستعادة» فوق بيانات سقطت أسوأ من فشلٍ صريح. */
+    const skipped = {}, restored = {};
     try {
       await DB.clearAll();
       for (const s of STORE_NAMES){
-        const rows = (obj.data[s]||[]).filter(r => r && r[SCHEMA[s].key] != null);
+        const all = obj.data[s] || [];
+        const rows = all.filter(r => r && r[SCHEMA[s].key] != null);
+        if (all.length !== rows.length) skipped[s] = all.length - rows.length;
+        restored[s] = rows.length;
         if (rows.length) await DB.putMany(s, rows);
       }
     } catch(e){
@@ -5963,8 +5977,14 @@ const Backup = {
     /* الهوية البصرية تُعاد إلى هيكل الصفحة فوراً: الشعار المستعاد يُرى بلا
        انتظار إعادة تحميل، ووضع الحركة المستعاد يسري من اللحظة نفسها. */
     try { Brand.applyToShell(); } catch(e){ Log.warn('تعذّر تطبيق الهوية بعد الاستعادة', e); }
-    await Audit.log('system','restore',`استعادة نسخة احتياطية من ${String(obj.exportedAt||'').slice(0,10)} (مخطط ${obj.schema})`);
-    return v.counts;
+    const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0);
+    await Audit.log('system','restore',
+      `استعادة نسخة احتياطية من ${String(obj.exportedAt||'').slice(0,10)} (مخطط ${obj.schema})`
+      + (skippedTotal ? ` — استُبعد ${skippedTotal} سجلاً بلا معرّف: `
+          + Object.keys(skipped).map(k => `${storeLabel(k)} ${skipped[k]}`).join('، ') : ''));
+    if (skippedTotal) Log.warn('سجلات بلا معرّف استُبعدت من الاستعادة', skipped);
+    /* counts تبقى ما استُعيد فعلاً لا ما كان في الملف */
+    return Object.assign({}, restored, { _skipped:skipped, _skippedTotal:skippedTotal });
   },
   async markExported(){ await Settings.set({ lastBackupAt:new Date().toISOString() }); }
 };
@@ -15043,7 +15063,11 @@ Object.assign(Actions, {
     if (!ok) return;
     try {
       const counts = await Backup.restore(obj);
-      UI.toast(`تمت الاستعادة — ${Object.values(counts).reduce((a,b)=>a+b,0)} سجل`);
+      const skipped = counts._skippedTotal || 0;
+      const total = STORE_NAMES.reduce((a, s) => a + (Number(counts[s]) || 0), 0);
+      /* الرقم المعروض هو ما دخل فعلاً. وإن سقط شيء يُقال بصوت مسموع لا في سجل لا يُقرأ. */
+      if (skipped) UI.toast(`تمت الاستعادة — ${total} سجل، واستُبعد ${skipped} سجلاً تالفاً بلا معرّف`, 'warn', 9000);
+      else UI.toast(`تمت الاستعادة — ${total} سجل`);
       $('brandName').textContent = Settings.get('gymName');
       renderRoute();
     } catch(e){ Log.error('فشل الاستعادة', e); UI.toast('فشلت الاستعادة: ' + e.message,'err'); }

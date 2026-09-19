@@ -2609,13 +2609,47 @@ window.TGTests = (() => {
     if (h && h.close) h.close();
   }
 
+  /* ====================== المرحلة 3D: ما وجده التدقيق النهائي ======================
+     عيبان اكتُشفا بمحاولة كسر النظام لا بقراءته، وهذان اختباراهما. */
+  async function releaseAudit(){
+    const { Svc, Repos, Calc, D, U, DB } = T();
+    await T().Seed.loadDemo(12);
+
+    /* ---- 1) الاستعادة لا تُسقط سجلاً بصمت ----
+       نسخة تالفة فيها صفوف بلا معرّف: لا يمكن استعادتها (لا مفتاح لها)، واختراع
+       مفتاح يخترع سجلاً. فتُستبعَد — لكن الرقم المعروض يجب أن يكون ما دخل فعلاً
+       لا ما كان في الملف، وإلا قيل «تمت الاستعادة» فوق بيانات سقطت. */
+    const good = T().Backup.build(true);
+    const members0 = good.data.members.length;
+    const payments0 = good.data.payments.length;
+    const bad = U.clone(good);
+    bad.data.members.push({ name:'صفّ بلا معرّف ١' }, { name:'صفّ بلا معرّف ٢' });
+    bad.data.payments.push({ amount:5000 });
+    const counts = await T().Backup.restore(bad);
+    eq('الاستعادة تُبلّغ بما دخل فعلاً لا بما في الملف', counts.members, members0);
+    eq('ورقم المقبوضات كذلك', counts.payments, payments0);
+    eq('والرقم المُبلَّغ يساوي ما في قاعدة البيانات', counts.members, DB.count('members'));
+    eq('الصفوف بلا معرّف تُعدّ ولا تُخفى', counts._skippedTotal, 3);
+    ok('ويُقال في أي جدول سقطت', counts._skipped && counts._skipped.members === 2 && counts._skipped.payments === 1,
+       JSON.stringify(counts._skipped));
+    const ev = U.sortBy(Repos.audit.list(true).filter(a => a.entity === 'system' && a.action === 'restore'), a => a.ts, -1)[0];
+    ok('وسجل الأحداث يحمل العدد المستبعَد', !!ev && /استُبعد 3/.test(ev.summary), ev && ev.summary);
+    const clean = await T().Backup.restore(good);
+    eq('نسخة سليمة لا تُبلّغ عن أي استبعاد', clean._skippedTotal, 0);
+    eq('وتستعيد العدد كاملاً', clean.members, members0);
+    /* الثابت الأهم: الاستعادة لا تخلق ولا تفقد مالاً */
+    eq('المقبوض بعد الاستعادة السليمة = المقبوض قبلها',
+       U.round2(U.sum(Repos.payments.list(true), p => p.amount)),
+       U.round2(U.sum(good.data.payments, p => p.amount)));
+  }
+
   return {
     get results(){ return results; },
     reset(){ results = []; },
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
     capitalMethods, purchases, allocations, periodClose, integrityP2,
-    storeCosting, accountingExports,
+    storeCosting, accountingExports, releaseAudit,
     branding, onboarding,
     auth, permMatrix, usersAdmin, accountability, authBackup,
     writeProbe, probeExists, totals, endDates, downgrade
