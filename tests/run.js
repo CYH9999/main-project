@@ -1784,12 +1784,27 @@ group('مساحة اللمس', async (browser, url) => {
   const desk = await dp.evaluate(() => {
     window.TG.go('members'); window.TG.renderRoute();
     const b = document.querySelector('#viewRoot .btn.btn-sm');
+    const cs = b ? getComputedStyle(b) : null;
     return { coarse:matchMedia('(pointer: coarse)').matches,
-             h: b ? Math.round(b.getBoundingClientRect().height) : null };
+             h: b ? Math.round(b.getBoundingClientRect().height) : null,
+             minHeight: cs ? cs.minHeight : null,
+             padTop: cs ? cs.paddingTop : null,
+             /* الارتفاع نفسه لو طُبّقت قاعدة اللمس — للمقارنة لا للتخمين */
+             coarseMin: 34 };
   });
   rows.push({ name:'المكتب يبقى بمؤشّر دقيق', pass:desk.coarse === false, detail:String(desk.coarse) });
-  rows.push({ name:'زر الجدول على المكتب لم يتضخّم', pass:desk.h != null && desk.h < 32,
-              detail:`ارتفاع=${desk.h}` });
+  /* «لم يتضخّم» تعني: قاعدة (pointer: coarse) لم تُطبَّق. وهذا يُقاس بما تغيّره
+     القاعدة فعلاً — min-height والحشو — لا بارتفاع بالبكسل.
+
+     الارتفاع بالبكسل كان قياساً بالوكالة، ويتغيّر بتغيّر الخطّ المثبَّت على
+     الجهاز لا بتغيّر النظام: على جهاز فيه «Noto Sans Arabic» وليس فيه
+     «Segoe UI» يصير الزرّ نفسه 36–38 بكسل بلا أن تُطبَّق قاعدة لمس واحدة،
+     لأن line-height:normal يتبع مقاييس الخطّ الرأسية. فقيس السبب لا أثره. */
+  rows.push({ name:'قاعدة اللمس لا تُطبَّق على المكتب: لا min-height مفروض',
+              pass: desk.minHeight === 'auto' || desk.minHeight === '0px',
+              detail:`min-height=${desk.minHeight}` });
+  rows.push({ name:'قاعدة اللمس لا تُطبَّق على المكتب: الحشو هو حشو المكتب',
+              pass: parseFloat(desk.padTop) < 7, detail:`padding-top=${desk.padTop}` });
   await deskCtx.close();
   record('مساحة اللمس', rows, errors);
 });
