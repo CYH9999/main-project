@@ -2399,12 +2399,223 @@ window.TGTests = (() => {
     return results;
   }
 
+  /* ====================== المرحلة 3C: تكلفة معروفة وتكلفة غير متوفرة ======================
+     السؤال الذي تثبته هذه المجموعة: هل يجرؤ النظام على قول «لا أعرف»؟
+     صنف بلا تكلفة مسجَّلة يُباع بـ20 ألفاً: الحساب الساذج يقول ربحاً 20 ألفاً
+     وهامشاً 100%. وهذا ليس ربحاً — هو جهلٌ بالتكلفة لبس ثوب الربح. */
+  async function storeCosting(){
+    const { Svc, Repos, Calc, U, D, Exporter, PayMethods } = T();
+    const today = D.today();
+    const mk = D.monthKey(today), from = D.startOfMonth(mk), to = D.endOfMonth(mk);
+
+    /* صنفان متطابقان إلا في شيء واحد: أحدهما تُعرف تكلفته والآخر لا */
+    const { rec: known } = await Svc.inventory.saveProduct(null,
+      { name:'صنف تُعرف تكلفته', price:10000, cost:6000, openingQty:10, openingDate:today });
+    const { rec: blind } = await Svc.inventory.saveProduct(null,
+      { name:'صنف بلا تكلفة', price:10000, cost:'', openingQty:10, openingDate:today });
+    eq('الصنف بلا تكلفة يُحفظ بتكلفة صفر', Repos.products.get(blind.id).cost, 0);
+    ok('وصفر التكلفة يُقرأ «غير معروف» لا «يساوي صفراً»',
+       Svc.inventory.costKnown(Repos.products.get(known.id)) === true
+       && Svc.inventory.costKnown(Repos.products.get(blind.id)) === false);
+
+    const base = Svc.sales.summary(from, to);
+    const s1 = await Svc.sales.create({ date:today, lines:[{ productId:known.id, qty:2, unitPrice:10000 }],
+      paidAmount:20000, paymentMethod:'cash' });
+    const s2 = await Svc.sales.create({ date:today, lines:[{ productId:blind.id, qty:2, unitPrice:10000 }],
+      paidAmount:20000, paymentMethod:'cash' });
+    eq('سطر البيع يحمل تكلفته وقت البيع', s1.rec.lines[0].unitCost, 6000);
+    eq('وسطر الصنف بلا تكلفة يحمل صفراً', s2.rec.lines[0].unitCost, 0);
+
+    const sum = Svc.sales.summary(from, to);
+    eq('المبيعات تُحسب كاملة', U.round2(sum.revenue - base.revenue), 40000);
+    eq('تكلفة ما بيع = تكلفة ما تُعرف تكلفته وحده', U.round2(sum.cost - base.cost), 12000);
+    /* الثابت الأهم في هذه المجموعة */
+    eq('الربح لا يشمل بيعاً تكلفته غير متوفرة', U.round2(sum.profit - base.profit), 8000);
+    eq('ما تُعرف تكلفته يُقال بمقداره', U.round2(sum.knownRevenue - base.knownRevenue), 20000);
+    eq('وما لا تُعرف تكلفته يُقال بمقداره أيضاً', U.round2(sum.unknownRevenue - base.unknownRevenue), 20000);
+    ok('التقرير يعلن أنه ناقص', sum.complete === false);
+    ok('الهامش يُحسب على المعروف وحده لا على كل المبيعات',
+       sum.margin != null && sum.margin < 100, sum.margin);
+    ok('اسم الصنف المجهول تكلفتُه مذكور ليُصلَح',
+       sum.unknownNames.indexOf('صنف بلا تكلفة') >= 0, sum.unknownNames.join('،'));
+
+    /* لولا الفصل لكان الربح 28000 وهامشه 70% — رقمان لم يحدثا */
+    ok('الحساب الساذج (المبيعات − التكلفة) مرفوض صراحةً',
+       U.round2(sum.profit - base.profit) !== U.round2(40000 - 12000));
+
+    /* بند حرّ بلا صنف: لا مصدر لتكلفته أصلاً */
+    const s3 = await Svc.sales.create({ date:today, lines:[{ name:'بند حرّ بلا صنف', qty:1, unitPrice:5000 }],
+      paidAmount:5000, paymentMethod:'cash' });
+    const sum3 = Svc.sales.summary(from, to);
+    eq('البند الحرّ لا يزيد الربح', sum3.profit, sum.profit);
+    eq('ويُضاف إلى ما لا تُعرف تكلفته', U.round2(sum3.unknownRevenue - sum.unknownRevenue), 5000);
+
+    /* تسجيل التكلفة يُصلح الأمر للمبيعات القادمة، ولا يُعيد كتابة ماضٍ */
+    const profitBefore = Svc.sales.summary(from, to).profit;
+    await Svc.inventory.saveProduct(blind.id, { name:'صنف بلا تكلفة', price:10000, cost:6000 });
+    eq('تسجيل التكلفة اليوم لا يخترع ربحاً لبيعةٍ تمّت أمس',
+       Svc.sales.summary(from, to).profit, profitBefore);
+    const s4 = await Svc.sales.create({ date:today, lines:[{ productId:blind.id, qty:1, unitPrice:10000 }],
+      paidAmount:10000, paymentMethod:'cash' });
+    eq('والبيعة التالية تحمل التكلفة الجديدة', s4.rec.lines[0].unitCost, 6000);
+    eq('فيزيد الربح بها وحدها', U.round2(Svc.sales.summary(from, to).profit - profitBefore), 4000);
+
+    /* ---------------------- تقويم المخزون ---------------------- */
+    const { rec: blind2 } = await Svc.inventory.saveProduct(null,
+      { name:'مخزون بلا تكلفة', price:8000, cost:'', openingQty:7, openingDate:today });
+    const val = Svc.inventory.valuation();
+    ok('التقويم يعلن أنه جزئي', val.complete === false);
+    ok('الصنف بلا تكلفة يُعدّ ولا يُقوَّم بصفر صامت', val.unknownItems >= 1, val.unknownItems);
+    ok('وكميته محفوظة في التقرير', val.unknownQty >= 7, val.unknownQty);
+    const row = Svc.inventory.rows().find(r => r.p.id === blind2.id);
+    ok('صف الصنف يقول إن تكلفته غير معروفة', row && row.costKnown === false);
+    ok('وشاشة المخزون تجد الأصناف التي تحتاج تكلفة',
+       Svc.inventory.unknownCost().some(r => r.p.id === blind2.id));
+    /* قيمة المخزون لا تكذب في الاتجاه الآخر: لا تُقوَّم البضاعة المجهولة بسعر بيعها */
+    const knownRow = Svc.inventory.rows().find(r => r.p.id === known.id);
+    eq('ما تُعرف تكلفته يُقوَّم بها', knownRow.value, U.round2(knownRow.qty * 6000));
+
+    /* ---------------------- التصديرات تقول الحقيقة نفسها ---------------------- */
+    const prodRows = Exporter.prodRows(Svc.inventory.rows());
+    const blindRow = prodRows.find(r => r.name === 'مخزون بلا تكلفة');
+    ok('عمود أساس التكلفة يقول «غير متوفر»', blindRow.costBasis === Calc.COST_UNKNOWN_AR, blindRow.costBasis);
+    ok('ولا تُكتب تكلفة رقمية مخترعة', blindRow.cost === '', JSON.stringify(blindRow.cost));
+    const csvTxt = Exporter.csv('t.csv', Exporter.PROD_COLS, prodRows);
+    const blindLine = csvTxt.split('\r\n').find(l => l.indexOf('مخزون بلا تكلفة') >= 0);
+    ok('وفي ملف CSV تبقى الخانة فارغة لا صفراً', blindLine.indexOf(',,') >= 0, blindLine.slice(0, 90));
+
+    /* ---------------------- التقرير يقول ما يعرف وما لا يعرف ---------------------- */
+    const rep = T().Reports.build(mk);
+    ok('التقرير الشهري يعلن نقص بيانات التكلفة', rep.sales.complete === false);
+    ok('وتقويم مخزونه جزئي', rep.stock.valuation.complete === false);
+    const text = T().Reports.summaryText(rep);
+    ok('والملخّص التنفيذي يقولها بالعربية لا بالصمت',
+       text.indexOf('غير متوفرة') >= 0 && text.indexOf('ناقص') >= 0, text.slice(-160));
+    const html = T().Reports.html(rep, true);
+    ok('وورقة التقرير المطبوعة تحمل التنبيه نفسه', html.indexOf('غير متوفرة') >= 0);
+    ok('ولا تسمّي الرقم «ربح المتجر» مجرّداً حين يكون ناقصاً',
+       html.indexOf('ربح المتجر (على ما تُعرف تكلفته)') >= 0);
+
+    /* ---------------------- الثابت الحاكم: لا مبلغ يتسرّب بين القسمين ----------------------
+       كل دينار من المبيعات إمّا تُعرف تكلفته أو لا تُعرف. لا ثالث لهما، ولا
+       يسقط دينار بينهما — وإلا صار الفصل نفسه بابَ ضياعٍ جديد. */
+    const inv = Svc.sales.summary(from, to);
+    eq('ما تُعرف تكلفته + ما لا تُعرف = كل المبيعات',
+       U.round2(inv.knownRevenue + inv.unknownRevenue), inv.revenue);
+    /* والخصم على مستوى الفاتورة يُوزَّع ولا يُهمَل: فاتورة بخصم تبقى محكومة بالثابت */
+    const sD = await Svc.sales.create({ date:today, discount:3000,
+      lines:[{ productId:known.id, qty:1, unitPrice:10000 }, { name:'بند حرّ ثانٍ', qty:1, unitPrice:5000 }],
+      paidAmount:12000, paymentMethod:'cash' });
+    const invD = Svc.sales.summary(from, to);
+    eq('والثابت يصمد بعد فاتورة فيها خصم على المستوى الكلي',
+       U.round2(invD.knownRevenue + invD.unknownRevenue), invD.revenue);
+    eq('وإجمالي الفاتورة المخصومة دخل المبيعات كما هو',
+       U.round2(invD.revenue - inv.revenue), sD.rec.total);
+    ok('والخصم لم يُنسب كلّه إلى قسم واحد',
+       invD.knownRevenue > inv.knownRevenue && invD.unknownRevenue > inv.unknownRevenue,
+       `known ${inv.knownRevenue}→${invD.knownRevenue}, unknown ${inv.unknownRevenue}→${invD.unknownRevenue}`);
+
+    /* ---------------------- لا رقم مالي خُلق من العدم ---------------------- */
+    const revLines = U.round2(U.sum(Calc.inRange(Repos.revenues.list(), today, today)
+      .filter(r => r.source === 'product'), r => r.amount));
+    const salePays = U.round2(U.sum(Repos.payments.list().filter(p => p.refType === 'sale' && p.date === today),
+      p => p.amount));
+    eq('كل دفعة بيع صارت سطر إيراد واحداً بالضبط', revLines, salePays);
+  }
+
+  /* ====================== تصديرات محاسبية ======================
+     التصدير ليس زينة: هو ما تحمله صاحبة النادي إلى محاسبها. فإن اختلف
+     رقمٌ فيه عن الشاشة صار النظام مصدرين للحقيقة، وهذا أسوأ من لا تصدير. */
+  async function accountingExports(){
+    const { Svc, Repos, Calc, U, D, Exporter, PayMethods } = T();
+    const today = D.today(), mk = D.monthKey(today);
+    const from = D.startOfMonth(mk), to = D.endOfMonth(mk);
+    const inR = rows => Calc.inRange(rows, from, to);
+
+    /* بيانات حقيقية: مورّد ⇐ مستند ⇐ ترحيل ⇐ تسديد جزئي */
+    const sup = await Svc.suppliers.save(null, { name:'مورّد التصدير' });
+    const { rec: pr } = await Svc.inventory.saveProduct(null, { name:'صنف التصدير', price:9000, cost:5000 });
+    const dr = await Svc.purchases.save(null, { supplierId:sup.id, date:today, invoiceNo:'EX-1',
+      lines:[{ productId:pr.id, qty:10, unitCost:5000 }] });
+    await Svc.purchases.post(dr.rec.id);
+    await Svc.purchases.addPayment({ purchaseId:dr.rec.id, date:today, amount:20000, method:'cash' });
+
+    /* --- المشتريات --- */
+    const puRows = Exporter.purchaseRows(inR(Repos.purchases.list(true)));
+    const mine = puRows.find(r => r.code === dr.rec.code);
+    ok('ورقة المشتريات تجد المستند', !!mine, dr.rec.code);
+    eq('إجمالي المستند في الملف = إجماليه في النظام', mine.total, 50000);
+    eq('والمدفوع فيه = مجموع دفعاته', mine.paid, Svc.purchases.paidFor(dr.rec.id));
+    eq('والمتبقّي = الإجمالي − المدفوع', mine.due, 30000);
+    ok('وحالة السداد مكتوبة بالعربية', mine.payState === 'مدفوع جزئياً', mine.payState);
+    ok('واسم المورّد مذكور', mine.supplier === 'مورّد التصدير', mine.supplier);
+    /* الرقم لا يُحسب مرتين: مجموع الورقة = مجموع الخدمة */
+    eq('مجموع المتبقّي في الورقة = رقم مستحقات الموردين',
+       U.round2(U.sum(puRows.filter(r => r.state === 'مُرحَّل'), r => r.due)),
+       U.round2(U.sum(Svc.purchases.payables().rows
+         .filter(x => D.cmp(x.p.date, from) >= 0 && D.cmp(x.p.date, to) <= 0), x => x.st.due)));
+
+    /* --- دفعات الموردين --- */
+    const spRows = Exporter.supplierPayRows(inR(Repos.purchasePayments.list()));
+    eq('ورقة دفعات الموردين تطابق عددها', spRows.length, inR(Repos.purchasePayments.list()).length);
+    ok('وكل دفعة تحمل طريقتها ومستندها',
+       spRows.every(r => r.method && r.purchase), JSON.stringify(spRows[0]));
+
+    /* --- المقبوضات --- */
+    const pmRows = Exporter.paymentRows(inR(Repos.payments.list()));
+    eq('ورقة المقبوضات تطابق عدد الدفعات', pmRows.length, inR(Repos.payments.list()).length);
+    eq('ومجموعها = مجموع الدفعات في الفترة',
+       U.round2(U.sum(pmRows, r => r.amount)), U.round2(U.sum(inR(Repos.payments.list()), p => p.amount)));
+    ok('وكل صف يقول طريقته', pmRows.every(r => !!r.method));
+
+    /* --- حركة النقد: ورقة المطابقة --- */
+    await Svc.cashbook.close({ date:today, countedCash:Svc.cashbook.expected(today).expected });
+    const cashRows = Exporter.cashRows(from, to);
+    const dayRow = cashRows.find(r => r.date === D.fmt(today));
+    ok('ورقة النقد تجد اليوم المقفل', !!dayRow);
+    const snap = Svc.cashbook.get(today);
+    eq('الافتتاحي في الورقة = الافتتاحي المحفوظ', dayRow.opening, snap.openingCash);
+    eq('والداخل = الداخل', dayRow.cashIn, snap.cashIn);
+    eq('والخارج = الخارج', dayRow.cashOut, snap.cashOut);
+    eq('والمتوقّع = المتوقّع', dayRow.expected, snap.expectedCash);
+    eq('والمعدود = المعدود', dayRow.counted, snap.countedCash);
+    eq('والفرق = المعدود − المتوقّع', dayRow.difference, U.round2(snap.countedCash - snap.expectedCash));
+    /* الثابت الذي تُبنى عليه المطابقة كلها */
+    eq('افتتاحي + داخل − خارج = المتوقّع',
+       U.round2(dayRow.opening + dayRow.cashIn - dayRow.cashOut), dayRow.expected);
+    ok('واليوم المقفل يُقال عنه ذلك', dayRow.state === 'مُقفل', dayRow.state);
+
+    /* --- قاعدة CSV: خانة رقمية فارغة تبقى فارغة --- */
+    const txt = Exporter.csv('t.csv', [{ h:'أ', key:'a', type:'number' }, { h:'ب', key:'b' }],
+      [{ a:'', b:'س' }, { a:0, b:'ص' }, { a:7, b:'ع' }]);
+    const lines = txt.split('\r\n');
+    ok('الفراغ يبقى فراغاً', lines[1] === ',"س"', lines[1]);
+    ok('والصفر الحقيقي يبقى صفراً', lines[2] === '0,"ص"', lines[2]);
+    ok('والرقم يبقى رقماً بلا فواصل', lines[3] === '7,"ع"', lines[3]);
+    ok('والملف يبدأ بترويسة الأعمدة', lines[0] === '"أ","ب"', lines[0]);
+
+    /* --- التصدير لا يحمل كلمات مرور ولا بصماتها --- */
+    const all = [Exporter.csv('a.csv', Exporter.PAYMENT_COLS, pmRows),
+                 Exporter.csv('b.csv', Exporter.PURCHASE_COLS, puRows),
+                 Exporter.csv('c.csv', Exporter.CASH_COLS, cashRows)].join('\n');
+    ok('لا تسرّب أي ورقة كلمة مرور ولا بصمتها',
+       !/passwordHash|salt|كلمة المرور/i.test(all));
+    ok('وكل ملف يبدأ بترويسة تُقرأ بالعربية', all.indexOf('"التاريخ"') >= 0);
+
+    /* --- الشاشة تفتح بلا خطأ وتبني الأوراق نفسها --- */
+    const h = T().Screens.accountingExport(mk);
+    const ovl = document.querySelector('.modal-ov, .overlay, .modal');
+    ok('شاشة التصديرات تُفتح', !!ovl || !!h);
+    if (h && h.close) h.close();
+  }
+
   return {
     get results(){ return results; },
     reset(){ results = []; },
     money, stock, subscriptions, migrations, demo, guards, classes, modals,
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
     capitalMethods, purchases, allocations, periodClose, integrityP2,
+    storeCosting, accountingExports,
     branding, onboarding,
     auth, permMatrix, usersAdmin, accountability, authBackup,
     writeProbe, probeExists, totals, endDates, downgrade

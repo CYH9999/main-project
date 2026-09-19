@@ -679,7 +679,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.3.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.4.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -1827,14 +1827,77 @@ const Calc = {
     return { subtotal, discount:U.round2(disc), total:U.round2(subtotal - disc),
              items:U.round2(U.sum(lines || [], l => Math.abs(Number(l.qty) || 0))) };
   },
-  /* ربح البيع = المبيعات − تكلفة ما بيع (من تكلفة الصنف وقت البيع) */
+  /* ---------------------- تكلفة ما بيع وربح المتجر ----------------------
+     سطر بلا تكلفة مسجَّلة ليس سطراً تكلفته صفر — تكلفته «غير متوفرة»:
+     رصيد افتتاحي أُدخل بلا تكلفة، أو صنف سُعِّر ولم تُكتب كلفته، أو بند حرّ
+     بلا صنف. احتسابها صفراً يصنع ربحاً بنسبة 100% لم يحدث، ويجعل هامشاً
+     كاذباً يُبنى عليه قرار تسعير.
+     لذلك يُفصل ما تُعرف تكلفته عمّا لا تُعرف: الربح يُحسب على المعروف وحده،
+     ويُقال صراحةً كم من المبيعات بقي خارج الحساب. */
+  COST_UNKNOWN_AR: 'غير متوفر',
+  /* تكلفة الوحدة للسطر، أو null إن لم تكن معروفة. الصفر ليس معرفةً بالتكلفة.
+     السطر يحمل تكلفته وقت البيع، وهي وحدها المعتمدة: استعارة تكلفة اليوم
+     لبيعةٍ تمّت قبل شهر تخترع ماضياً لم يكن. ولا يُرجَع إلى تكلفة الصنف
+     الحالية إلا للسطور القديمة التي لا تحمل الحقل أصلاً. */
+  lineUnitCost(line, costByProduct){
+    if (line && line.unitCost != null){
+      const snap = Number(line.unitCost);
+      return (isFinite(snap) && snap > 0) ? snap : null;
+    }
+    const idx = costByProduct || {};
+    const cur = line && line.productId != null ? Number(idx[line.productId]) : NaN;
+    return (isFinite(cur) && cur > 0) ? cur : null;
+  },
   saleProfit(sales, costByProduct, from, to){
-    let revenue = 0, cost = 0;
+    const idx = costByProduct || {};
+    let revenue = 0, knownRevenue = 0, unknownRevenue = 0, cost = 0;
+    let lines = 0, unknownLines = 0, unknownQty = 0;
+    const unknownNames = new Set();
     this.inRange(sales, from, to).forEach(sl => {
-      revenue += Number(sl.total)||0;
-      (sl.lines||[]).forEach(l => { cost += (Number(l.qty)||0) * (Number(l.unitCost != null ? l.unitCost : (costByProduct[l.productId]||0))||0); });
+      const total = Number(sl.total) || 0;
+      revenue += total;
+      /* خصم الفاتورة يُوزَّع على سطورها بنسبة كلٍّ منها، فيبقى مجموع حصص
+         السطور مساوياً لإجمالي الفاتورة ولا يتسرّب مبلغ خارج القسمين. */
+      const sub = U.sum(sl.lines || [], l => Number(l.total) || 0);
+      const ratio = sub > 0 ? total / sub : 0;
+      (sl.lines || []).forEach(l => {
+        lines++;
+        const qty = Number(l.qty) || 0;
+        const share = (Number(l.total) || 0) * ratio;
+        const uc = this.lineUnitCost(l, idx);
+        if (uc == null){
+          unknownLines++; unknownQty += qty; unknownRevenue += share;
+          unknownNames.add(U.norm(l.name) || String(l.productId || '—'));
+        } else { cost += qty * uc; knownRevenue += share; }
+      });
     });
-    return { revenue:U.round2(revenue), cost:U.round2(cost), profit:U.round2(revenue-cost) };
+    revenue = U.round2(revenue); knownRevenue = U.round2(knownRevenue);
+    unknownRevenue = U.round2(unknownRevenue); cost = U.round2(cost);
+    const profit = U.round2(knownRevenue - cost);
+    return { revenue, cost, profit,
+             /* المبيعات المقسومة: ما تُعرف تكلفته وما لا تُعرف */
+             knownRevenue, unknownRevenue,
+             lines, unknownLines, unknownQty:U.round2(unknownQty),
+             unknownNames:[...unknownNames],
+             /* complete=false يعني: الربح أعلاه صحيح لكنه ناقص — لا يشمل كل المبيعات */
+             complete: unknownLines === 0,
+             margin: knownRevenue > 0 ? U.pct(profit, knownRevenue) : null };
+  },
+  /* ------------------------- تقويم المخزون -------------------------
+     صنف بلا تكلفة مسجَّلة ليس بضاعة بلا قيمة — قيمته غير معروفة. جمعه
+     صفراً يُنقِص قيمة المخزن بصمت، فيبدو النادي أفقر ممّا هو. يُقوَّم
+     المعروف، ويُعدّ المجهول ويُقال إن التقويم جزئي. */
+  stockValuation(rows){
+    let value = 0, knownQty = 0, unknownQty = 0, knownItems = 0, unknownItems = 0;
+    (rows || []).forEach(r => {
+      const qty = Number(r.qty) || 0, c = Number(r.cost);
+      if (isFinite(c) && c > 0){
+        value += qty * c;
+        if (qty > 0){ knownItems++; knownQty += qty; }
+      } else if (qty > 0){ unknownItems++; unknownQty += qty; }
+    });
+    return { value:U.round2(value), knownQty:U.round2(knownQty), unknownQty:U.round2(unknownQty),
+             knownItems, unknownItems, complete: unknownItems === 0 };
   },
   /* قيمة المشتركة على مدى حياتها = ما قُبض منها فعلاً، لا ما سُعِّر عليها */
   memberLTV(subs, paidByRef){
@@ -2849,18 +2912,32 @@ Svc.inventory = {
     return out;
   },
   costIndex(){ const o = {}; Repos.products.list(true).forEach(p => o[p.id] = Number(p.cost)||0); return o; },
-  /* صفوف جاهزة للعرض: صنف + رصيد + قيمة + حالة التنبيه */
+  /* هل لهذا الصنف أساس تكلفة يُعتمد عليه؟ الصفر ليس تكلفة — هو غياب تكلفة. */
+  costKnown(product){ const c = Number(product && product.cost); return isFinite(c) && c > 0; },
+  /* صفوف جاهزة للعرض: صنف + رصيد + قيمة + حالة التنبيه.
+     value تبقى قيمة ما تُعرف تكلفته؛ و costKnown يقول للواجهة متى تكتب
+     «غير متوفر» بدل أن ترسم صفراً يبدو حقيقة. */
   rows(inclArchived=false){
     const idx = this.onHandIndex();
     return this.products(inclArchived).map(p => {
       const qty = idx[p.id] || 0;
       const min = Number(p.minStock)||0;
       const low = p.stockTracked !== false && min > 0 && qty <= min;
-      return { p, qty, value:Calc.stockValue(qty, p.cost), low, out: p.stockTracked !== false && qty <= 0 };
+      const known = this.costKnown(p);
+      return { p, qty, costKnown:known, value: known ? Calc.stockValue(qty, p.cost) : 0,
+               low, out: p.stockTracked !== false && qty <= 0 };
     });
   },
   lowStock(){ return this.rows().filter(r => r.low || r.out); },
-  totalValue(){ return U.round2(U.sum(this.rows(), r=>r.value)); },
+  totalValue(){ return this.valuation().value; },
+  /* تقويم المخزون كاملاً: قيمة ما تُعرف تكلفته، وعدّ ما لا تُعرف بلا تقويمه بصفر */
+  valuation(inclArchived=false){
+    return Calc.stockValuation(this.rows(inclArchived).map(r => ({ qty:r.qty, cost:r.p.cost })));
+  },
+  /* أصناف في المخزن بلا أساس تكلفة — ما يجعل ربح المتجر ناقصاً، ومكان إصلاحه */
+  unknownCost(inclArchived=false){
+    return this.rows(inclArchived).filter(r => !r.costKnown && r.qty > 0);
+  },
   async saveProduct(id, d){
     const val = Validate.product(d, Repos.products.list(true), id);
     if (!val.ok) throw new AppError('بيانات الصنف غير صحيحة','VALIDATION', val.errors);
@@ -3023,13 +3100,19 @@ Svc.sales = {
     await Audit.log('sale', on?'archive':'restore', `${on?'إلغاء':'استرجاع'} فاتورة ${sl.code} بمبلغ ${Money.fmt(sl.total)}`, id);
     return rec;
   },
+  /* ملخّص المتجر. الربح هنا «ربح إجمالي على ما تُعرف تكلفته» لا ربح كل ما بيع:
+     complete=false يعني أن جزءاً من المبيعات خارج الحساب لأن تكلفته غير متوفرة،
+     وقيمته في unknownRevenue. تُقرأ الحقول الثلاثة معاً أو لا تُقرأ. */
   summary(from, to){
     const list = Calc.inRange(Repos.sales.list(), from, to);
     const prof = Calc.saleProfit(Repos.sales.list(), Svc.inventory.costIndex(), from, to);
     const idx = Svc.payments.indexBy('sale');
     const rec = Calc.receivables(list, idx);
     return { count:list.length, items:U.round2(U.sum(list, s=>s.items)), revenue:prof.revenue,
-             cost:prof.cost, profit:prof.profit, due:rec.due, dueCount:rec.count };
+             cost:prof.cost, profit:prof.profit, due:rec.due, dueCount:rec.count,
+             knownRevenue:prof.knownRevenue, unknownRevenue:prof.unknownRevenue,
+             unknownLines:prof.unknownLines, unknownQty:prof.unknownQty,
+             unknownNames:prof.unknownNames, complete:prof.complete, margin:prof.margin };
   },
   topProducts(from, to, n=5){
     const agg = {};
@@ -7469,7 +7552,11 @@ const Exporter = (() => {
   function sheetXml(cols, rows, title){
     const colsXml = `<cols>${cols.map((c,i) => `<col min="${i+1}" max="${i+1}" width="${c.w || Math.max(12, String(c.h).length + 6)}" customWidth="1"/>`).join('')}</cols>`;
     const cell = (v, type, ref, styleNum) => {
-      if (type === 'number'){ const n = Number(v); return `<c r="${ref}" s="${styleNum}"><v>${isFinite(n) ? n : 0}</v></c>`; }
+      if (type === 'number'){
+        /* الفراغ يبقى خانة فارغة لا صفراً — فلا يُجمع مجهولٌ مع معلوم */
+        if (v === '' || v == null) return `<c r="${ref}" s="${styleNum}"/>`;
+        const n = Number(v); return `<c r="${ref}" s="${styleNum}"><v>${isFinite(n) ? n : 0}</v></c>`;
+      }
       return `<c r="${ref}" t="inlineStr" s="${styleNum}"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`;
     };
     const colRef = i => { let s = '', n = i + 1; while (n > 0){ const m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = Math.floor((n-1)/26); } return s; };
@@ -7602,9 +7689,12 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
   function csv(filename, cols, rows){
     const q = v => `"${String(v == null ? '' : v).replace(/"/g,'""')}"`;
     const line = arr => arr.join(',');
+    /* خانة رقمية فارغة تبقى فارغة ولا تصير صفراً: الصفر يدخل جمع Excel
+       فيبدو رقماً معروفاً قيمتُه لا شيء، والفراغ يُقرأ «غير متوفر» ولا يُجمع. */
+    const num = v => (v === '' || v == null || !isFinite(Number(v))) ? '' : Number(v);
     const body = [line(cols.map(c => q(c.h))), ...rows.map(r => line(cols.map(c => {
       const v = r[c.key];
-      return c.type === 'number' ? (isFinite(Number(v)) ? Number(v) : 0) : q(v);
+      return c.type === 'number' ? num(v) : q(v);
     })))].join('\r\n');
     UI.download(new Blob(['\uFEFF' + body], { type:'text/csv;charset=utf-8' }), filename);
     return body;
@@ -7687,19 +7777,26 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
     { h:'الرصيد', key:'qty', type:'number', w:11 },
     { h:'حد التنبيه', key:'minStock', type:'number', w:12 },
     { h:'التكلفة', key:'cost', type:'number', w:13 },
+    { h:'أساس التكلفة', key:'costBasis', w:14 },
     { h:'سعر البيع', key:'price', type:'number', w:13 },
     { h:'هامش الوحدة', key:'margin', type:'number', w:13 },
     { h:'قيمة الرصيد', key:'value', type:'number', w:15 },
     { h:'الحالة', key:'state', w:12 },
     { h:'المورّد', key:'supplier', w:20 }
   ];
+  /* عمود «أساس التكلفة» يقول صراحةً متى يكون صفر التكلفة غياباً لا قيمة،
+     فلا يُجمع في جدول محاسبي على أنه تكلفة حقيقية. */
   function prodRows(list){
-    return list.map(({ p, qty, value, low, out }) => ({
-      name:p.name, sku:p.sku||'', category:p.category||'', unit:p.unit||'',
-      qty, minStock:Number(p.minStock)||0, cost:Number(p.cost)||0, price:Number(p.price)||0,
-      margin:U.round2((Number(p.price)||0)-(Number(p.cost)||0)), value,
-      state: p.archived ? 'مؤرشف' : out ? 'نفد' : low ? 'منخفض' : 'متوفّر', supplier:p.supplier||''
-    }));
+    return list.map(({ p, qty, value, low, out, costKnown }) => {
+      const known = costKnown !== undefined ? costKnown : ((Number(p.cost) || 0) > 0);
+      return { name:p.name, sku:p.sku||'', category:p.category||'', unit:p.unit||'',
+        qty, minStock:Number(p.minStock)||0,
+        cost: known ? Number(p.cost)||0 : '', costBasis: known ? 'معروف' : Calc.COST_UNKNOWN_AR,
+        price:Number(p.price)||0,
+        margin: known ? U.round2((Number(p.price)||0)-(Number(p.cost)||0)) : '',
+        value: known ? value : '',
+        state: p.archived ? 'مؤرشف' : out ? 'نفد' : low ? 'منخفض' : 'متوفّر', supplier:p.supplier||'' };
+    });
   }
   const DUE_COLS = [
     { h:'النوع', key:'kind', w:13 },
@@ -7723,6 +7820,127 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
       total:x.st.total, paid:x.st.paid, due:x.st.due
     }));
   }
+  /* --------------- تصديرات المرحلة 3C: ما كان يُقرأ على الشاشة ولا يُصدَّر ---------------
+     قاعدة كل تصدير هنا: أرقامه هي أرقام الخدمة نفسها التي ترسم الشاشة، لا حساب
+     موازٍ يُكتب في المصدِّر فيفترق عنها بعد تعديلين. والمرشِّح بالتاريخ يُمرَّر
+     من الشاشة كما هو حتى يطابق الملفُّ ما تراه العين. */
+  const PURCHASE_COLS = [
+    { h:'رقم المستند', key:'code', w:14 },
+    { h:'التاريخ', key:'date', w:13 },
+    { h:'المورّد', key:'supplier', w:24 },
+    { h:'فاتورة المورّد', key:'invoiceNo', w:16 },
+    { h:'الحالة', key:'state', w:12 },
+    { h:'عدد السطور', key:'lineCount', type:'number', w:11 },
+    { h:'الكميات', key:'items', type:'number', w:11 },
+    { h:'البنود', key:'lines', w:34 },
+    { h:'المجموع', key:'subtotal', type:'number', w:14 },
+    { h:'الخصم', key:'discount', type:'number', w:12 },
+    { h:'الإجمالي', key:'total', type:'number', w:14 },
+    { h:'المدفوع', key:'paid', type:'number', w:14 },
+    { h:'المتبقّي للمورّد', key:'due', type:'number', w:15 },
+    { h:'حالة السداد', key:'payState', w:14 },
+    { h:'ملاحظات', key:'notes', w:24 }
+  ];
+  function purchaseRows(list){
+    const idx = Svc.purchases.paidIndex();
+    return list.map(pu => {
+      const supplier = Repos.suppliers.get(pu.supplierId);
+      const paid = U.round2(idx[pu.id] || 0);
+      /* غير المُرحَّل لا مستحقّ له: المسودة ورقة طلب، والملغى عُكس أثره */
+      const st = pu.status === 'posted' ? Calc.payStatus(pu.total, paid) : Calc.payStatus(0, paid);
+      return { code:pu.code, date:D.fmt(pu.date), supplier:supplier ? supplier.name : '—',
+        invoiceNo:pu.invoiceNo || '', state:Svc.purchases.status(pu).ar,
+        lineCount:(pu.lines || []).length, items:Number(pu.items) || 0,
+        lines:(pu.lines || []).map(l => `${l.name} ×${U.round2(l.qty)}`).join(' | '),
+        subtotal:Number(pu.subtotal) || 0, discount:Number(pu.discount) || 0, total:Number(pu.total) || 0,
+        paid, due:st.due, payState:st.ar, notes:pu.notes || '' };
+    });
+  }
+  const SUPPLIER_PAY_COLS = [
+    { h:'التاريخ', key:'date', w:13 },
+    { h:'المورّد', key:'supplier', w:24 },
+    { h:'المستند', key:'purchase', w:14 },
+    { h:'المبلغ', key:'amount', type:'number', w:14 },
+    { h:'طريقة الدفع', key:'method', w:14 },
+    { h:'ملاحظات', key:'notes', w:24 }
+  ];
+  function supplierPayRows(list){
+    return list.map(pp => {
+      const pu = Repos.purchases.get(pp.purchaseId), sup = Repos.suppliers.get(pp.supplierId);
+      return { date:D.fmt(pp.date), supplier:sup ? sup.name : '—', purchase:pu ? pu.code : '—',
+        amount:Number(pp.amount) || 0, method:PayMethods.label(pp.method), notes:pp.notes || '' };
+    });
+  }
+  const PAYMENT_COLS = [
+    { h:'التاريخ', key:'date', w:13 },
+    { h:'نوع المستند', key:'refType', w:14 },
+    { h:'المستند', key:'doc', w:18 },
+    { h:'المشتركة', key:'member', w:26 },
+    { h:'كود المشتركة', key:'code', w:13 },
+    { h:'المبلغ', key:'amount', type:'number', w:14 },
+    { h:'طريقة الدفع', key:'method', w:14 },
+    { h:'رقم الوصل', key:'receipt', w:14 },
+    { h:'ملاحظات', key:'notes', w:24 }
+  ];
+  function paymentRows(list){
+    return list.map(pm => {
+      const m = pm.memberId ? Repos.members.get(pm.memberId) : null;
+      const doc = pm.refType === 'sale' ? Repos.sales.get(pm.refId) : Repos.subs.get(pm.refId);
+      const rc = Repos.receipts.list(true).find(r => r.paymentId === pm.id && !r.voided);
+      return { date:D.fmt(pm.date), refType:Svc.payments.REF_LABEL[pm.refType] || pm.refType,
+        doc: doc ? (doc.code || doc.planName || '—') : 'مستند محذوف',
+        member:m ? m.name : '—', code:m ? m.code : '',
+        amount:Number(pm.amount) || 0, method:PayMethods.label(pm.method),
+        receipt:rc ? rc.no : '', notes:pm.notes || '' };
+    });
+  }
+  /* حركة النقد يوماً بيوم: الافتتاحي والداخل والخارج والمتوقّع والمعدود والفرق.
+     هذه هي ورقة المطابقة حين يُسأل: لماذا اختلف الدرج عمّا ينبغي؟ */
+  const CASH_COLS = [
+    { h:'التاريخ', key:'date', w:13 },
+    { h:'اليوم', key:'day', w:12 },
+    { h:'الرصيد الافتتاحي', key:'opening', type:'number', w:15 },
+    { h:'دخل نقداً', key:'cashIn', type:'number', w:14 },
+    { h:'خرج نقداً', key:'cashOut', type:'number', w:14 },
+    { h:'المتوقّع', key:'expected', type:'number', w:14 },
+    { h:'المعدود', key:'counted', type:'number', w:14 },
+    { h:'الفرق', key:'difference', type:'number', w:13 },
+    { h:'غير نقدي (دخل)', key:'nonCash', type:'number', w:15 },
+    { h:'حالة اليوم', key:'state', w:13 },
+    { h:'أقفلته', key:'closedBy', w:18 },
+    { h:'سبب الفرق', key:'notes', w:30 }
+  ];
+  /* الأيام المقفلة تُقرأ من لقطتها المحفوظة، والمفتوحة تُحسب من المصدر الآن —
+     فلا يُعاد كتابة يومٍ أُقفل على أرقامٍ تغيّرت بعده. */
+  function cashRows(from, to){
+    const out = [];
+    const closed = Repos.cashDays.list(true).filter(c =>
+      (!from || D.cmp(c.date, from) >= 0) && (!to || D.cmp(c.date, to) <= 0));
+    const seen = new Set();
+    closed.forEach(c => {
+      seen.add(c.date);
+      out.push({ date:D.fmt(c.date), day:D.dayName(c.date), opening:Number(c.openingCash) || 0,
+        cashIn:Number(c.cashIn) || 0, cashOut:Number(c.cashOut) || 0,
+        expected:Number(c.expectedCash) || 0,
+        counted: c.closedAt ? (Number(c.countedCash) || 0) : '',
+        difference: c.closedAt ? (Number(c.difference) || 0) : '',
+        nonCash:Number(c.nonCash) || 0, state: c.closedAt ? 'مُقفل' : 'مفتوح',
+        closedBy:c.closedBy || '', notes:c.notes || '', _d:c.date });
+    });
+    /* أيام فيها حركة ولم يُفتح لها سجل إقفال أصلاً: تُحسب الآن فلا تختفي من الورقة */
+    if (from && to){
+      for (let d = from; D.cmp(d, to) <= 0 && D.cmp(d, D.today()) <= 0; d = D.addDays(d, 1)){
+        if (seen.has(d)) continue;
+        const e = Svc.cashbook.expected(d);
+        if (!e.cashIn && !e.cashOut) continue;
+        out.push({ date:D.fmt(d), day:D.dayName(d), opening:e.opening, cashIn:e.cashIn, cashOut:e.cashOut,
+          expected:e.expected, counted:'', difference:'', nonCash:e.nonCash, state:'مفتوح',
+          closedBy:'', notes:'', _d:d });
+      }
+    }
+    return U.sortBy(out, r => r._d).map(r => { delete r._d; return r; });
+  }
+
   const ATT_COLS = [
     { h:'التاريخ', key:'date', w:13 },
     { h:'اليوم', key:'day', w:12 },
@@ -7737,7 +7955,9 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
                member:m?m.name:'مشتركة محذوفة', code:m?m.code:'', training:t?t.title:'' }; });
   }
   return { zip, xlsx, docx, csv, SUB_COLS, subRows, SALE_COLS, saleRows, PROD_COLS, prodRows,
-           DUE_COLS, dueRows, ATT_COLS, attRows, xesc };
+           DUE_COLS, dueRows, ATT_COLS, attRows, xesc,
+           PURCHASE_COLS, purchaseRows, SUPPLIER_PAY_COLS, supplierPayRows,
+           PAYMENT_COLS, paymentRows, CASH_COLS, cashRows };
 })();
 
 
@@ -7979,6 +8199,9 @@ Views.dashboard = {
     if (Svc.leads.dueFollowUps().length) alerts.push(['warn', `${Svc.leads.dueFollowUps().length} مهتمّة تنتظر متابعة`, 'crm', null]);
     if (docsSoon.length) alerts.push(['warn', `${docsSoon.length} مستند ينتهي قريباً`, 'members', null]);
     if (lowStock.length) alerts.push(['warn', `${lowStock.length} صنف تحت حدّ التنبيه`, 'inventory', null]);
+    /* ربح المتجر ناقص ما دامت أصناف تُباع بلا تكلفة مسجَّلة — والإصلاح في شاشة المخزون */
+    if (!saleSum.complete)
+      alerts.push(['warn', `ربح المتجر ناقص: ${Money.fmt(saleSum.unknownRevenue)} من المبيعات بلا تكلفة معروفة`, 'inventory', null]);
     if (missingCash.length) alerts.push(['bad', `${missingCash.length} يوم بحركة نقدية بلا إقفال صندوق`, 'desk', null]);
     if (birthdays.length) alerts.push(['ok', `${birthdays.length} عيد ميلاد خلال الأيام القادمة`, 'members', null]);
 
@@ -8019,7 +8242,9 @@ Views.dashboard = {
         </div>
 
         <div class="grid g-4">
-          ${kpi('مبيعات المتجر', Money.fmt(saleSum.revenue), `${saleSum.count} فاتورة — ربح ${Money.fmt(saleSum.profit)}`, 'pos')}
+          ${kpi('مبيعات المتجر', Money.fmt(saleSum.revenue),
+            saleSum.complete ? `${saleSum.count} فاتورة — ربح ${Money.fmt(saleSum.profit)}`
+                             : `${saleSum.count} فاتورة — ربح ${Money.fmt(saleSum.profit)} على ما تُعرف تكلفته فقط`, 'pos')}
           ${kpi('اشتراكات الشهر', renewals, 'جديدة وتجديدات', 'plum')}
           ${kpi('إيرادات السنة', Money.fmt(yearRev), String(today.slice(0,4)), 'plum')}
           ${kpi('صافي السنة', Money.fmt(U.round2(yearRev-yearExp)), `مصروفات ${Money.fmt(yearExp)}`, yearRev-yearExp>=0?'pos':'neg')}
@@ -10020,6 +10245,7 @@ Views.finance = {
           <div class="t-sub" style="margin-top:6px">التوزيع يخرج من الدرج اليوم، ولا يُخصم من الربح في أي تقرير.</div>` : ''}
       </div></div>
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>سجل الإقفالات</h3><div class="sp"></div>
+        <button class="btn btn-sm" id="cashCsv">${svg(ICON.down, 15)} CSV</button>
         <button class="btn btn-sm" id="cashPrint">${svg(ICON.print, 15)} طباعة</button></div><div class="card-body">
         ${rows.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>افتتاحي</th><th>داخل</th><th>خارج</th><th>متوقّع</th><th>معدود</th><th>الفرق</th><th>ملاحظات</th><th></th></tr></thead><tbody>
           ${rows.map(c => `<tr><td class="num">${D.fmt(c.date)}</td><td class="num">${Money.fmt(c.openingCash)}</td>
@@ -10051,6 +10277,14 @@ Views.finance = {
     if (pa) pa.onclick = () => Actions.printDayReceipts(today);
     const dp = body.querySelector('#cashDayPrint');
     if (dp) dp.onclick = () => Print.open(`كشف صندوق ${D.fmt(today)}`, Print.cashDayHtml(today));
+    /* ورقة المطابقة: الأيام المقفلة بلقطتها، والمفتوحة محسوبة الآن — كما في السجل أعلاه */
+    const cc = body.querySelector('#cashCsv');
+    if (cc) cc.onclick = () => {
+      const dates = rows.map(c => c.date).sort();
+      const from = dates.length ? dates[0] : D.today(), to = dates.length ? dates[dates.length-1] : D.today();
+      Exporter.csv(`حركة-النقد-${D.today()}.csv`, Exporter.CASH_COLS, Exporter.cashRows(from, to));
+      Audit.log('report','export',`تصدير CSV: حركة النقد ${D.fmt(from)} — ${D.fmt(to)}`);
+    };
     const pr = body.querySelector('#cashPrint');
     if (pr) pr.onclick = () => Print.open('سجل إقفال الصندوق', Print.reportHtml('سجل إقفال الصندوق', [{
       headers:['التاريخ','افتتاحي','داخل','خارج','متوقّع','معدود','الفرق','ملاحظات'],
@@ -10461,7 +10695,9 @@ Views.pos = {
     root.innerHTML = `<div class="stack">
       <div class="grid g-4">
         ${kpi('مبيعات الشهر', Money.fmt(s.revenue), `${s.count} فاتورة`, 'pos')}
-        ${kpi('ربح المبيعات', Money.fmt(s.profit), `تكلفة ${Money.fmt(s.cost)}`, s.profit>=0?'pos':'neg')}
+        ${kpi(s.complete ? 'ربح المبيعات' : 'ربح المبيعات (جزئي)', Money.fmt(s.profit),
+          s.complete ? `تكلفة ${Money.fmt(s.cost)}`
+            : `تكلفة ${Money.fmt(s.cost)} — و${Money.fmt(s.unknownRevenue)} بلا تكلفة معروفة`, s.profit>=0?'pos':'neg')}
         ${kpi('قطع مباعة', s.items, 'خلال الشهر', 'plum')}
         ${kpi('غير محصّل', Money.fmt(s.due), s.dueCount?`${s.dueCount} فاتورة`:'كل الفواتير محصّلة', s.due>0?'neg':'pos')}
       </div>
@@ -10473,6 +10709,7 @@ Views.pos = {
           <label class="switch">إلى ${UI.input('slTo', f.to, {type:'date'})}</label>
           <label class="switch"><input type="checkbox" id="slArch" ${f.archived?'checked':''}> الملغاة</label>
           <div style="flex:1"></div>
+          <button class="btn btn-sm" id="slCsv">${svg(ICON.down,15)} CSV</button>
           <button class="btn btn-sm" id="slXls">${svg(ICON.down,15)} Excel</button>
           <button class="btn btn-sm btn-primary" id="slAdd">${svg(ICON.plus,15,2.4)} بيع جديد</button>
         </div><div id="slTable"></div></div>
@@ -10525,6 +10762,9 @@ Views.pos = {
     $('slAdd').onclick = () => Forms.sale();
     $('slXls').onclick = () => Exporter.xlsx(`المبيعات-${D.today()}.xlsx`,
       [{ name:'المبيعات', cols:Exporter.SALE_COLS, rows:Exporter.saleRows(f._rows||[]) }]);
+    /* نفس الصفوف المعروضة بعد المرشِّحات — الملف يطابق ما تراه العين */
+    $('slCsv').onclick = () => Exporter.csv(`المبيعات-${D.today()}.csv`,
+      Exporter.SALE_COLS, Exporter.saleRows(f._rows||[]));
   }
 };
 
@@ -10539,15 +10779,26 @@ Views.inventory = {
     if (params && params.tab === 'purchases') return this.purchases(root);
     const f = State.f.inventory;
     const all = Svc.inventory.rows(f.archived);
+    const val = Svc.inventory.valuation(f.archived);
     const low = all.filter(r => r.low || r.out);
     const cats = [...new Set(all.map(r => r.p.category).filter(Boolean))];
     root.innerHTML = `<div class="stack">
       <div class="grid g-4">
         ${kpi('أصناف مسجّلة', all.length, `${all.filter(r=>r.p.active!==false).length} صنف فعّال`, 'plum')}
-        ${kpi('قيمة المخزون', Money.fmt(U.sum(all, r=>r.value)), 'بسعر التكلفة', 'pos')}
+        ${kpi('قيمة المخزون', Money.fmt(val.value),
+          val.complete ? 'بسعر التكلفة'
+            : `بسعر التكلفة — عدا ${val.unknownItems} صنفاً (${U.round2(val.unknownQty)} قطعة) بلا تكلفة مسجَّلة`, 'pos')}
         ${kpi('تحت حد التنبيه', low.length, low.length?'تحتاج إعادة طلب':'كل الأصناف ضمن الحد', low.length?'neg':'pos')}
         ${kpi('نفد من المخزن', all.filter(r=>r.out).length, '', all.filter(r=>r.out).length?'neg':'')}
       </div>
+      ${val.complete ? '' : `<div class="card" style="border-color:var(--gold-600)"><div class="card-body">
+        <strong>${val.unknownItems} صنفاً في المخزن بلا تكلفة مسجَّلة.</strong>
+        <div class="t-sub" style="margin-top:6px">قيمة هذه الأصناف غير محسوبة، وربح بيعها لا يدخل ربح المتجر —
+          لأن تكلفة لا تُعرف ليست تكلفة صفر. اكتبي تكلفة الوحدة في بطاقة الصنف ليُحتسب ربحه.</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:10px">
+          ${Svc.inventory.unknownCost(f.archived).slice(0,12).map(r =>
+            `<button class="btn btn-sm" data-edit-unknown="${U.esc(r.p.id)}">${U.esc(r.p.name)} — ${U.round2(r.qty)}</button>`).join('')}
+        </div></div></div>`}
       ${low.length ? `<div class="card" style="border-color:var(--red-600)"><div class="card-head"><h3>تنبيه المخزون</h3></div>
         <div class="card-body tight"><div class="tbl-wrap"><table class="tbl"><tbody>
         ${low.map(r=>`<tr><td><div class="t-name">${U.esc(r.p.name)}</div><div class="t-sub">${U.esc(r.p.category||'بلا تصنيف')}</div></td>
@@ -10581,12 +10832,17 @@ Views.inventory = {
             <div class="t-sub">${U.esc(r.p.sku||'')}${r.p.sku&&r.p.category?' — ':''}${U.esc(r.p.category||'')}</div>` },
         { h:'الرصيد', sort:r=>r.qty, render:r=>`<strong class="num ${r.out?'money-neg':r.low?'':''}">${U.round2(r.qty)}</strong>
             <span class="t-sub">${U.esc(r.p.unit||'')}</span>${r.p.stockTracked===false?'<div class="t-sub">بلا متابعة</div>':''}` },
-        { h:'التكلفة', sort:r=>r.p.cost, render:r=>UI.money(r.p.cost) },
+        /* بلا تكلفة مسجَّلة لا تُرسم أصفار: الصفر يُقرأ رقماً، و«غير متوفر» يُقرأ حقيقة */
+        { h:'التكلفة', sort:r=>r.p.cost, render:r=> r.costKnown ? UI.money(r.p.cost)
+            : `<span class="t-sub">${U.esc(Calc.COST_UNKNOWN_AR)}</span>` },
         { h:'سعر البيع', sort:r=>r.p.price, render:r=>`<strong>${Money.fmt(r.p.price)}</strong>` },
-        { h:'هامش الربح', sort:r=>r.p.price-r.p.cost, render:r=>{ const m = U.round2(r.p.price-r.p.cost);
+        { h:'هامش الربح', sort:r=>r.costKnown ? r.p.price-r.p.cost : -Infinity, render:r=>{
+            if (!r.costKnown) return `<span class="t-sub">${U.esc(Calc.COST_UNKNOWN_AR)}</span>`;
+            const m = U.round2(r.p.price-r.p.cost);
             return `<span class="num ${m>0?'money-pos':m<0?'money-neg':''}">${Money.fmt(m)}</span>
               <div class="t-sub">${r.p.price>0?U.pct(m, r.p.price)+'%':''}</div>`; } },
-        { h:'قيمة الرصيد', sort:r=>r.value, render:r=>UI.money(r.value) },
+        { h:'قيمة الرصيد', sort:r=>r.value, render:r=> r.costKnown ? UI.money(r.value)
+            : `<span class="t-sub">${U.esc(Calc.COST_UNKNOWN_AR)}</span>` },
         { h:'الحالة', render:r=> r.p.archived ? '<span class="chip chip-none"><span class="dot"></span>مؤرشف</span>'
             : r.out ? '<span class="chip chip-expired"><span class="dot"></span>نفد</span>'
             : r.low ? '<span class="chip chip-soon"><span class="dot"></span>منخفض</span>'
@@ -10609,6 +10865,7 @@ Views.inventory = {
     };
     draw();
     root.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => Forms.stockMove(b.dataset.buy, 'purchase'));
+    root.querySelectorAll('[data-edit-unknown]').forEach(b => b.onclick = () => Forms.product(b.dataset.editUnknown));
     $('invQ').oninput = U.debounce(e => { f.q = e.target.value; f.page=1; draw(); }, 220);
     $('f_invCat').onchange = e => { f.cat = e.target.value; f.page=1; draw(); };
     $('f_invState').onchange = e => { f.state = e.target.value; f.page=1; draw(); };
@@ -10660,6 +10917,7 @@ Views.inventory = {
           ${UI.select('puSup', f.supplierId, [{v:'',t:'كل الموردين'}, ...suppliers.map(x => ({ v:x.id, t:x.name }))])}
           ${UI.select('puSt', f.status, [{v:'',t:'كل الحالات'},{v:'posted',t:'مُرحَّل'},{v:'draft',t:'مسودة'},{v:'cancelled',t:'ملغى'}])}
           <div style="flex:1"></div>
+          <button class="btn btn-sm" id="puCsv">${svg(ICON.down,15)} CSV</button>
           <button class="btn btn-sm" id="puSup2">الموردون</button>
           <button class="btn btn-sm btn-primary" id="puAdd">${svg(ICON.plus,15,2.4)} مستند شراء</button>
         </div><div id="puTable"></div></div></div>`;
@@ -10671,6 +10929,7 @@ Views.inventory = {
       if (f.supplierId) rows = rows.filter(p => p.supplierId === f.supplierId);
       if (f.status) rows = rows.filter(p => p.status === f.status);
       rows = f.sortFn ? U.sortBy(rows, f.sortFn, f.sortDir) : U.sortBy(rows, p => p.date, -1);
+      f._rows = rows;
       UI.table($('puTable'), { state:f, rows, rowCls:p => p.status === 'cancelled' ? 'archived-row' : '',
         cols:[
           { h:'المستند', sort:p=>p.code, render:p=>`<div class="t-name num">${U.esc(p.code)}</div>
@@ -10698,6 +10957,9 @@ Views.inventory = {
     $('f_puSt').onchange = e => { f.status = e.target.value; f.page = 1; draw(); };
     $('puAdd').onclick = () => Forms.purchase();
     $('puSup2').onclick = () => go('inventory', { tab:'suppliers' });
+    /* نفس الصفوف المعروضة بعد المرشِّحات — المدفوع والمتبقّي من خدمة المشتريات نفسها */
+    $('puCsv').onclick = () => Exporter.csv(`المشتريات-${D.today()}.csv`,
+      Exporter.PURCHASE_COLS, Exporter.purchaseRows(f._rows || []));
     root.querySelectorAll('[data-pupay]').forEach(b => b.onclick = () => Forms.purchasePayment(b.dataset.pupay));
     const pp = root.querySelector('#puPayPrint');
     if (pp) pp.onclick = () => Print.open('مستحقات الموردين', Print.payablesHtml());
@@ -10918,7 +11180,8 @@ const Reports = {
       })(),
       stock: (() => {
         const rows = Svc.inventory.rows();
-        return { count:rows.length, value:U.round2(U.sum(rows, r=>r.value)),
+        const val = Calc.stockValuation(rows.map(r => ({ qty:r.qty, cost:r.p.cost })));
+        return { count:rows.length, value:val.value, valuation:val,
                  low:rows.filter(r => r.low && !r.out), out:rows.filter(r => r.out), rows };
       })(),
       attendance: (() => {
@@ -10994,8 +11257,12 @@ const Reports = {
     parts.push(`سُجّل ${r.members.subsCount} اشتراكاً بمعدل ${Money.fmt(r.members.avgTicket)} للاشتراك الواحد، ` +
       `منها ${r.members.renewed} تجديداً و${r.members.neu} مشتركة جديدة.`);
     parts.push(`عدد الفعّالات اليوم ${r.members.active} من ${r.members.total}، و${r.members.expiring} اشتراكاً يقترب من الانتهاء.`);
-    if (r.sales.count) parts.push(`باع المتجر ${r.sales.count} فاتورة بقيمة ${Money.fmt(r.sales.revenue)} ` +
-      `بربح إجمالي ${Money.fmt(r.sales.profit)} بعد تكلفة البضاعة المباعة (${Money.fmt(r.sales.cost)}).`);
+    if (r.sales.count) parts.push(`باع المتجر ${r.sales.count} فاتورة بقيمة ${Money.fmt(r.sales.revenue)}، ` +
+      (r.sales.complete
+        ? `بربح إجمالي ${Money.fmt(r.sales.profit)} بعد تكلفة البضاعة المباعة (${Money.fmt(r.sales.cost)}).`
+        : `ومنها ${Money.fmt(r.sales.knownRevenue)} تُعرف تكلفتها فحقّقت ربحاً إجمالياً ${Money.fmt(r.sales.profit)} ` +
+          `بعد تكلفة ${Money.fmt(r.sales.cost)}؛ أمّا ${Money.fmt(r.sales.unknownRevenue)} فتكلفتها غير متوفرة ` +
+          `ولم تدخل حساب الربح — الربح أعلاه ناقص لا كامل.`));
     if (r.attendance.total) parts.push(`بلغ الحضور ${r.attendance.total} زيارة من ${r.attendance.unique} مشتركة، ` +
       `بمعدل ${r.attendance.avg} زيارة يومياً.`);
     if (r.staff.tot.net) parts.push(`صافي رواتب الشهر ${Money.fmt(r.staff.tot.net)} دُفع منها ${Money.fmt(r.staff.tot.paid)}.`);
@@ -11073,12 +11340,30 @@ const Reports = {
 
       ${sec('تقرير المتجر والمخزون', `
         <div class="rep-cards">
-          ${[['مبيعات الفترة', money(r.sales.revenue), 'pos'], ['تكلفة البضاعة المباعة', money(r.sales.cost), 'neg'],
-             ['ربح المتجر', money(r.sales.profit), r.sales.profit>=0?'pos':'neg'],
+          ${[['مبيعات الفترة', money(r.sales.revenue), 'pos'],
+             ['تكلفة البضاعة المباعة', money(r.sales.cost), 'neg'],
+             [r.sales.complete ? 'ربح المتجر' : 'ربح المتجر (على ما تُعرف تكلفته)',
+              money(r.sales.profit), r.sales.profit>=0?'pos':'neg'],
              ['عدد الفواتير', String(r.sales.count), ''], ['القطع المباعة', String(r.sales.items), ''],
-             ['قيمة المخزون الحالي', money(r.stock.value), '']]
+             [r.stock.valuation.complete ? 'قيمة المخزون الحالي' : 'قيمة المخزون (جزئية)',
+              money(r.stock.value), '']]
             .map(([l,v,c]) => `<div class="rep-card ${c}"><span>${l}</span><strong>${v}</strong></div>`).join('')}
         </div>
+        ${(r.sales.complete && r.stock.valuation.complete) ? `<p class="t-sub">
+            أساس التكلفة: متوسط التكلفة المرجّح، وكل سطر بيع يحمل تكلفته وقت البيع.
+            كل ما بيع وكل ما في المخزن له تكلفة معروفة، فالأرقام أعلاه كاملة.</p>`
+          : `<table class="tbl rep-tbl"><tbody>
+            ${kv('مبيعات تُعرف تكلفتها', money(r.sales.knownRevenue), 'دخلت حساب الربح')}
+            ${kv('مبيعات تكلفتها غير متوفرة', money(r.sales.unknownRevenue),
+                 `${r.sales.unknownLines} سطراً — خارج حساب الربح`)}
+            ${r.sales.margin != null ? kv('هامش الربح الإجمالي', r.sales.margin + '%', 'محسوب على ما تُعرف تكلفته وحده') : ''}
+            ${r.stock.valuation.complete ? '' : kv('مخزون بلا تكلفة مسجَّلة',
+                 `${r.stock.valuation.unknownItems} صنفاً — ${U.round2(r.stock.valuation.unknownQty)} قطعة`,
+                 'غير مقوَّمة، ولم تُحتسب بصفر')}
+            </tbody></table>
+            <p class="t-sub">أساس التكلفة: متوسط التكلفة المرجّح، وكل سطر بيع يحمل تكلفته وقت البيع.
+              ما لا تُعرف تكلفته — رصيد افتتاحي بلا تكلفة، أو صنف لم تُكتب كلفته، أو بند حرّ بلا صنف —
+              لا يُحتسب بصفر ولا يدخل الربح، لأن ربحاً بنسبة 100% لم يحدث. الأرقام أعلاه صحيحة لكنها ناقصة.</p>`}
         <div class="rep-two">
           <div><h4>الأكثر مبيعاً</h4>
             <table class="tbl rep-tbl"><thead><tr><th>الصنف</th><th>الكمية</th><th>المبيعات</th></tr></thead><tbody>
@@ -11264,9 +11549,20 @@ const Reports = {
         { type:'h1', text:'تقرير المتجر والمخزون' },
         { type:'kv', rows:[
           ['مبيعات الفترة', Money.fmt(r.sales.revenue)], ['تكلفة البضاعة المباعة', Money.fmt(r.sales.cost)],
-          ['ربح المتجر', Money.fmt(r.sales.profit)], ['عدد الفواتير', String(r.sales.count)],
-          ['القطع المباعة', String(r.sales.items)], ['قيمة المخزون الحالي', Money.fmt(r.stock.value)],
+          [r.sales.complete ? 'ربح المتجر' : 'ربح المتجر (على ما تُعرف تكلفته)', Money.fmt(r.sales.profit)],
+          ...(r.sales.complete ? [] : [
+            ['مبيعات تُعرف تكلفتها', Money.fmt(r.sales.knownRevenue)],
+            ['مبيعات تكلفتها غير متوفرة', `${Money.fmt(r.sales.unknownRevenue)} — ${r.sales.unknownLines} سطراً`]]),
+          ...(r.sales.margin != null ? [['هامش الربح الإجمالي', r.sales.margin + '%']] : []),
+          ['عدد الفواتير', String(r.sales.count)],
+          ['القطع المباعة', String(r.sales.items)],
+          [r.stock.valuation.complete ? 'قيمة المخزون الحالي' : 'قيمة المخزون (جزئية)', Money.fmt(r.stock.value)],
+          ...(r.stock.valuation.complete ? [] : [['مخزون بلا تكلفة مسجَّلة',
+            `${r.stock.valuation.unknownItems} صنفاً — ${U.round2(r.stock.valuation.unknownQty)} قطعة`]]),
           ['أصناف تحت حد التنبيه', String(r.stock.low.length + r.stock.out.length)] ] },
+        ...(r.sales.complete && r.stock.valuation.complete ? [] : [{ type:'p',
+          text:'أساس التكلفة متوسط التكلفة المرجّح. ما لا تُعرف تكلفته لا يُحتسب بصفر ولا يدخل الربح، '
+             + 'لأن ربحاً بنسبة 100% لم يحدث — فأرقام المتجر أعلاه صحيحة لكنها ناقصة.' }]),
         ...(r.sales.top.length ? [{ type:'table', title:'الأكثر مبيعاً', headers:['الصنف','الكمية','المبيعات'],
           rows:r.sales.top.map(t => [t.name, String(U.round2(t.qty)), Money.fmt(t.total)]) }] : []),
         { type:'h1', text:'تقرير الحضور' },
@@ -11295,8 +11591,12 @@ const Reports = {
                {k:'اشتراكات الشهر', v:r.members.subsCount}, {k:'قيمة اشتراكات الشهر', v:r.members.subsValue},
                {k:'المقبوض من الاشتراكات', v:r.members.subsRevenue},
                {k:'صافي الرواتب', v:r.staff.tot.net},
-               {k:'مبيعات المتجر', v:r.sales.revenue}, {k:'ربح المتجر', v:r.sales.profit},
-               {k:'قيمة المخزون', v:r.stock.value}, {k:'المستحقات غير المحصّلة', v:r.dues.total},
+               {k:'مبيعات المتجر', v:r.sales.revenue},
+               {k: r.sales.complete ? 'ربح المتجر' : 'ربح المتجر (على ما تُعرف تكلفته)', v:r.sales.profit},
+               ...(r.sales.complete ? [] : [{k:'مبيعات تكلفتها غير متوفرة', v:r.sales.unknownRevenue}]),
+               {k: r.stock.valuation.complete ? 'قيمة المخزون' : 'قيمة المخزون (جزئية)', v:r.stock.value},
+               ...(r.stock.valuation.complete ? [] : [{k:'أصناف بلا تكلفة مسجَّلة', v:r.stock.valuation.unknownItems}]),
+               {k:'المستحقات غير المحصّلة', v:r.dues.total},
                {k:'زيارات الحضور', v:r.attendance.total},
                {k:'مهتمّات جديدات', v:r.crm.total}, {k:'اشتركن منهنّ', v:r.crm.converted},
                {k:'نسبة التحويل %', v:r.crm.conversionRate},
@@ -11369,6 +11669,7 @@ Views.reports = {
       <div class="card no-print"><div class="filters">
         ${UI.select('rpPeriod', key, monthOptions())}
         <div style="flex:1"></div>
+        <button class="btn btn-sm" id="rpCsv">${svg(ICON.down,15)} تصديرات محاسبية</button>
         <button class="btn btn-sm" id="rpXls">${svg(ICON.down,15)} Excel</button>
         <button class="btn btn-sm" id="rpWord">${svg(ICON.down,15)} Word</button>
         <button class="btn btn-sm btn-dark" id="rpPrint">${svg(ICON.print,15)} طباعة / PDF</button>
@@ -11381,6 +11682,7 @@ Views.reports = {
       Audit.log('report','export',`تصدير Word لتقرير ${r.title}`); };
     $('rpXls').onclick = () => { Reports.excel(r); UI.toast('تم تصدير التقرير بصيغة Excel');
       Audit.log('report','export',`تصدير Excel لتقرير ${r.title}`); };
+    $('rpCsv').onclick = () => Screens.accountingExport(key);
   }
 };
 
@@ -14183,6 +14485,110 @@ Screens.purchase = function(id){
 };
 
 /* كشف حساب المورّد: ثلاثة أسئلة وثلاث إجابات في ورقة واحدة */
+/* ------------------------- تصديرات محاسبية (CSV) -------------------------
+   المحاسبة خارج النظام تحتاج الأرقام نفسها التي تراها الشاشة، لا أرقاماً
+   تُعاد صياغتها في المصدِّر فتفترق عنها. لذلك كل ورقة هنا تُبنى من الخدمة
+   التي ترسم التقرير نفسه، ومرشِّح التاريخ واحد للشاشة وللملف.
+   ليست مركزاً مالياً ثانياً: زرٌّ واحد في شاشة التقارير يفتح قائمة ما يُصدَّر. */
+Screens.accountingExport = function(key){
+  const period = key || State.f.reportPeriod || D.monthKey(D.today());
+  const { from, to } = periodOf(period);
+  const inR = rows => Calc.inRange(rows, from, to);
+
+  /* كل تصدير: اسمه، أعمدته، وصفوفه محسوبة عند الضغط لا قبله */
+  const SHEETS = [
+    { id:'revenues', name:'الإيرادات',
+      note:'كل سطر إيراد في الفترة — والإيراد يُسجَّل بالقبض لا بالتسعير',
+      cols:[{h:'التاريخ',key:'date',w:13},{h:'المصدر',key:'source',w:16},{h:'الوصف',key:'desc',w:34},
+            {h:'طريقة الدفع',key:'method',w:14},{h:'المبلغ',key:'amount',type:'number',w:15}],
+      rows:() => U.sortBy(inR(Repos.revenues.list()), r => r.date).map(r => ({
+        date:D.fmt(r.date), source:sourceName(r.source), desc:r.description || '',
+        method:PayMethods.label(r.method), amount:Number(r.amount) || 0 })) },
+    { id:'payments', name:'المقبوضات',
+      note:'الدفعات التي قُبضت فعلاً، ورقم وصل كلٍّ منها',
+      cols:Exporter.PAYMENT_COLS,
+      rows:() => Exporter.paymentRows(U.sortBy(inR(Repos.payments.list()), x => x.date)) },
+    { id:'expenses', name:'المصروفات',
+      note:'كل مصروف في الفترة بتصنيفه وطريقة صرفه',
+      cols:[{h:'التاريخ',key:'date',w:13},{h:'الوصف',key:'desc',w:34},{h:'التصنيف',key:'cat',w:18},
+            {h:'الجهة',key:'payee',w:20},{h:'طريقة الصرف',key:'method',w:14},
+            {h:'المبلغ',key:'amount',type:'number',w:15}],
+      rows:() => U.sortBy(inR(Repos.expenses.list()), r => r.date).map(r => ({
+        date:D.fmt(r.date), desc:r.description || '', cat:catName(r.categoryId), payee:r.payee || '',
+        method:PayMethods.label(r.method), amount:Number(r.amount) || 0 })) },
+    { id:'sales', name:'فواتير البيع',
+      note:'فواتير المتجر ومقبوضها ومتبقّيها',
+      cols:Exporter.SALE_COLS,
+      rows:() => { const idx = Svc.payments.indexBy('sale');
+        return Exporter.saleRows(U.sortBy(inR(Repos.sales.list()), x => x.date)
+          .map(sl => ({ sl, member: sl.memberId ? Repos.members.get(sl.memberId) : null,
+                        st:Calc.payStatus(sl.total, idx[sl.id] || 0) }))); } },
+    { id:'purchases', name:'مستندات الشراء',
+      note:'المشتريات من الموردين، وما سُدّد منها وما بقي',
+      cols:Exporter.PURCHASE_COLS,
+      rows:() => Exporter.purchaseRows(U.sortBy(inR(Repos.purchases.list(true)), x => x.date)) },
+    { id:'supplierPayments', name:'دفعات الموردين',
+      note:'ما خرج فعلاً للموردين — ليس مصروفاً ثانياً، هو تسديد التزام سُجّل مرة',
+      cols:Exporter.SUPPLIER_PAY_COLS,
+      rows:() => Exporter.supplierPayRows(U.sortBy(inR(Repos.purchasePayments.list()), x => x.date)) },
+    { id:'payroll', name:'الرواتب',
+      note:'كشوف الفترة وصافيها وحالة دفعها',
+      cols:[{h:'الموظفة',key:'staff',w:24},{h:'الفترة',key:'period',w:12},
+            {h:'الأساسي',key:'base',type:'number',w:14},{h:'إضافات',key:'add',type:'number',w:13},
+            {h:'خصومات',key:'ded',type:'number',w:13},{h:'سلف',key:'adv',type:'number',w:13},
+            {h:'الصافي',key:'net',type:'number',w:14},{h:'الحالة',key:'state',w:12}],
+      rows:() => Svc.payroll.ofPeriod(period).map(pr => {
+        const st = Repos.staff.get(pr.staffId), t = Calc.payrollNet(pr);
+        return { staff:st ? st.name : 'موظفة محذوفة', period:pr.period,
+          base:Number(pr.baseSalary) || 0, add:t.additions, ded:t.deductions, adv:t.advances,
+          net:Number(pr.net) || 0, state: pr.status === 'paid' ? 'مدفوع' : 'غير مدفوع' }; }) },
+    { id:'cash', name:'حركة النقد',
+      note:'الافتتاحي والداخل والخارج والمتوقّع والمعدود والفرق — ورقة المطابقة',
+      cols:Exporter.CASH_COLS, rows:() => Exporter.cashRows(from, to) }
+  ];
+
+  const counts = SHEETS.map(x => { try { return x.rows().length; } catch(e){ Log.warn('تعذّر بناء ' + x.name, e); return 0; } });
+
+  const h = UI.modal({
+    title:`تصديرات محاسبية — ${D.monthName(period)}`,
+    body:`<div class="stack">
+      <div class="card"><div class="card-body" style="background:var(--rose-50);border-radius:var(--r-lg)">
+        كل ملف هنا يحمل أرقام الفترة <strong>${U.esc(D.fmt(from))} — ${U.esc(D.fmt(to))}</strong> كما تعرضها التقارير،
+        بترميز UTF-8 يفتح العربية سليمة في Excel. لا يحوي أي ملف كلمة مرور ولا بيانات دخول.
+      </div></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>الورقة</th><th>الصفوف</th><th></th></tr></thead><tbody>
+      ${SHEETS.map((x, i) => `<tr><td><div class="t-name">${U.esc(x.name)}</div>
+          <div class="t-sub">${U.esc(x.note)}</div></td>
+        <td><span class="num">${counts[i]}</span></td>
+        <td class="ta-l"><button class="btn btn-sm ${counts[i] ? 'btn-primary' : ''}" data-x="${U.esc(x.id)}"
+          ${counts[i] ? '' : 'disabled'}>${svg(ICON.down,15)} CSV</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="row" style="gap:8px"><button class="btn btn-dark" id="axAll">${svg(ICON.down,15)} تنزيل كل الأوراق</button></div>
+    </div>`,
+    size:'wide',
+    onMount(ov){
+      const dump = x => {
+        const rows = x.rows();
+        Exporter.csv(`${x.name}-${period}.csv`, x.cols, rows);
+        Audit.log('report','export', `تصدير CSV: ${x.name} — ${D.monthName(period)} (${rows.length} صفاً)`);
+        return rows.length;
+      };
+      ov.querySelectorAll('[data-x]').forEach(b => b.onclick = () => {
+        const x = SHEETS.find(y => y.id === b.dataset.x);
+        if (!x) return;
+        try { UI.toast(`صُدّر ${x.name} — ${dump(x)} صفاً`); }
+        catch(e){ Log.error('فشل التصدير', e); UI.toast('تعذّر التصدير', 'error'); }
+      });
+      ov.querySelector('#axAll').onclick = () => {
+        let n = 0;
+        SHEETS.forEach((x, i) => { if (!counts[i]) return; try { dump(x); n++; } catch(e){ Log.warn('تعذّر تصدير ' + x.name, e); } });
+        UI.toast(n ? `صُدّرت ${n} ورقة` : 'لا بيانات في هذه الفترة', n ? 'ok' : 'warn');
+      };
+    }
+  });
+  return h;
+};
+
 Screens.supplierStatement = function(supplierId){
   const st = Svc.purchases.statement(supplierId);
   if (!st) return UI.toast('المورّد غير موجود','err');
@@ -14329,8 +14735,10 @@ Object.assign(Screens, {
     UI.modal({ title:`سجل حركة: ${p.name}`, size:'wide',
       body:`<div class="grid g-3" style="margin-bottom:14px">
           ${kpi('الرصيد الحالي', `${U.round2(qty)} ${p.unit||''}`, `${moves.length} حركة مسجّلة`, qty<=0?'neg':'pos')}
-          ${kpi('متوسط التكلفة', Money.fmt(p.cost), 'مرجّح بالمشتريات', 'plum')}
-          ${kpi('قيمة الرصيد', Money.fmt(Calc.stockValue(qty, p.cost)), '', 'plum')}
+          ${kpi('متوسط التكلفة', Svc.inventory.costKnown(p) ? Money.fmt(p.cost) : Calc.COST_UNKNOWN_AR,
+            Svc.inventory.costKnown(p) ? 'مرجّح بالمشتريات' : 'سجّلي تكلفة الوحدة ليُحتسب ربحه', 'plum')}
+          ${kpi('قيمة الرصيد', Svc.inventory.costKnown(p) ? Money.fmt(Calc.stockValue(qty, p.cost)) : Calc.COST_UNKNOWN_AR,
+            Svc.inventory.costKnown(p) ? '' : 'لا تُقوَّم بصفر', 'plum')}
         </div>
         ${rows.length ? `<table class="tbl"><thead><tr><th>التاريخ</th><th>الحركة</th><th>الكمية</th><th>الرصيد بعدها</th><th>تكلفة الوحدة</th><th>ملاحظات</th><th></th></tr></thead><tbody>
           ${rows.map(({m,at})=>`<tr class="${m.archived?'archived-row':''}">

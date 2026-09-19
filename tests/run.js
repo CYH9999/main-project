@@ -217,6 +217,31 @@ group('سلامة بيانات دورة الشراء', async (browser, url) => {
   record('سلامة بيانات دورة الشراء', rows, errors);
 });
 
+/* ---------------------- مجموعات المرحلة الثالثة-ج ---------------------- */
+group('تكلفة المتجر المعروفة والمجهولة', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.storeCosting();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('تكلفة المتجر المعروفة والمجهولة', rows, errors);
+});
+
+group('التصديرات المحاسبية', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.accountingExports();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('التصديرات المحاسبية', rows, errors);
+});
+
 /* ---------------------- مجموعات المرحلة الثالثة-أ ---------------------- */
 group('الهوية البصرية المتحرّكة', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
