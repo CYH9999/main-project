@@ -257,9 +257,13 @@ group('تقليل الحركة', async (browser, url) => {
       window.TG.go('desk'); window.TG.renderRoute();
       const banner = document.querySelector('.brand-banner');
       const shell = document.querySelector('.brand-logo');
+      /* اللافتة صارت <img> حقيقية: يُقرأ مصدرها من العنصر مباشرة بدل
+         استخراجه من نصّ background-image — أوضح وأدقّ. */
+      const bimg = banner ? banner.querySelector('img') : null;
       return { reduced:Brand.reducedMotion(),
                bannerMotion:banner ? banner.dataset.motion : null,
-               bannerHasGif:banner ? getComputedStyle(banner).backgroundImage.includes('image/gif') : null,
+               bannerIsImg:!!bimg,
+               bannerHasGif:bimg ? String(bimg.src).startsWith('data:image/gif') : null,
                shellHasGif:!!(shell && String(shell.src).startsWith('data:image/gif')),
                renderIsStill:Brand.renderUrl('logo') === Brand.stillUrl('logo'),
                printHasGif:Brand.printHeader('س','ص').includes('data:image/gif') };
@@ -268,7 +272,9 @@ group('تقليل الحركة', async (browser, url) => {
     rows.push({ name:`${label}: النظام يقرأ التفضيل صحيحاً`, pass:r.reduced === want, detail:String(r.reduced) });
     rows.push({ name:`${label}: اللافتة ${want ? 'ثابتة' : 'متحرّكة'}`,
                 pass:r.bannerMotion === (want ? 'still' : 'live'), detail:String(r.bannerMotion) });
-    rows.push({ name:`${label}: خلفية اللافتة ${want ? 'بلا GIF' : 'بالـGIF'}`,
+    rows.push({ name:`${label}: اللافتة عنصر صورة حقيقي لا خلفية CSS`,
+                pass:r.bannerIsImg === true, detail:String(r.bannerIsImg) });
+    rows.push({ name:`${label}: مصدر اللافتة ${want ? 'الإطار الثابت' : 'الملف المتحرّك'}`,
                 pass:r.bannerHasGif === !want, detail:String(r.bannerHasGif) });
     rows.push({ name:`${label}: الشعار في الشريط ${want ? 'ثابت' : 'متحرّك'}`,
                 pass:r.shellHasGif === !want, detail:String(r.shellHasGif) });
@@ -357,6 +363,184 @@ group('الهوية المتحرّكة في الشاشة', async (browser, url) 
   try { require('fs').unlinkSync(gifPath); } catch(e){}
   await ctx0.close();
   record('الهوية المتحرّكة في الشاشة', rows, errors);
+});
+
+/* ============ تشغيل الحركة الحقيقي — بمقارنة الإطارات لا بالوصف ============
+   اختبارٌ يقول `type === image/gif` لا يُثبت أن شيئاً يتحرّك. وكذلك
+   `animated === true`. الإثبات الوحيد المقبول: التقاط العنصر نفسه مرّات
+   متتابعة ومقارنة البكسلات — إن اختلفت فالمتصفح يرسم إطارات متتابعة فعلاً.
+
+   ملف الاختبار `tests/fixtures-anim.gif`: أربعة إطارات 32×32 بألوان صريحة
+   (أحمر/أخضر/أزرق/أبيض) بفاصل 100م.ث — اختلافها لا يحتمل اللبس. */
+group('تشغيل الحركة الفعلي', async (browser, url) => {
+  const fsx = require('fs');
+  const gifPath = require('path').join(__dirname, 'fixtures-anim.gif');
+  const b64 = fsx.readFileSync(gifPath).toString('base64');
+  const rows = [];
+  const errors = [];
+
+  /* عدد الإطارات المتمايزة خلال نافذة أطول من دورة الملف الكاملة */
+  const distinctFrames = async (page, sel, n = 8, gap = 110) => {
+    const seen = [];
+    for (let i = 0; i < n; i++){
+      const el = page.locator(sel).first();
+      if (await el.count()) seen.push((await el.screenshot()).toString('base64'));
+      await page.waitForTimeout(gap);
+    }
+    return new Set(seen).size;
+  };
+
+  for (const [sysMode, sysLabel] of [['no-preference', 'جهاز عادي'], ['reduce', 'جهاز يطلب تقليل الحركة']]){
+    const ctx = await browser.newContext({ viewport:{ width:1400, height:900 }, reducedMotion:sysMode });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(String(e.message)));
+    page.on('console', m => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errors.push(m.text()); });
+    await page.goto(url, { waitUntil:'domcontentloaded' });
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+    await page.evaluate(() => window.TG.ready);
+    await page.evaluate(() => window.TG.Seed.loadDemo(12));
+    await page.evaluate(async g => {
+      const bin = atob(g), arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      await window.TG.Brand.setMedia('logo', new File([arr], 'l.gif', { type:'image/gif' }));
+      await window.TG.Brand.setMedia('banner', new File([arr], 'b.gif', { type:'image/gif' }));
+    }, b64);
+
+    /* الملف نفسه يتحرّك في هذا المتصفح — وإلا لم يكن للقياس معنى */
+    if (sysMode === 'no-preference'){
+      const probe = await page.evaluate(g => {
+        const img = document.createElement('img');
+        img.id = 'tgProbe'; img.src = 'data:image/gif;base64,' + g;
+        img.style.cssText = 'position:fixed;left:0;top:0;width:48px;height:48px;z-index:99999';
+        document.body.appendChild(img); return true;
+      }, b64);
+      const probeFrames = await distinctFrames(page, '#tgProbe');
+      await page.evaluate(() => { const p = document.getElementById('tgProbe'); if (p) p.remove(); });
+      rows.push({ name:'الملف الاختباري يتحرّك فعلاً في هذا المتصفح (ضبط مرجعي)',
+                  pass:probe && probeFrames > 1, detail:`إطارات متمايزة=${probeFrames}` });
+    }
+
+    for (const [mode, modeLabel] of [['auto','تلقائي'], ['on','تشغيل'], ['off','إيقاف']]){
+      await page.evaluate(m => window.TG.Brand.setMotionMode(m), mode);
+      await page.evaluate(() => { window.TG.go('desk'); window.TG.renderRoute(); });
+      await page.waitForTimeout(220);
+      const st = await page.evaluate(() => window.TG.Brand.motionStatus());
+      const wantLive = mode === 'on' || (mode === 'auto' && sysMode === 'no-preference');
+      const logoFrames = await distinctFrames(page, '.brand-logo');
+      const bannerFrames = await distinctFrames(page, '.brand-banner img');
+      const tag = `${sysLabel} + ${modeLabel}`;
+
+      rows.push({ name:`${tag}: الحالة المعلنة ${wantLive ? 'حيّة' : 'ثابتة'}`,
+                  pass:st.allowed === wantLive && st.logo.rendering === (wantLive ? 'live' : 'still')
+                       && st.banner.rendering === (wantLive ? 'live' : 'still'),
+                  detail:JSON.stringify({ allowed:st.allowed, logo:st.logo.rendering, banner:st.banner.rendering }) });
+      rows.push({ name:`${tag}: الشعار ${wantLive ? 'يعرض إطارات متتابعة فعلاً' : 'ساكن فعلاً'}`,
+                  pass:wantLive ? logoFrames > 1 : logoFrames === 1, detail:`إطارات متمايزة=${logoFrames}` });
+      rows.push({ name:`${tag}: اللافتة ${wantLive ? 'تعرض إطارات متتابعة فعلاً' : 'ساكنة فعلاً'}`,
+                  pass:wantLive ? bannerFrames > 1 : bannerFrames === 1, detail:`إطارات متمايزة=${bannerFrames}` });
+      /* الطباعة ثابتة في كل وضع بلا استثناء */
+      const printHasGif = await page.evaluate(() => ({
+        header:window.TG.Brand.printHeader('س','ص').includes('data:image/gif'),
+        banner:window.TG.Brand.bannerHtml(true).includes('data:image/gif'),
+        receipt:window.TG.Print.receiptHtml({ no:'و1', issuedAt:new Date().toISOString(), amount:1, reprints:0,
+          snapshot:{ gym:{ name:'س' }, member:{ name:'م', code:'ت1' },
+            doc:{ kind:'subscription', title:'ا', detail:'' },
+            payment:{ amount:1, method:'cash', date:window.TG.D.today() } } }, { format:'a4' }).includes('data:image/gif') }));
+      rows.push({ name:`${tag}: لا صورة متحرّكة في أي مطبوع`,
+                  pass:!printHasGif.header && !printHasGif.banner && !printHasGif.receipt,
+                  detail:JSON.stringify(printHasGif) });
+    }
+
+    /* السبب يُقال بلغة المستخدمة، ولا يُعرَض JSON في الشاشة */
+    await page.evaluate(m => window.TG.Brand.setMotionMode(m), 'auto');
+    const reason = await page.evaluate(() => window.TG.Brand.motionReason());
+    rows.push({ name:`${sysLabel}: سبب الحالة مكتوب بالعربية`,
+                pass:/الحركة (مفعّلة|متوقفة)/.test(reason)
+                     && (sysMode === 'reduce' ? /تقليل الحركة/.test(reason) : true), detail:reason });
+
+    /* شاشة الإعدادات تقول الحقيقة نفسها ولا تُظهر جملة حركة على صورة ثابتة */
+    await page.evaluate(() => { window.TG.go('settings', { sec:'brand' }); window.TG.renderRoute(); });
+    await page.waitForTimeout(250);
+    const panel = await page.evaluate(() => {
+      const t = document.getElementById('viewRoot').textContent.replace(/\s+/g, ' ');
+      return { on:/الحركة مفعّلة/.test(t), off:/الحركة متوقفة/.test(t),
+               hasSelect:!!document.querySelector('[name=brandMotion]'),
+               hasTest:!!document.getElementById('bMotionTest'),
+               prevSrcIsGif:String((document.querySelector('[data-brand-prev="logo"]') || {}).src || '').startsWith('data:image/gif') };
+    });
+    const allowNow = sysMode === 'no-preference';
+    rows.push({ name:`${sysLabel}: شاشة الإعدادات تعلن ${allowNow ? 'تفعيل' : 'توقّف'} الحركة`,
+                pass:allowNow ? (panel.on && !panel.off) : (panel.off && !panel.on), detail:JSON.stringify(panel) });
+    rows.push({ name:`${sysLabel}: قائمة «حركة الهوية» موجودة`, pass:panel.hasSelect, detail:'' });
+    rows.push({ name:`${sysLabel}: زر «اختبار الحركة» موجود عند وجود صورة متحرّكة`, pass:panel.hasTest, detail:'' });
+    rows.push({ name:`${sysLabel}: معاينة الإعدادات تعرض ما يُعرض فعلاً`,
+                pass:panel.prevSrcIsGif === allowNow, detail:String(panel.prevSrcIsGif) });
+
+    /* المعاينة في نافذة «اختبار الحركة» تعرض الأصل دائماً وتتحرّك فعلاً */
+    await page.evaluate(() => { const b = document.getElementById('bMotionTest'); if (b) b.click(); });
+    await page.waitForTimeout(300);
+    const diagFrames = await distinctFrames(page, '.ov img, .modal img, .overlay img');
+    const diagSafe = await page.evaluate(() => {
+      const ov = document.querySelector('.ov,.modal,.overlay');
+      const txt = ov ? ov.textContent.replace(/\s+/g, ' ') : '';
+      const mode = window.TG.Brand.motionMode();
+      document.querySelectorAll('.ov,.modal,.overlay').forEach(o => o.remove());
+      return { opened:!!ov, saysReason:/الحركة (مفعّلة|متوقفة)/.test(txt),
+               noJson:!/\{|\}/.test(txt), modeUnchanged:mode === 'auto' };
+    });
+    rows.push({ name:`${sysLabel}: «اختبار الحركة» يشغّل الملف الأصلي فعلاً`,
+                pass:diagSafe.opened && diagFrames > 1, detail:`إطارات متمايزة=${diagFrames}` });
+    rows.push({ name:`${sysLabel}: «اختبار الحركة» يشرح السبب بلا JSON ولا يغيّر إعداداً`,
+                pass:diagSafe.saysReason && diagSafe.noJson && diagSafe.modeUnchanged,
+                detail:JSON.stringify(diagSafe) });
+    await ctx.close();
+  }
+
+  /* الاستمرارية: الحركة تبقى بعد إعادة التحميل وبعد الاستعادة */
+  {
+    const ctx = await browser.newContext({ viewport:{ width:1400, height:900 }, reducedMotion:'no-preference' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(String(e.message)));
+    await page.goto(url, { waitUntil:'domcontentloaded' });
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+    await page.evaluate(() => window.TG.ready);
+    const backup = await page.evaluate(async g => {
+      const bin = atob(g), arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      await window.TG.Brand.setMedia('logo', new File([arr], 'l.gif', { type:'image/gif' }));
+      await window.TG.Brand.setMedia('banner', new File([arr], 'b.gif', { type:'image/gif' }));
+      await window.TG.Brand.setMotionMode('on');
+      return window.TG.Backup.build(true);
+    }, b64);
+    await page.reload({ waitUntil:'domcontentloaded' });
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
+    await page.evaluate(() => window.TG.ready);
+    await page.evaluate(() => { window.TG.go('desk'); window.TG.renderRoute(); });
+    await page.waitForTimeout(250);
+    const afterReload = await page.evaluate(() => window.TG.Brand.motionStatus());
+    const rlLogo = await distinctFrames(page, '.brand-logo');
+    const rlBanner = await distinctFrames(page, '.brand-banner img');
+    rows.push({ name:'بعد إعادة التحميل: وضع الحركة محفوظ', pass:afterReload.mode === 'on', detail:afterReload.mode });
+    rows.push({ name:'بعد إعادة التحميل: الشعار ما زال يتحرّك فعلاً', pass:rlLogo > 1, detail:`إطارات=${rlLogo}` });
+    rows.push({ name:'بعد إعادة التحميل: اللافتة ما زالت تتحرّك فعلاً', pass:rlBanner > 1, detail:`إطارات=${rlBanner}` });
+
+    await page.evaluate(async bk => {
+      await window.TG.Brand.clearMedia('logo');
+      await window.TG.Brand.clearMedia('banner');
+      await window.TG.Brand.setMotionMode('auto');
+      await window.TG.Backup.restore(bk);
+    }, backup);
+    await page.evaluate(() => { window.TG.go('desk'); window.TG.renderRoute(); });
+    await page.waitForTimeout(250);
+    const afterRestore = await page.evaluate(() => window.TG.Brand.motionStatus());
+    const rsLogo = await distinctFrames(page, '.brand-logo');
+    const rsBanner = await distinctFrames(page, '.brand-banner img');
+    rows.push({ name:'بعد الاستعادة: وضع الحركة يعود مع النسخة', pass:afterRestore.mode === 'on', detail:afterRestore.mode });
+    rows.push({ name:'بعد الاستعادة: الشعار يتحرّك فعلاً', pass:rsLogo > 1, detail:`إطارات=${rsLogo}` });
+    rows.push({ name:'بعد الاستعادة: اللافتة تتحرّك فعلاً', pass:rsBanner > 1, detail:`إطارات=${rsBanner}` });
+    await ctx.close();
+  }
+  record('تشغيل الحركة الفعلي', rows, errors);
 });
 
 group('نموذج الحصص', async (browser, url) => {

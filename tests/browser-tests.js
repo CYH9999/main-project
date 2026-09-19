@@ -1530,6 +1530,76 @@ window.TGTests = (() => {
     ok('وصف المعاينة يقول إن الإطار غير متاح',
        Brand.info('logo').animated && Brand.info('logo').hasPoster === false);
 
+    /* ---------- 6ب) وضع حركة الهوية: تبديل المصدر في الحالات الأربع ----------
+       هذا هو جوهر التصحيح: أي مصدرٍ يُرسم في كل وضع. والأهم أن الأصل لا
+       يُمسّ أبداً — لو كُتب الإطار الثابت فوق `dataUrl` لبدت الميزة عاملة
+       وهي قد أتلفت الحركة نهائياً. */
+    await Brand.setMedia('logo', gifFile('motion-logo.gif'));
+    await Brand.setMedia('banner', gifFile('motion-banner.gif'));
+    const liveLogo = Brand.media('logo').dataUrl, stillLogo = Brand.media('logo').posterUrl;
+    const liveBanner = Brand.media('banner').dataUrl, stillBanner = Brand.media('banner').posterUrl;
+    ok('الأصل والإطار الثابت مخزَّنان منفصلين', liveLogo !== stillLogo && !!stillLogo);
+
+    const mode0 = Brand.motionMode();
+    ok('الوضع الافتراضي تلقائي', mode0 === 'auto', mode0);
+    await Brand.setMotionMode('on');
+    ok('«تشغيل»: يُرسم الملف الأصلي للشعار', Brand.renderUrl('logo') === liveLogo);
+    ok('«تشغيل»: يُرسم الملف الأصلي للافتة', Brand.renderUrl('banner') === liveBanner);
+    ok('«تشغيل»: الحالة المعلنة حيّة',
+       Brand.motionStatus().logo.rendering === 'live' && Brand.motionStatus().banner.rendering === 'live');
+    ok('«تشغيل»: يتجاوز تفضيل الجهاز', Brand.motionAllowed() === true);
+    await Brand.setMotionMode('off');
+    ok('«إيقاف»: يُرسم الإطار الثابت للشعار', Brand.renderUrl('logo') === stillLogo);
+    ok('«إيقاف»: يُرسم الإطار الثابت للافتة', Brand.renderUrl('banner') === stillBanner);
+    ok('«إيقاف»: الحالة المعلنة ثابتة',
+       Brand.motionStatus().logo.rendering === 'still' && Brand.motionStatus().banner.rendering === 'still');
+    ok('«إيقاف»: لا يتأثّر بتفضيل الجهاز', Brand.motionAllowed() === false);
+    await Brand.setMotionMode('auto');
+    const autoWantsLive = !Brand.reducedMotion();
+    ok('«تلقائي»: يتبع تفضيل الجهاز',
+       (Brand.renderUrl('logo') === liveLogo) === autoWantsLive,
+       `reduced=${Brand.reducedMotion()}`);
+    ok('وضع غير معروف يعود إلى تلقائي',
+       await (async () => { await Settings.set({ brandMotion:'xyz' }); return Brand.motionMode() === 'auto'; })());
+    await Brand.setMotionMode('auto');
+
+    /* الطباعة لا تتبع الوضع إطلاقاً: ثابتة في الأوضاع الثلاثة */
+    for (const m of ['auto','on','off']){
+      await Brand.setMotionMode(m);
+      ok(`الطباعة ثابتة في وضع «${m}»`,
+         Brand.renderUrl('logo', true) === stillLogo
+         && !Brand.printHeader('س','ص').includes('data:image/gif')
+         && !Brand.bannerHtml(true).includes('data:image/gif'), m);
+    }
+    await Brand.setMotionMode('on');
+
+    /* الأصل لم يُستبدَل بالإطار الثابت في أي لحظة */
+    ok('الأصل المتحرّك ما زال GIF بعد كل التبديلات',
+       Brand.media('logo').dataUrl === liveLogo && liveLogo.startsWith('data:image/gif'));
+    ok('الإطار الثابت ما زال PNG منفصلاً',
+       Brand.media('logo').posterUrl === stillLogo && stillLogo.startsWith('data:image/png'));
+    ok('اللافتة كذلك لم يُمسّ أصلها',
+       Brand.media('banner').dataUrl === liveBanner && liveBanner.startsWith('data:image/gif'));
+
+    /* اللافتة صارت عنصر صورة حقيقياً يُقرأ مصدره من الـDOM */
+    ok('اللافتة تُرسم عنصر <img> لا خلفية CSS',
+       /<img[^>]+data-brand="banner"/.test(Brand.bannerHtml()), Brand.bannerHtml().slice(0, 90));
+    ok('اللافتة تحفظ الأبعاد والقصّ بالصنف نفسه',
+       Brand.bannerHtml().includes('class="brand-banner"'));
+    ok('اللافتة تعلن حالتها في العنصر', /data-motion="live"/.test(Brand.bannerHtml()));
+    await Brand.setMotionMode('off');
+    ok('اللافتة تعلن السكون عند الإيقاف', /data-motion="still"/.test(Brand.bannerHtml()));
+    await Brand.setMotionMode('auto');
+
+    /* الصورة الثابتة لا تُوصف بأنها متحرّكة */
+    await Brand.setMedia('logo', pngFile('static-again.png'));
+    ok('الصورة الثابتة لا تُعدّ متحرّكة', !Brand.isAnimated('logo'));
+    ok('الصورة الثابتة تُرسم كما هي في كل الأوضاع',
+       Brand.renderUrl('logo') === Brand.media('logo').dataUrl);
+    ok('حالة الصورة الثابتة ليست «حيّة» ولا «ثابتة بسبب الحركة»',
+       Brand.motionStatus().logo.animated === false);
+    await Brand.setMedia('logo', gifFile('back-to-gif.gif'));
+
     /* ---------- 7ب) سلامة البيانات بعد كل ذلك ---------- */
     const issues = T().Integrity.scan();
     ok('الهوية البصرية لا تُعدّ وسائط يتيمة',

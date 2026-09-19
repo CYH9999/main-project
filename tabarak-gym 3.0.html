@@ -410,7 +410,12 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
 
 /* ------------------------------ الهوية البصرية ------------------------------ */
 .brand-banner{height:132px;border-radius:var(--r-lg);background-size:cover;background-position:center;
-  border:1px solid var(--line);margin-bottom:16px}
+  border:1px solid var(--line);margin-bottom:16px;overflow:hidden;display:block}
+/* اللافتة صارت <img> حقيقية بدل خلفية CSS: المصدر المرسوم صار صريحاً يُقرأ
+   من الـDOM ويُتحقَّق منه، بدل أن يكون مدفوناً في نصّ background-image.
+   الأبعاد والقصّ والاستدارة كما كانت تماماً — object-fit:cover يفعل ما كان
+   يفعله background-size:cover. */
+.brand-banner img{width:100%;height:100%;object-fit:cover;object-position:center;display:block}
 .brand-logo{border-radius:8px}
 .media-drop{
   border:1.5px dashed var(--line);border-radius:var(--r-md);padding:16px;text-align:center;background:var(--surface-2);
@@ -648,7 +653,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.1.0', schema:7, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.1.1', schema:7, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -1099,6 +1104,10 @@ const DEFAULT_SETTINGS = {
   startScreen:'desk',
   /* الفترات المحاسبية المقفلة — يثبّت كلٌّ منها ربحه لحظة الإقفال */
   closedPeriods:[],
+  /* حركة الهوية البصرية: تلقائي (حسب تفضيل الجهاز) | تشغيل | إيقاف.
+     يخصّ شعار النادي ولافتته وحدهما — لا يمسّ حركة النوافذ ولا انتقالات
+     الشاشات ولا أي animation أخرى في النظام. */
+  brandMotion:'auto',
   /* تصحيح سجل مالي داخل فترة مقفلة: ممنوع افتراضاً. تفعيله لا يجعله صامتاً —
      يبقى كل تصحيح مشروطاً بسبب مكتوب ومسجَّل في سجل الأحداث. */
   allowClosedPeriodEdits:false
@@ -5403,6 +5412,9 @@ const Backup = {
     /* نسخة من إصدار أقدم؟ تُرقّى بعد الاستعادة مباشرة قبل أن تراها الواجهة */
     try { await Migrations.run(); } catch(e){ Log.error('فشلت ترقية النسخة المستعادة', e); }
     await Settings.load();
+    /* الهوية البصرية تُعاد إلى هيكل الصفحة فوراً: الشعار المستعاد يُرى بلا
+       انتظار إعادة تحميل، ووضع الحركة المستعاد يسري من اللحظة نفسها. */
+    try { Brand.applyToShell(); } catch(e){ Log.warn('تعذّر تطبيق الهوية بعد الاستعادة', e); }
     await Audit.log('system','restore',`استعادة نسخة احتياطية من ${String(obj.exportedAt||'').slice(0,10)} (مخطط ${obj.schema})`);
     return v.counts;
   },
@@ -6735,14 +6747,76 @@ const Brand = {
     try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch(e){ return false; }
   },
+  /* ------------------------ وضع حركة الهوية ------------------------
+     الدرس الذي كلّف هذه المرحلة: «تقليل الحركة» مفعَّل على أجهزة كثيرة أكثر
+     ممّا يُظن — ويُشغَّل في ويندوز بمجرد إطفاء «إظهار الحركات»، وفي الأجهزة
+     الافتراضية وجلسات سطح المكتب البعيد ووضع توفير الطاقة. فكان النظام
+     يستبدل الصورة المتحرّكة بإطارها الثابت **بلا أن يقول شيئاً**، فترى
+     المستخدمة صورةً لا تتحرّك وتظنّ أن الرفع فشل.
+
+     فالقرار الآن صريح ومرئي ومقابلٌ للتجاوز:
+       تلقائي — يحترم تفضيل الجهاز (الافتراضي، وهو السلوك الصحيح احترامياً)
+       تشغيل  — يتجاوز تفضيل الجهاز للهوية وحدها، ويُقال ذلك في الشاشة
+       إيقاف  — ثابت دائماً
+     ولا يمسّ هذا الوضعُ شيئاً آخر في النظام: لا النوافذ ولا الانتقالات. */
+  MOTION_MODES: [
+    { v:'auto', t:'تلقائي — حسب إعداد الجهاز' },
+    { v:'on',   t:'تشغيل' },
+    { v:'off',  t:'إيقاف' }
+  ],
+  motionMode(){
+    const m = Settings.get('brandMotion');
+    return this.MOTION_MODES.some(x => x.v === m) ? m : 'auto';
+  },
+  async setMotionMode(mode){
+    const m = this.MOTION_MODES.some(x => x.v === mode) ? mode : 'auto';
+    await Settings.set({ brandMotion:m });
+    this.applyToShell();
+    await Audit.log('settings','branding',`ضبط حركة الهوية: ${this.MOTION_MODES.find(x => x.v === m).t}`);
+    return m;
+  },
+  /* هل تُعرض الحركة الآن؟ وإن لا، فلماذا — بلغة تُقال للمستخدمة لا بلغة كود */
+  motionAllowed(){
+    const mode = this.motionMode();
+    if (mode === 'off') return false;
+    if (mode === 'on') return true;
+    return !this.reducedMotion();
+  },
+  motionReason(){
+    const mode = this.motionMode();
+    if (mode === 'off') return 'الحركة متوقفة — «حركة الهوية» مضبوطة على إيقاف.';
+    if (mode === 'on') return this.reducedMotion()
+      ? 'الحركة مفعّلة — وهذا يتجاوز إعداد «تقليل الحركة» في جهازك.'
+      : 'الحركة مفعّلة.';
+    return this.reducedMotion()
+      ? 'الحركة متوقفة بسبب إعداد تقليل الحركة في جهازك — اختاري «تشغيل» لتجاوزه.'
+      : 'الحركة مفعّلة.';
+  },
+  /* تشخيص داخلي: يكفي للتحقّق من الحالة في الاختبار وفي زر «اختبار الحركة»،
+     ولا يُعرَض JSON للمستخدمة في أي مكان. */
+  motionStatus(){
+    const out = { mode:this.motionMode(), reducedMotion:this.reducedMotion(),
+                  allowed:this.motionAllowed(), reason:this.motionReason() };
+    ['logo','banner'].forEach(k => {
+      const m = this.media(k);
+      const url = this.renderUrl(k);
+      out[k] = { exists:!!m, animated:this.isAnimated(k), hasPoster:!!(m && m.posterUrl),
+                 /* «حيّ» يعني: المصدر المرسوم هو الملف الأصلي لا الإطار الثابت */
+                 rendering: !m ? 'none' : (url === m.dataUrl ? 'live' : 'still') };
+    });
+    return out;
+  },
   isAnimated(kind){ return Svc.media.isAnimated(this.media(kind)); },
   /* الصورة الثابتة: الإطار المحفوظ وقت الرفع، وإلا الأصل */
   stillUrl(kind){ return Svc.media.stillUrl(this.media(kind)); },
-  /* ما يُرسم فعلاً: ثابت عند الطباعة أو عند تفضيل تقليل الحركة، وإلا الأصل */
+  /* ما يُرسم فعلاً. الطباعة ثابتة دائماً مهما كان الوضع — الورقة لا إطار
+     حالي لها. وما عدا الطباعة يتبع وضع الحركة أعلاه.
+     والأصل لا يُمسّ أبداً: هذا اختيار مصدرٍ للعرض، لا تحويل للملف. */
   renderUrl(kind, forceStill){
     const m = this.media(kind);
     if (!m) return null;
-    return (forceStill || this.reducedMotion()) ? Svc.media.stillUrl(m) : m.dataUrl;
+    if (forceStill) return Svc.media.stillUrl(m);
+    return this.motionAllowed() ? m.dataUrl : Svc.media.stillUrl(m);
   },
   /* وصف الأصل للمعاينة في الإعدادات — بلا أزرار تقنية لا تعني المستخدمة */
   info(kind){
@@ -6767,11 +6841,14 @@ const Brand = {
   },
   /* اللافتة العريضة: تُقصّ ولا تُمطّ، ولا تظهر أصلاً إن لم تُرفع */
   bannerHtml(forPrint){
+    const m = this.media('banner');
+    if (!m) return '';
     const url = this.renderUrl('banner', forPrint);
     if (!url) return '';
-    const still = forPrint || this.reducedMotion();
-    return `<div class="brand-banner" role="img" aria-label="لافتة ${U.esc(this.name())}"
-      data-motion="${still ? 'still' : 'live'}" style="background-image:url('${U.esc(url)}')"></div>`;
+    /* «حيّ» يعني: المرسوم هو الملف الأصلي. تُقرأ الحالة من العنصر نفسه. */
+    const live = url === m.dataUrl && this.isAnimated('banner');
+    return `<div class="brand-banner" data-motion="${live ? 'live' : 'still'}">
+      <img src="${U.esc(url)}" alt="لافتة ${U.esc(this.name())}" data-brand="banner"></div>`;
   },
   contactLine(){
     const b = this.get();
@@ -10874,8 +10951,11 @@ Views.settings = {
         const i = Brand.info(kind);
         if (!i.exists) return '';
         const kb = i.size ? (i.size >= 1048576 ? `${U.round2(i.size / 1048576)} م.ب` : `${Math.round(i.size / 1024)} ك.ب`) : '—';
+        /* حالة الحركة تُقال للمتحرّك وحده — لا تُعرض جملة حركة على صورة ثابتة */
+        const playing = i.animated && Brand.motionAllowed();
         return `<div class="t-sub" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span class="pill ${i.animated ? 'warn' : ''}">${i.animated ? 'صورة متحرّكة' : 'صورة ثابتة'}</span>
+          ${i.animated ? `<span class="pill ${playing ? 'ok' : ''}">${playing ? 'الحركة مفعّلة' : 'الحركة متوقفة'}</span>` : ''}
           <span>${U.esc(kb)}</span>
           ${i.width && i.height ? `<span class="num">${i.width}×${i.height}</span>` : ''}
           ${i.animated ? `<span>${i.hasPoster ? 'المطبوع يأخذ الإطار الأول' : 'بلا إطار ثابت — يُطبع الملف كما هو'}</span>` : ''}
@@ -10891,7 +10971,7 @@ Views.settings = {
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">الشعار</h4>
               <div class="media-drop">
-                ${logo ? `<img src="${U.esc(logo.dataUrl)}" alt="">` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
+                ${logo ? `<img src="${U.esc(Brand.renderUrl('logo'))}" alt="" data-brand-prev="logo">` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
                 <input type="file" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
                 ${logo ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
               </div>
@@ -10901,7 +10981,7 @@ Views.settings = {
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">اللافتة العريضة</h4>
               <div class="media-drop wide">
-                ${banner ? `<img src="${U.esc(banner.dataUrl)}" alt="">` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
+                ${banner ? `<img src="${U.esc(Brand.renderUrl('banner'))}" alt="" data-brand-prev="banner">` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
                 <input type="file" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
                 ${banner ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
               </div>
@@ -10909,9 +10989,20 @@ Views.settings = {
               <div class="t-sub" style="margin-top:6px">صورة عريضة (نحو 4:1). تُقصّ ولا تُمطّ، وتظهر أعلى شاشة الاستقبال.</div>
             </div>
           </div>
-          ${Brand.reducedMotion() && (Brand.isAnimated('logo') || Brand.isAnimated('banner'))
-            ? `<div class="sens" style="margin-top:12px"><b>تقليل الحركة مفعّل في نظام جهازك.</b>
-               الصور المتحرّكة تُعرَض هنا وفي الشاشات بإطارها الثابت احتراماً لهذا التفضيل — والملف الأصلي محفوظ كما هو.</div>` : ''}
+          <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+            <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+              <div style="min-width:260px">${UI.field('brandMotion','حركة الهوية',
+                UI.select('brandMotion', Brand.motionMode(), Brand.MOTION_MODES),
+                'يخصّ شعار النادي ولافتته وحدهما — لا يغيّر حركة النوافذ ولا انتقالات الشاشات')}</div>
+              ${(Brand.isAnimated('logo') || Brand.isAnimated('banner'))
+                ? '<button class="btn btn-sm" id="bMotionTest">اختبار الحركة</button>' : ''}
+            </div>
+            ${(Brand.isAnimated('logo') || Brand.isAnimated('banner'))
+              ? `<div class="t-sub" style="margin-top:4px">${U.esc(Brand.motionReason())}</div>` : ''}
+            ${Brand.motionMode() === 'on' && Brand.reducedMotion()
+              ? `<div class="sens" style="margin-top:10px"><b>تنبيه:</b> جهازك يطلب تقليل الحركة، وهذا الإعداد يتجاوز طلبه
+                 للهوية البصرية وحدها. الطباعة تبقى ثابتة دائماً.</div>` : ''}
+          </div>
         </div></div>
 
         <div class="card" style="margin-top:14px"><div class="card-head"><h3>بيانات تظهر في المستندات</h3></div><div class="card-body">
@@ -10949,6 +11040,36 @@ Views.settings = {
       if (dl) dl.onclick = async () => { await guard(null, () => Brand.clearMedia('logo'), 'أُزيل الشعار'); renderRoute(); };
       const db = box.querySelector('#bBannerDel');
       if (db) db.onclick = async () => { await guard(null, () => Brand.clearMedia('banner'), 'أُزيلت اللافتة'); renderRoute(); };
+      const bm = box.querySelector('[name=brandMotion]');
+      if (bm) bm.onchange = async () => {
+        await guard(null, () => Brand.setMotionMode(bm.value), 'حُفظ وضع الحركة');
+        renderRoute();
+      };
+      /* زر تشخيصي لا مسار عمل يومي: يعرض الملف الأصلي في نافذة معاينة ويقول
+         حالة الحركة بلغة مفهومة. لا يغيّر أي بيانات محفوظة. */
+      const bmt = box.querySelector('#bMotionTest');
+      if (bmt) bmt.onclick = () => {
+        const st = Brand.motionStatus();
+        const shot = k => {
+          const m = Brand.media(k);
+          if (!m) return '';
+          return `<div style="margin-bottom:14px">
+            <div class="t-sub" style="margin-bottom:6px"><strong>${k === 'logo' ? 'الشعار' : 'اللافتة'}</strong>
+              — ${st[k].animated ? 'صورة متحرّكة' : 'صورة ثابتة'}
+              ${st[k].animated ? `، المعروض الآن في النظام: ${st[k].rendering === 'live' ? 'الملف المتحرّك' : 'الإطار الثابت'}` : ''}</div>
+            <img src="${U.esc(m.dataUrl)}" alt=""
+              style="max-width:100%;max-height:150px;object-fit:contain;border:1px solid var(--line);border-radius:8px;display:block">
+          </div>`;
+        };
+        UI.modal({ title:'اختبار الحركة', size:'narrow',
+          body:`<div class="t-sub" style="margin-bottom:12px">تُعرض الصور هنا من ملفها الأصلي مباشرة.
+              إن تحرّكت في هذه النافذة فالملف سليم والحركة تعمل في متصفّحك، وإن كانت ساكنة في بقية الشاشات
+              فالسبب إعداد الحركة لا الملف.</div>
+            ${shot('logo')}${shot('banner')}
+            <div class="sens" style="margin-top:6px">${U.esc(st.reason)}</div>
+            <div class="t-sub" style="margin-top:8px">لا شيء يُحفظ أو يتغيّر بفتح هذه النافذة.</div>`,
+          footer:'<div class="sp"></div><button class="btn" data-close>إغلاق</button>' });
+      };
       box.querySelector('#bSave').onclick = async () => {
         await guard(null, () => Brand.saveDetails(UI.read(box.querySelector('#bForm'))), 'حُفظت البيانات');
         renderRoute();
