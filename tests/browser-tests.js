@@ -63,6 +63,12 @@ window.TGTests = (() => {
     }
     const sch = (b.data.meta || []).find(x => x.k === 'schema');
     if (sch) sch.v = schema;
+    if (schema < 8){
+      /* v7: لا جدول مستخدمات، ولا تفعيل للدخول، ولا نسبة فاعل في السجل */
+      delete b.data.users;
+      if (settings && settings.v){ delete settings.v.authEnabled; delete settings.v.authRecovery; }
+      (b.data.audit || []).forEach(a => { delete a.actorId; delete a.actor; });
+    }
     if (schema < 7){
       /* v6: لا مستندات شراء، ولا طريقة لحركة رأس مال، ولا تفصيل للتوزيعات.
          مستندات الشراء المُرحَّلة في القاعدة الحيّة ليس لها مقابل في v6،
@@ -285,7 +291,8 @@ window.TGTests = (() => {
 
   /* ========================= 4) الترقيات ========================= */
   async function migrations(from){
-    const { Backup, Migrations, Repos, U, D, PayMethods } = T();
+    const { Backup, Migrations, Repos, U, D, PayMethods, APP } = T();
+    const TO = APP.schema;                      /* الوجهة هي مخطط البرنامج الحالي لا رقم مجمَّد */
     const live = Backup.build(false);
     const old = downgrade(live, from);
     await Backup.restore(old);                     /* الاستعادة تُشغّل الترقية بنفسها */
@@ -294,87 +301,87 @@ window.TGTests = (() => {
     const applied1 = await Migrations.run();       /* تشغيل ثانٍ: يجب ألا يغيّر شيئاً */
     const second = totals();
 
-    eq(`v${from}→v7: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
-    eq(`v${from}→v7: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
-    eq(`v${from}→v7: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
-    eq(`v${from}→v7: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
+    eq(`v${from}→v${TO}: الإيرادات لم تتغيّر بعد الترقية`, second.revenue, first.revenue);
+    eq(`v${from}→v${TO}: المصروفات لم تتغيّر بعد الترقية`, second.expense, first.expense);
+    eq(`v${from}→v${TO}: الدفعات لم تتغيّر بعد الترقية`, second.payments, first.payments);
+    eq(`v${from}→v${TO}: أسعار الاشتراكات لم تتغيّر`, second.subPrice, first.subPrice);
     const ends2 = endDates();
     const moved = Object.keys(ends1).filter(k => ends1[k] !== ends2[k]);
-    ok(`v${from}→v7: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
-    ok(`v${from}→v7: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
+    ok(`v${from}→v${TO}: لم تتحرّك نهاية أي اشتراك في التشغيل الثاني`, !moved.length, `تحرّكت=${moved.length}`);
+    ok(`v${from}→v${TO}: التشغيل الثاني بلا أثر (إعادة التشغيل آمنة)`,
        JSON.stringify(first.counts) === JSON.stringify(second.counts),
        (applied1.applied || []).join(' | '));
 
     /* أثر الترقية نفسه */
     const badMethod = Repos.payments.list(true).filter(p => !PayMethods.resolve(p.method) || PayMethods.label(p.method) === p.method && !PayMethods.get(p.method));
-    ok(`v${from}→v7: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
+    ok(`v${from}→v${TO}: كل دفعة تحمل مفتاح طريقة معروفاً`, !badMethod.length,
        badMethod.slice(0, 3).map(p => p.method).join(','));
     const custom = PayMethods.all().find(m => m.label === 'زين كاش');
-    ok(`v${from}→v7: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from !== 4 || !!custom,
+    ok(`v${from}→v${TO}: التسمية غير المعروفة حُفظت طريقةً بمفتاح خاص`, from !== 4 || !!custom,
        JSON.stringify(PayMethods.all().map(m => m.key + ':' + m.label)));
     const noMethod = Repos.expenses.list(true).filter(e => !e.method);
-    ok(`v${from}→v7: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
+    ok(`v${from}→v${TO}: كل مصروف يحمل طريقة صرف`, !noMethod.length, `بلا طريقة=${noMethod.length}`);
     const payrollExp = Repos.expenses.list(true).filter(e => e.refType === 'payroll');
-    ok(`v${from}→v7: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
+    ok(`v${from}→v${TO}: مصروفات الرواتب القديمة «غير معروفة» لا مخمَّنة`,
        !payrollExp.length || payrollExp.every(e => e.method === 'unknown'),
        payrollExp.slice(0, 3).map(e => e.method).join(','));
     let badBase = 0;
     Repos.subs.list(true).forEach(s => {
       if (D.addDays(s.baseEndDate || s.endDate, T().Svc.membership.addedDays(s.id)) !== s.endDate) badBase++;
     });
-    ok(`v${from}→v7: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
+    ok(`v${from}→v${TO}: الثابت (أصل + أحداث = نهاية) يتحقّق بعد الترقية`, !badBase, `مخالف=${badBase}`);
     const stillListed = Repos.trainings.list(true).filter(t => (t.memberIds || []).length);
-    ok(`v${from}→v7: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
+    ok(`v${from}→v${TO}: لم تبقَ قائمة التحاق ثابتة على أي قالب`, !stillListed.length, `قوالب=${stillListed.length}`);
     /* القوائم القديمة موجودة في نسخ ما قبل v5 وحدها */
     if (from < 5){
       const archivedLists = Repos.trainings.list(true).filter(t => (t.legacyMemberIds || []).length);
-      ok(`v${from}→v7: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
+      ok(`v${from}→v${TO}: القوائم القديمة محفوظة لتُعرض مرة`, !!archivedLists.length, `قوالب=${archivedLists.length}`);
     }
 
     /* ---- أثر ترقية v6 ---- */
     const withdrawals = Repos.capital.list(true).filter(c => c.type === 'withdrawal');
-    ok(`v${from}→v7: كل سحب رأس مال موسوم «استرجاع رأس مال»`,
+    ok(`v${from}→v${TO}: كل سحب رأس مال موسوم «استرجاع رأس مال»`,
        !withdrawals.length || withdrawals.every(c => c.kind === 'capital_return'),
        withdrawals.slice(0, 3).map(c => c.kind).join(','));
-    ok(`v${from}→v7: قائمة الفترات المقفلة مهيّأة`, Array.isArray(T().Settings.get('closedPeriods')),
+    ok(`v${from}→v${TO}: قائمة الفترات المقفلة مهيّأة`, Array.isArray(T().Settings.get('closedPeriods')),
        typeof T().Settings.get('closedPeriods'));
-    ok(`v${from}→v7: الجدولان الجديدان موجودان وقابلان للقراءة`,
+    ok(`v${from}→v${TO}: الجدولان الجديدان موجودان وقابلان للقراءة`,
        Array.isArray(Repos.notes.list(true)) && Array.isArray(Repos.distributions.list(true)));
-    ok(`v${from}→v7: الشاشة الافتتاحية لها قيمة افتراضية`,
+    ok(`v${from}→v${TO}: الشاشة الافتتاحية لها قيمة افتراضية`,
        ['desk','dashboard'].includes(T().Settings.get('startScreen') || 'desk'), T().Settings.get('startScreen'));
 
     /* ---- أثر ترقية v7: طرق رأس المال وتفصيل التوزيعات ---- */
     const { Svc, Calc } = T();
     const caps = Repos.capital.list(true);
-    ok(`v${from}→v7: كل حركة رأس مال تحمل طريقة`, caps.every(c => !!c.method),
+    ok(`v${from}→v${TO}: كل حركة رأس مال تحمل طريقة`, caps.every(c => !!c.method),
        caps.filter(c => !c.method).length);
-    ok(`v${from}→v7: الحركات القديمة «غير معروفة» لا مخمَّنة نقداً`,
+    ok(`v${from}→v${TO}: الحركات القديمة «غير معروفة» لا مخمَّنة نقداً`,
        !caps.length || caps.every(c => c.method === PayMethods.UNKNOWN_KEY || c.method === 'cash'
          || PayMethods.all().some(m => m.key === c.method)),
        caps.slice(0, 3).map(c => c.method).join(','));
-    ok(`v${from}→v7: كل حركة رأس مال موسومة بصنفها`,
+    ok(`v${from}→v${TO}: كل حركة رأس مال موسومة بصنفها`,
        caps.every(c => c.kind === 'capital_return' || c.kind === 'capital_injection'),
        caps.filter(c => !c.kind).length);
-    ok(`v${from}→v7: مجهول الطريقة خارج حساب الدرج`,
+    ok(`v${from}→v${TO}: مجهول الطريقة خارج حساب الدرج`,
        Svc.cashbook.movement(D.today()).capitalUnknown >= 0);
     const dists = Repos.distributions.list(true);
     const drift = dists.filter(x => {
       const al = Svc.distributions.allocationsOf(x);
       return al.length && Math.abs(U.round2(U.sum(al, a => a.amount) - x.amount)) > 0.009;
     });
-    ok(`v${from}→v7: لا توزيع مجموع تفصيله يخالف مبلغه`, !drift.length, drift.length);
+    ok(`v${from}→v${TO}: لا توزيع مجموع تفصيله يخالف مبلغه`, !drift.length, drift.length);
     const oneMonth = dists.filter(x => Svc.periods.monthsBetween(x.periodFrom, x.periodTo).length === 1);
-    ok(`v${from}→v7: توزيع الشهر الواحد فُصّل بالضبط`,
+    ok(`v${from}→v${TO}: توزيع الشهر الواحد فُصّل بالضبط`,
        !oneMonth.length || oneMonth.every(x => Svc.distributions.allocationsOf(x).length === 1),
        oneMonth.length);
     const spread = dists.filter(x => Svc.periods.monthsBetween(x.periodFrom, x.periodTo).length > 1);
-    ok(`v${from}→v7: التوزيع الممتدّ القديم لم يُخترع له تفصيل`,
+    ok(`v${from}→v${TO}: التوزيع الممتدّ القديم لم يُخترع له تفصيل`,
        !spread.length || spread.every(x => Svc.distributions.allocationsOf(x).length
          || x.allocationUnavailable),
        spread.length);
-    ok(`v${from}→v7: جدولا الشراء موجودان وقابلان للقراءة`,
+    ok(`v${from}→v${TO}: جدولا الشراء موجودان وقابلان للقراءة`,
        Array.isArray(Repos.purchases.list(true)) && Array.isArray(Repos.purchasePayments.list(true)));
-    eq(`v${from}→v7: رأس المال المحفوظ لم يتغيّر مبلغه`, second.capital, first.capital);
+    eq(`v${from}→v${TO}: رأس المال المحفوظ لم يتغيّر مبلغه`, second.capital, first.capital);
     return results;
   }
 
@@ -1705,6 +1712,665 @@ window.TGTests = (() => {
     return results;
   }
 
+  /* ========== المرحلة 3ب: الحسابات والصلاحيات ونسبة الأفعال ==========
+     ما يُختبر هنا ليس «هل يختفي الزر» بل: هل يُرفض الفعل نفسه عند حدّه حين
+     تُنادى الخدمة مباشرة؟ ولذلك كل اختبار أدناه يستدعي الخدمة أو الفعل بلا
+     واجهة، بعد دخول حقيقي بكلمة مرور حقيقية. */
+  const AUTH_PW = { owner:'AmTabarak#2026', manager:'Mudira#2026',
+                    reception:'Istiqbal#2026', trainer:'Mudarriba#2026' };
+  const codeOf = async fn => { try { await fn(); return null; } catch(e){ return e.code || e.message || 'ERR'; } };
+  const msgOf  = async fn => { try { await fn(); return null; } catch(e){ return e.message || ''; } };
+
+  /* تفعيل الصلاحيات + أربعة حسابات حقيقية، واحد لكل دور */
+  async function authBoot(){
+    const { Auth, Svc } = T();
+    await Settings.set({ authEnabled:true });
+    Auth.restoreSession();
+    const first = await Auth.setupFirstAdmin({ name:'أم تبارك', username:'omtabarak',
+                                               password:AUTH_PW.owner });
+    const mk = (username, name, roleKey, password) =>
+      Svc.users.create({ username, name, roleKey, password });
+    const manager   = await mk('mudira',    'سارة المديرة',    'manager',   AUTH_PW.manager);
+    const reception = await mk('istiqbal',  'زهراء الاستقبال', 'reception', AUTH_PW.reception);
+    const trainer   = await mk('mudarriba', 'هدى المدربة',     'trainer',   AUTH_PW.trainer);
+    return { owner:first.user, code:first.recoveryCode, manager, reception, trainer };
+  }
+
+  /* ---------------------- 1) الدخول والجلسة والاسترجاع ---------------------- */
+  async function auth(){
+    const { Auth, Svc, Repos, Crypto } = T();
+
+    /* ---------- قبل التفعيل: النادي الذي لم يفعّل الدخول لا يرى أي فرق ---------- */
+    ok('قبل التفعيل: الصلاحيات معطّلة', Auth.enabled() === false);
+    ok('قبل التفعيل: كل شيء مسموح بلا دخول',
+       Auth.can('settings.danger') === true && Auth.signedIn() === true);
+    ok('قبل التفعيل: الفاعل يبقى «المالكة» كما كان', Auth.session.actorName === 'المالكة',
+       Auth.session.actorName);
+    ok('الأدوار الأربعة مزروعة على القرص مرة واحدة',
+       Repos.roles.list(true).length === 4,
+       Repos.roles.list(true).map(r => r.key).join(','));
+
+    /* ---------- بعد التفعيل وقبل التهيئة: لا صلاحية لأحد ---------- */
+    await Settings.set({ authEnabled:true });
+    Auth.restoreSession();
+    ok('بعد التفعيل: النظام يطلب تهيئة أول حساب', Auth.needsSetup() === true);
+    ok('قبل الدخول: لا صلاحية لأي شيء',
+       Auth.can('members.view') === false && Auth.can('settings.danger') === false);
+    ok('قبل الدخول: لا مستخدمة داخلة', Auth.signedIn() === false && Auth.currentUser() === null);
+    ok('قبل الدخول: الفعل الحسّاس يُرفض عند حدّه لا في الواجهة',
+       await codeOf(() => Svc.finance.addCapital({ date:T().D.today(), amount:1, type:'injection',
+         method:'cash' })) === 'FORBIDDEN');
+
+    /* ---------- التهيئة: أول مالكة ورمز استرجاع ---------- */
+    const first = await Auth.setupFirstAdmin({ name:'أم تبارك', username:'omtabarak',
+                                               password:AUTH_PW.owner });
+    ok('التهيئة تُنشئ مالكة واحدة وتفتح جلستها فوراً',
+       Repos.users.list(true).length === 1 && Auth.session.actorId === first.user.id
+       && Auth.session.roleKey === 'owner');
+    ok('لا تهيئة ثانية بعد الأولى — لا باب خلفي',
+       await codeOf(() => Auth.setupFirstAdmin({ name:'أخرى', username:'other',
+         password:'AnotherPass#1' })) === 'ALREADY_SETUP');
+
+    /* ---------- كلمة المرور: لا تُخزَّن نصاً ---------- */
+    const stored = Repos.users.get(first.user.id);
+    ok('كلمة المرور لا تُخزَّن نصاً في سجل المستخدمة',
+       JSON.stringify(stored).indexOf(AUTH_PW.owner) === -1);
+    const p = stored.pass;
+    ok('التلبيد PBKDF2-SHA256 بملح وتكرارات معلنة',
+       p.algo === 'pbkdf2-sha256' && p.iterations >= 20000
+       && String(p.salt).length >= 16 && String(p.hash).length >= 32,
+       JSON.stringify({ algo:p.algo, it:p.iterations, salt:String(p.salt).length, hash:String(p.hash).length }));
+    const twin = await Svc.users.create({ username:'tawam', name:'توأم كلمة المرور',
+                                          roleKey:'reception', password:AUTH_PW.owner });
+    ok('ملحان مختلفان لكلمة المرور نفسها ⇒ تلبيدان مختلفان',
+       twin.pass.salt !== p.salt && twin.pass.hash !== p.hash);
+    ok('التحقّق يقبل الكلمة الصحيحة ويرفض غيرها',
+       await Crypto.verify(AUTH_PW.owner, p) === true
+       && await Crypto.verify(AUTH_PW.owner + 'x', p) === false);
+    await Svc.users.remove(twin.id);
+
+    /* ---------- التطبيقان يخرجان الشيء نفسه ----------
+       `crypto.subtle` غير متاح على file:// (ليس سياقاً آمناً)، فيعمل هناك
+       التطبيق الخالص. فلو اختلف الاثنان لسقطت كلمة مرور ضُبطت على قرصٍ
+       يُفتح ملفّه مباشرة حين يُفتح النظام من خادم محلّي — والعكس. */
+    const SALT = '0011223344556677889aabbccddeeff0', IT = 2000;
+    const bothWays = async pw => ({
+      fast: await Crypto.pbkdf2(pw, SALT, IT),
+      pure: Crypto.toHex(Crypto.pbkdf2Js(Crypto.enc(pw), Crypto.fromHex(SALT), IT))
+    });
+    const latin = await bothWays('AmTabarak#2026'), arabic = await bothWays('كلمة-مرور-عربية');
+    ok('التطبيق السريع والتطبيق الخالص يخرجان التلبيد نفسه',
+       latin.fast === latin.pure && latin.fast.length === 64,
+       `${latin.fast.slice(0, 16)}… / ${latin.pure.slice(0, 16)}…`);
+    ok('وكذلك مع كلمة مرور عربية (الترميز UTF-8 نفسه في الطريقين)',
+       arabic.fast === arabic.pure, `${arabic.fast.slice(0, 16)}… / ${arabic.pure.slice(0, 16)}…`);
+    const madeByPure = { algo:'pbkdf2-sha256', salt:SALT, iterations:IT,
+      hash:Crypto.toHex(Crypto.pbkdf2Js(Crypto.enc('كلمة-عابرة'), Crypto.fromHex(SALT), IT)) };
+    ok('بصمةٌ صنعها التطبيق الخالص يقبلها التحقّق العادي وحده لا غيره',
+       await Crypto.verify('كلمة-عابرة', madeByPure) === true
+       && await Crypto.verify('كلمة-أخرى', madeByPure) === false);
+    ok('عدد التكرارات يُقرأ من السجل لا من الثابت الحالي',
+       await Crypto.verify('كلمة-عابرة', Object.assign({}, madeByPure, { iterations:IT + 1 })) === false);
+
+    /* ---------- رمز الاسترجاع: طريق موثّق لا باب خلفي ---------- */
+    const recSet = Settings.get('authRecovery');
+    ok('رمز الاسترجاع مُخزَّن ملبَّداً لا نصاً',
+       !!(recSet && recSet.hash) && JSON.stringify(recSet).indexOf(first.recoveryCode) === -1);
+    ok('رمز الاسترجاع ١٦ محرفاً تُعرَض مرة واحدة',
+       first.recoveryCode.replace(/-/g, '').length === 16, first.recoveryCode.length);
+    ok('الرمز يُتحقَّق منه بالتلبيد نفسه', await Crypto.verify(first.recoveryCode, recSet) === true);
+
+    /* ---------- الدخول والخروج ---------- */
+    await Auth.logout();
+    ok('الخروج يُنهي الجلسة ويُسقط كل صلاحية',
+       Auth.session.actorId === null && Auth.can('members.view') === false);
+    ok('دخول بكلمة مرور خاطئة يُرفض',
+       await codeOf(() => Auth.login('omtabarak', 'كلمة خاطئة')) === 'BAD_LOGIN');
+    const noUser = await msgOf(() => Auth.login('لا-أحد-هنا', 'كلمة خاطئة'));
+    const badPw  = await msgOf(() => Auth.login('omtabarak', 'كلمة أخرى خاطئة'));
+    ok('اسم غير موجود وكلمة خاطئة: الرسالة واحدة — لا يُكشف وجود حساب',
+       noUser === badPw && !!noUser, `${noUser} | ${badPw}`);
+    const signed = await Auth.login('omtabarak', AUTH_PW.owner);
+    ok('الدخول الصحيح يفتح جلسة بالاسم والدور الحقيقيين',
+       Auth.session.actorId === signed.id && Auth.session.actorName === 'أم تبارك'
+       && Auth.session.roleKey === 'owner' && Auth.can('settings.danger') === true);
+    ok('تاريخ آخر دخول يُسجَّل على الحساب', !!Repos.users.get(signed.id).lastLoginAt);
+
+    /* ---------- حساب موقوف ---------- */
+    const off = await Svc.users.create({ username:'mawqufa', name:'موقوفة',
+                                         roleKey:'reception', password:AUTH_PW.reception });
+    await Svc.users.setDisabled(off.id, true);
+    ok('الحساب الموقوف لا يدخل ورسالته تدلّ على السبب',
+       await codeOf(() => Auth.login('mawqufa', AUTH_PW.reception)) === 'USER_DISABLED');
+    ok('محاولة دخول فاشلة لا تُسقط الجلسة القائمة',
+       Auth.session.actorId === signed.id, Auth.session.actorName);
+    await Svc.users.setDisabled(off.id, false);
+    ok('الحساب بعد إعادة التفعيل يدخل', !!(await Auth.login('mawqufa', AUTH_PW.reception)));
+
+    /* ---------- تغيير كلمة المرور بالنفس ---------- */
+    ok('تغيير كلمة المرور بكلمة قديمة خاطئة يُرفض',
+       await codeOf(() => Svc.users.changeOwnPassword('غلط', 'كلمة-جديدة-طويلة')) === 'BAD_PASSWORD');
+    ok('كلمة مرور أقصر من الحد تُرفض',
+       await codeOf(() => Svc.users.changeOwnPassword(AUTH_PW.reception, '12345')) === 'VALIDATION');
+    await Svc.users.changeOwnPassword(AUTH_PW.reception, 'كلمة-جديدة-طويلة');
+    ok('الكلمة القديمة لا تعمل بعد التغيير',
+       await codeOf(() => Auth.login('mawqufa', AUTH_PW.reception)) === 'BAD_LOGIN');
+    ok('الكلمة الجديدة تعمل', !!(await Auth.login('mawqufa', 'كلمة-جديدة-طويلة')));
+
+    /* ---------- الاسترجاع: يعمل بلا دخول، وهو المخرج الموثّق ---------- */
+    await Auth.logout();
+    ok('الاسترجاع برمز خاطئ يُرفض',
+       await codeOf(() => Auth.recover('AAAA-BBBB-CCCC-DDDD', 'omtabarak', 'كلمة-مالكة-جديدة'))
+       === 'BAD_RECOVERY');
+    ok('الاسترجاع لا يُطبَّق على حساب غير مالكة',
+       await codeOf(() => Auth.recover(first.recoveryCode, 'mawqufa', 'كلمة-مالكة-جديدة')) === 'NOT_ADMIN');
+    const again = await Auth.recover(first.recoveryCode, 'omtabarak', 'كلمة-مالكة-جديدة');
+    ok('الاسترجاع يعمل بلا دخول ويعيد كلمة مرور المالكة', !!again.user);
+    ok('الاسترجاع يولّد رمزاً جديداً يحلّ محلّ القديم',
+       !!again.recoveryCode && again.recoveryCode !== first.recoveryCode);
+    ok('الرمز القديم لا يعمل بعد الاسترجاع',
+       await codeOf(() => Auth.recover(first.recoveryCode, 'omtabarak', 'أخرى-طويلة')) === 'BAD_RECOVERY');
+    ok('كلمة مرور المالكة القديمة سقطت',
+       await codeOf(() => Auth.login('omtabarak', AUTH_PW.owner)) === 'BAD_LOGIN');
+    ok('كلمة المرور المستعادة تعمل', !!(await Auth.login('omtabarak', 'كلمة-مالكة-جديدة')));
+
+    /* ---------- الجلسة تُستعاد في اللسان نفسه ولا تُستعاد لحساب موقوف ---------- */
+    ok('الجلسة تُستعاد بعد إعادة التحميل في اللسان نفسه',
+       Auth.restoreSession() === true && Auth.session.actorName === 'أم تبارك');
+    await Auth.login('mawqufa', 'كلمة-جديدة-طويلة');
+    await Repos.users.update(off.id, { disabled:true });
+    ok('جلسة حساب أُوقف لا تُستعاد بعد إعادة التحميل',
+       Auth.restoreSession() === false && Auth.session.actorId === null);
+    await Repos.users.update(off.id, { disabled:false });
+    await Auth.login('omtabarak', 'كلمة-مالكة-جديدة');
+
+    /* ---------- السجل لا يحمل أسراراً ---------- */
+    const log = JSON.stringify(Repos.audit.list(true));
+    ok('سجل الأحداث لا يحوي كلمة مرور ولا رمز استرجاع',
+       [AUTH_PW.owner, AUTH_PW.reception, 'كلمة-مالكة-جديدة', 'كلمة-جديدة-طويلة',
+        first.recoveryCode, again.recoveryCode].every(s => log.indexOf(s) === -1));
+    ok('أحداث التهيئة والدخول والخروج والاسترجاع مسجَّلة',
+       ['setup','login','logout','recover'].every(a =>
+         Repos.audit.list(true).some(x => x.entity === 'auth' && x.action === a)),
+       Repos.audit.list(true).filter(x => x.entity === 'auth').map(x => x.action).join(','));
+    return results;
+  }
+
+  /* ------- 2) مصفوفة الصلاحيات: كل فعل محميّ × كل دور، عند حدّ الفعل ------- */
+  async function permMatrix(){
+    const { Auth, Svc, Repos, Backup, Brand, Actions, UI, DB, D, U, STORE_NAMES } = T();
+    const who = await authBoot();
+    const ROLES = [
+      { key:'trainer',   ar:'المدربة',    u:who.trainer,   pw:AUTH_PW.trainer },
+      { key:'reception', ar:'الاستقبال',  u:who.reception, pw:AUTH_PW.reception },
+      { key:'manager',   ar:'المديرة',    u:who.manager,   pw:AUTH_PW.manager },
+      { key:'owner',     ar:'المالكة',    u:who.owner,     pw:AUTH_PW.owner }
+    ];
+    const allows = (roleKey, permKey) => {
+      const perms = Auth.permsOf(roleKey);
+      return perms.includes('*') || perms.includes(permKey);
+    };
+    const asOwner = () => Auth.login(who.owner.username, AUTH_PW.owner);
+
+    /* الحوارات تُجاب تلقائياً: المقصود هنا حدّ الصلاحية لا زرّ التأكيد */
+    const realConfirm = UI.confirm, realModal = UI.modal;
+    UI.confirm = async () => true;
+    UI.modal = opts => {
+      const ov = document.createElement('div');
+      ov.innerHTML = String(opts.body || '') + String(opts.footer || '');
+      document.body.appendChild(ov);
+      const h = { close(){ try { ov.remove(); } catch(e){} } };
+      if (opts.onMount) try { opts.onMount(ov); } catch(e){}
+      setTimeout(() => {
+        const b = ov.querySelector('[data-ok]');
+        if (b) b.click(); else { h.close(); if (opts.onClose) opts.onClose(); }
+      }, 0);
+      return h;
+    };
+
+    let seq = 0;
+    const uniq = () => 'ت' + (++seq) + Math.random().toString(36).slice(2, 6);
+    const K = { close:D.monthsBack(30)[0], reopen:D.monthsBack(29)[0],
+                corr:D.monthsBack(28)[0], dist:D.monthsBack(27)[0] };
+    const YESTERDAY = D.addDays(D.today(), -1);
+    const supplier = async () => Repos.suppliers.list()[0]
+      || await Repos.suppliers.create({ name:'مورّد اختبار الصلاحيات', phone:'' });
+    const product = async () => Repos.products.list()[0]
+      || await Repos.products.create({ name:'صنف اختبار', unit:'حبة', price:1000, cost:500, minQty:0 });
+    const draft = async () => {
+      const s = await supplier(), p = await product();
+      const { rec } = await Svc.purchases.save(null, { supplierId:s.id, date:D.today(),
+        lines:[{ productId:p.id, qty:1, unitCost:500 }], discount:0 });
+      return rec.id;
+    };
+    const posted = async () => { const id = await draft(); await Svc.purchases.post(id); return id; };
+    const partner = async () => Repos.partners.list()[0]
+      || await Repos.partners.create({ name:'شريكة اختبار', sharePercent:50 });
+    const closePeriod = async key => { if (!Svc.periods.isClosed(key)) await Svc.periods.close(key); };
+    const openPeriod  = async key => { if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'تهيئة اختبار'); };
+    const freshDist = async () => {
+      await closePeriod(K.dist);
+      const pr = await partner();
+      const { rec } = await Svc.distributions.create({ partnerId:pr.id, periodFrom:D.startOfMonth(K.dist),
+        periodTo:D.endOfMonth(K.dist), amount:10, date:D.today(), method:'cash' });
+      return rec.id;
+    };
+    const aUser = async () => Svc.users.create({ username:uniq(), name:'حساب مؤقّت ' + seq,
+      roleKey:'reception', password:'MuaqqatPass#1' });
+
+    /* كل فعل محميّ: كيف يُهيَّأ، كيف يُستدعى، وبم يُثبَت أنه نُفِّذ فعلاً */
+    const ACTS = [
+      { t:'تسجيل حركة رأس مال', key:'finance.money',
+        run:async () => (await Svc.finance.addCapital({ date:D.today(), amount:1000, type:'injection',
+              method:'cash', description:'اختبار الصلاحيات' })).rec,
+        check:r => !!Repos.capital.get(r.id) },
+      { t:'تصحيح طريقة حركة رأس مال', key:'finance.money',
+        arrange:async () => (await Repos.capital.create({ date:D.today(), amount:50, type:'injection',
+              kind:'capital_injection', method:T().PayMethods.UNKNOWN_KEY, description:'مجهولة الطريقة' })).id,
+        run:id => Svc.finance.setCapitalMethod(id, 'cash'),
+        check:(r, id) => Repos.capital.get(id).method === 'cash' },
+      { t:'أرشفة حركة رأس مال', key:'finance.money',
+        arrange:async () => (await Repos.capital.create({ date:D.today(), amount:50, type:'injection',
+              kind:'capital_injection', method:'cash', description:'للأرشفة' })).id,
+        run:id => Svc.finance.archiveCapital(id, true),
+        check:(r, id) => !!Repos.capital.get(id).archived },
+      { t:'إقفال صندوق اليوم', key:'cash.money',
+        arrange:async () => { const c = Svc.cashbook.get(YESTERDAY);
+          if (c) await Repos.cashDays.hardDelete(c.id); return YESTERDAY; },
+        run:d => Svc.cashbook.close({ date:d, countedCash:0, notes:'إقفال اختبار الصلاحيات' }),
+        check:() => !!(Svc.cashbook.get(YESTERDAY) || {}).closedAt },
+      { t:'إعادة فتح صندوق مقفل', key:'cash.money',
+        arrange:async () => { const c = Svc.cashbook.get(YESTERDAY);
+          if (c) await Repos.cashDays.hardDelete(c.id);
+          await Svc.cashbook.close({ date:YESTERDAY, countedCash:0, notes:'تهيئة اختبار' });
+          return YESTERDAY; },
+        run:d => Svc.cashbook.reopen(d, 'اختبار الصلاحيات'),
+        check:() => !(Svc.cashbook.get(YESTERDAY) || {}).closedAt },
+      { t:'ترحيل مستند شراء', key:'inventory.create',
+        arrange:draft, run:id => Svc.purchases.post(id),
+        check:(r, id) => Repos.purchases.get(id).status === 'posted' },
+      { t:'إلغاء مستند شراء', key:'inventory.delete',
+        arrange:posted, run:id => Svc.purchases.cancel(id, 'اختبار الصلاحيات'),
+        check:(r, id) => Repos.purchases.get(id).status === 'cancelled' },
+      { t:'تسديد دفعة لمورّد', key:'finance.money',
+        arrange:posted,
+        run:id => Svc.purchases.addPayment({ purchaseId:id, date:D.today(), amount:100, method:'cash' }),
+        check:(r, id) => Svc.purchases.paidFor(id) === 100 },
+      { t:'حذف دفعة مورّد', key:'finance.money',
+        arrange:async () => { const id = await posted();
+          const { rec } = await Svc.purchases.addPayment({ purchaseId:id, date:D.today(),
+            amount:100, method:'cash' }); return rec.id; },
+        run:id => Svc.purchases.removePayment(id),
+        check:(r, id) => !Repos.purchasePayments.get(id) },
+      { t:'إقفال فترة مالية', key:'finance.money',
+        arrange:async () => { await openPeriod(K.close); return K.close; },
+        run:k => Svc.periods.close(k), check:() => Svc.periods.isClosed(K.close) },
+      { t:'إعادة فتح فترة مقفلة', key:'finance.money',
+        arrange:async () => { await closePeriod(K.reopen); return K.reopen; },
+        run:k => Svc.periods.reopen(k, 'اختبار الصلاحيات'), check:() => !Svc.periods.isClosed(K.reopen) },
+      { t:'تصحيح مُعلَّل داخل فترة مقفلة', key:'finance.money',
+        arrange:async () => { await closePeriod(K.corr); return D.startOfMonth(K.corr); },
+        run:d => Svc.periods.guardWrite(d, 'تصحيح اختبار', { correctionReason:'سبب مكتوب' }),
+        check:r => r === true },
+      { t:'تسجيل توزيع أرباح', key:'finance.money',
+        arrange:async () => { await closePeriod(K.dist); return (await partner()).id; },
+        run:async pid => (await Svc.distributions.create({ partnerId:pid, periodFrom:D.startOfMonth(K.dist),
+              periodTo:D.endOfMonth(K.dist), amount:10, date:D.today(), method:'cash' })).rec,
+        check:r => !!Repos.distributions.get(r.id) },
+      { t:'تعديل توزيع أرباح', key:'finance.money',
+        arrange:freshDist, run:id => Svc.distributions.update(id, { amount:20 }),
+        check:(r, id) => Repos.distributions.get(id).amount === 20 },
+      { t:'حذف توزيع أرباح', key:'finance.money',
+        arrange:freshDist, run:id => Svc.distributions.remove(id),
+        check:(r, id) => !Repos.distributions.get(id) },
+      { t:'رفع شعار الهوية', key:'settings.edit',
+        run:() => Brand.setMedia('logo', pngFile('perm-logo.png')), check:() => Brand.has('logo') },
+      { t:'إزالة شعار الهوية', key:'settings.edit',
+        arrange:async () => { if (!Brand.has('logo')) await Brand.setMedia('logo', pngFile('perm-logo.png')); },
+        run:() => Brand.clearMedia('logo'), check:() => !Brand.has('logo') },
+      { t:'حفظ بيانات الهوية', key:'settings.edit',
+        run:() => Brand.saveDetails({ subtitle:'اختبار الصلاحيات', phone:'', address:'', instagram:'', footer:'' }),
+        check:() => Brand.get().subtitle === 'اختبار الصلاحيات' },
+      { t:'أرشفة مشتركة', key:'members.delete',
+        arrange:async () => (await Repos.members.create({ name:'مشتركة أرشفة ' + uniq(), phone:'',
+          joinDate:D.today(), code:'ص' + seq })).id,
+        run:id => Actions.archiveMember(id), check:(r, id) => !!Repos.members.get(id).archived },
+      { t:'أرشفة اشتراك', key:'subs.delete',
+        arrange:() => (Repos.subs.list().find(s => !s.archived) || {}).id || null,
+        run:id => Actions.archiveSub(id), check:(r, id) => !!Repos.subs.get(id).archived },
+      { t:'أرشفة إيراد', key:'finance.delete',
+        arrange:async () => (await Repos.revenues.create({ date:D.today(), amount:25, source:'other',
+          description:'إيراد اختبار الصلاحيات' })).id,
+        run:id => Actions.archiveRevenue(id), check:(r, id) => !!Repos.revenues.get(id).archived },
+      { t:'أرشفة مصروف', key:'finance.delete',
+        arrange:async () => (await Repos.expenses.create({ date:D.today(), amount:25,
+          categoryId:(Repos.expCats.list()[0] || {}).id || null, description:'مصروف اختبار', method:'cash' })).id,
+        run:id => Actions.archiveExpense(id), check:(r, id) => !!Repos.expenses.get(id).archived },
+      { t:'دفع راتب', key:'payroll.money',
+        arrange:async () => {
+          const st = Repos.staff.list().find(s => s.status !== 'left')
+            || await Repos.staff.create({ name:'موظفة اختبار', baseSalary:100, status:'active', payMethod:'cash' });
+          const period = D.monthKey(D.today());
+          let pr = Svc.payroll.ofPeriod(period).find(x => x.staffId === st.id);
+          if (!pr){ await Svc.payroll.generate(period);
+                    pr = Svc.payroll.ofPeriod(period).find(x => x.staffId === st.id); }
+          if (pr.status === 'paid') pr = await Svc.payroll.unpay(pr.id);
+          if (!(pr.net > 0)) pr = await Repos.payrolls.update(pr.id, { net:100 });
+          return pr.id; },
+        run:id => Actions.payPayroll(id), check:(r, id) => Repos.payrolls.get(id).status === 'paid' },
+      { t:'إلغاء فاتورة بيع', key:'pos.delete',
+        arrange:() => (Repos.sales.list().find(s => !s.archived) || {}).id || null,
+        run:id => Actions.archiveSale(id), check:(r, id) => !!Repos.sales.get(id).archived },
+      { t:'أرشفة صنف من المخزون', key:'inventory.delete',
+        arrange:async () => (await Repos.products.create({ name:'صنف أرشفة ' + uniq(), unit:'حبة',
+          price:1000, cost:500, minQty:0 })).id,
+        run:id => Actions.archiveProduct(id), check:(r, id) => !!Repos.products.get(id).archived },
+      { t:'حذف سجل حضور', key:'attendance.delete',
+        arrange:async () => { const m = Repos.members.list()[0];
+          return (await Repos.attendance.create({ memberId:m.id, date:D.today(), method:'manual',
+            status:'present' })).id; },
+        run:id => Actions.removeAttendance(id), check:(r, id) => !Repos.attendance.get(id) },
+      { t:'إنشاء مستخدمة', key:'settings.users',
+        run:() => Svc.users.create({ username:uniq(), name:'مستخدمة جديدة', roleKey:'trainer',
+          password:'JadidaPass#1' }), check:r => !!Repos.users.get(r.id) },
+      { t:'تعديل مستخدمة ودورها', key:'settings.users',
+        arrange:async () => (await aUser()).id,
+        run:id => Svc.users.update(id, { roleKey:'trainer' }),
+        check:(r, id) => Repos.users.get(id).roleKey === 'trainer' },
+      { t:'إيقاف مستخدمة', key:'settings.users',
+        arrange:async () => (await aUser()).id, run:id => Svc.users.setDisabled(id, true),
+        check:(r, id) => Repos.users.get(id).disabled === true },
+      { t:'تعيين كلمة مرور لمستخدمة', key:'settings.users',
+        arrange:async () => { const u = await aUser(); return { id:u.id, hash:u.pass.hash }; },
+        run:a => Svc.users.setPassword(a.id, 'BadalPass#1'),
+        check:(r, a) => Repos.users.get(a.id).pass.hash !== a.hash },
+      { t:'حذف مستخدمة', key:'settings.users',
+        arrange:async () => (await aUser()).id, run:id => Svc.users.remove(id),
+        check:(r, id) => !Repos.users.get(id) },
+      { t:'استعادة نسخة احتياطية', key:'settings.danger',
+        arrange:() => Backup.build(true), run:b => Backup.restore(b),
+        check:() => Repos.users.list(true).length >= 4 },
+      { t:'إعادة تهيئة البرنامج بالكامل', key:'settings.danger',
+        run:() => Actions.wipe(), check:() => DB.count('members') === 0 }
+    ];
+
+    /* عدّ السطور قبل المحاولة الممنوعة وبعدها: الرفض يجب ألا يكتب شيئاً */
+    const countable = STORE_NAMES.filter(s => s !== 'audit' && s !== 'users' && s !== 'meta');
+    const snap = () => countable.map(s => DB.count(s)).join(',');
+    const leaks = [];
+
+    const attempt = async (act, role) => {
+      await asOwner();
+      let arg = null;
+      try { arg = act.arrange ? await act.arrange() : null; }
+      catch(e){ return { ok:false, code:'ARRANGE', msg:e.message }; }
+      await Auth.login(role.u.username, role.pw);
+      const before = snap();
+      try {
+        const out = await act.run(arg);
+        let verified = true;
+        if (act.check){ try { verified = !!act.check(out, arg); } catch(e){ verified = false; } }
+        return { ok:true, verified };
+      } catch(e){
+        if (snap() !== before) leaks.push(`${act.t}/${role.ar}`);
+        return { ok:false, code:e.code || '', msg:e.message || String(e) };
+      }
+    };
+
+    for (const act of ACTS){
+      const denied  = ROLES.filter(r => !allows(r.key, act.key));
+      const granted = ROLES.filter(r =>  allows(r.key, act.key));
+      const dOut = [], gOut = [];
+      for (const r of denied)  dOut.push([r, await attempt(act, r)]);
+      for (const r of granted) gOut.push([r, await attempt(act, r)]);
+
+      ok(`«${act.t}» يُرفض عند حدّ الفعل لمن لا يملك ${act.key}`,
+         dOut.length > 0 && dOut.every(([, x]) => !x.ok && x.code === 'FORBIDDEN'),
+         dOut.map(([r, x]) => `${r.ar}=${x.ok ? 'نفَّذ!' : x.code}`).join(' · '));
+      ok(`«${act.t}» يُنفَّذ فعلاً لمن يملك ${act.key}`,
+         gOut.length > 0 && gOut.every(([, x]) => x.ok && x.verified !== false),
+         gOut.map(([r, x]) => `${r.ar}=${x.ok ? (x.verified ? 'نُفِّذ وتُحقِّق' : 'بلا أثر!') : x.code + ':' + x.msg}`).join(' · '));
+    }
+
+    ok('الرفض لا يكتب سطراً واحداً في أي جدول', !leaks.length, leaks.join(' · '));
+
+    /* الشمول يُقاس على الشيفرة نفسها لا على قائمة مكتوبة يدوياً: كل موضع
+       Auth.require في البرنامج يجب أن يكون له فعل في هذه المصفوفة. */
+    /* شيفرة البرنامج نفسها: أطول نصّ برمجي في الصفحة — لا نصّ الاختبارات
+       المحقون في الترويسة قبلها. */
+    const appSrc = [...document.querySelectorAll('script')]
+      .map(s => s.textContent || '').filter(t => t.indexOf('window.TG = {') !== -1)
+      .sort((a, b) => b.length - a.length)[0] || '';
+    const sites = (appSrc.match(/Auth\.require\(/g) || []).length;
+    const guardedKeys = [...new Set((appSrc.match(/Auth\.require\('[a-z.]+'\)/g) || [])
+      .map(m => m.slice(m.indexOf("'") + 1, m.lastIndexOf("'"))))];
+    const covered = new Set(ACTS.map(a => a.key));
+    const gap = guardedKeys.filter(k => !covered.has(k));
+    ok('كل مفتاح صلاحية محروس في الشيفرة مغطّى بالمصفوفة', guardedKeys.length > 0 && !gap.length,
+       `محروسة=${guardedKeys.length} بلا تغطية=${gap.join(',') || 'لا شيء'}`);
+    ok(`المصفوفة تغطّي مواضع التحقّق الـ${sites} في الشيفرة بـ${ACTS.length} فعلاً`,
+       sites > 0 && ACTS.length >= sites - 1,
+       `مواضع=${sites} أفعال=${ACTS.length} مفاتيح=${guardedKeys.length}`);
+
+    UI.confirm = realConfirm; UI.modal = realModal;
+    return results;
+  }
+
+  /* --------------- 3) إدارة المستخدمات: حمايتها من إقفال النظام --------------- */
+  async function usersAdmin(){
+    const { Auth, Svc, Repos, U } = T();
+    const who = await authBoot();
+
+    /* ---------- آخر مالكة فعّالة لا تُترك النظام بلا مالكة ---------- */
+    ok('المالكة الوحيدة لا تُنزَّل إلى دور أدنى',
+       await codeOf(() => Svc.users.update(who.owner.id, { roleKey:'manager' })) === 'LAST_ADMIN');
+    ok('لا توقفين حسابك أنتِ',
+       await codeOf(() => Svc.users.setDisabled(who.owner.id, true)) === 'SELF_DISABLE');
+    ok('لا تحذفين حسابك أنتِ',
+       await codeOf(() => Svc.users.remove(who.owner.id)) === 'SELF_DELETE');
+    ok('الدور الذي يملك إدارة المستخدمات هو «مالكة» بالمعنى التشغيلي',
+       Auth.isAdminRole('owner') === true && Auth.isAdminRole('manager') === false);
+
+    /* ---------- مع وجود مالكة ثانية يُسمح بما مُنع ---------- */
+    const second = await Svc.users.create({ username:'malika2', name:'مالكة ثانية',
+                                            roleKey:'owner', password:'Malika2#2026' });
+    ok('تنزيل مالكة مسموح ما دامت هناك مالكة أخرى فعّالة',
+       await codeOf(() => Svc.users.update(second.id, { roleKey:'manager' })) === null);
+    await Svc.users.update(second.id, { roleKey:'owner' });
+    ok('إيقاف مالكة أخرى مسموح ما دامت هناك مالكة فعّالة',
+       await codeOf(() => Svc.users.setDisabled(second.id, true)) === null);
+    /* الحارس نفسه عند حدّه: المالكة الثانية موقوفة الآن، فلم تبقَ إلا واحدة */
+    ok('الحارس يمنع إيقاف آخر مالكة فعّالة',
+       await codeOf(() => Svc.users.guardLastAdmin(who.owner.id, undefined, true)) === 'LAST_ADMIN');
+    ok('الحارس يمنع تنزيل آخر مالكة فعّالة',
+       await codeOf(() => Svc.users.guardLastAdmin(who.owner.id, 'reception', undefined)) === 'LAST_ADMIN');
+    await Svc.users.setDisabled(second.id, false);
+    ok('الحارس يسكت ما دامت هناك مالكة أخرى فعّالة',
+       await codeOf(() => Svc.users.guardLastAdmin(who.owner.id, undefined, true)) === null);
+    ok('عدد المالكات الفعّالات يُحسب من الدور لا من الاسم',
+       Svc.users.activeAdmins().length === 2, Svc.users.activeAdmins().map(u => u.name).join(','));
+
+    /* ---------- تنزيل النفس يُفقد الصلاحية فوراً ---------- */
+    await Auth.login('malika2', 'Malika2#2026');
+    await Svc.users.update(second.id, { roleKey:'manager' });
+    ok('تعديل الدور يسري على الجلسة الجارية فوراً',
+       Auth.session.roleKey === 'manager' && Auth.can('settings.users') === false);
+    ok('المُنزَّلة لا تستطيع إعادة ترقية نفسها',
+       await codeOf(() => Svc.users.update(second.id, { roleKey:'owner' })) === 'FORBIDDEN');
+    await Auth.login(who.owner.username, AUTH_PW.owner);
+    await Svc.users.update(second.id, { roleKey:'owner' });
+
+    /* ---------- المديرة لا تدير المستخدمات عمداً ---------- */
+    await Auth.login(who.manager.username, AUTH_PW.manager);
+    ok('المديرة لا تنشئ مستخدمات',
+       await codeOf(() => Svc.users.create({ username:'mandas', name:'دسّ', roleKey:'owner',
+         password:'Dass#12345' })) === 'FORBIDDEN');
+    ok('المديرة لا ترفع نفسها إلى مالكة',
+       await codeOf(() => Svc.users.update(who.manager.id, { roleKey:'owner' })) === 'FORBIDDEN');
+    ok('المديرة لا تُعيد تهيئة البرنامج', Auth.can('settings.danger') === false);
+    ok('المديرة تملك ما عدا ذلك',
+       Auth.can('finance.money') && Auth.can('members.delete') && Auth.can('settings.edit'));
+
+    /* ---------- التحقّق من صحّة البيانات ---------- */
+    await Auth.login(who.owner.username, AUTH_PW.owner);
+    ok('اسم مستخدمة مكرّر يُرفض',
+       await codeOf(() => Svc.users.create({ username:'mudira', name:'تكرار', roleKey:'trainer',
+         password:'Takrar#12345' })) === 'VALIDATION');
+    ok('كلمة مرور قصيرة تُرفض عند الإنشاء',
+       await codeOf(() => Svc.users.create({ username:'qasira', name:'قصيرة', roleKey:'trainer',
+         password:'12345' })) === 'VALIDATION');
+    ok('دور غير موجود يُرفض',
+       await codeOf(() => Svc.users.create({ username:'wahm', name:'وهم', roleKey:'superadmin',
+         password:'Wahm#12345' })) === 'VALIDATION');
+    const arabicUser = await Svc.users.create({ username:'أميرة', name:'أميرة',
+                                                roleKey:'trainer', password:'Amira#12345' });
+    ok('اسم المستخدمة يُطابَق بلا حساسية لحالة الحرف',
+       (Svc.users.byUsername('MUDIRA') || {}).id === who.manager.id,
+       (Svc.users.byUsername('MUDIRA') || {}).username);
+    ok('اسم المستخدمة العربي يُطابَق بلا حساسية للهمزات والتشكيل',
+       (Svc.users.byUsername('اميره') || {}).id === arabicUser.id,
+       (Svc.users.byUsername('اميره') || {}).username);
+    ok('اسم عربي مكرّر باختلاف الهمزة يُرفض',
+       await codeOf(() => Svc.users.create({ username:'اميرة', name:'تكرار عربي',
+         roleKey:'trainer', password:'Takrar#12345' })) === 'VALIDATION');
+
+    /* ---------- الحذف لا يمحو التاريخ ---------- */
+    const temp = await Svc.users.create({ username:'mughadira', name:'مغادِرة',
+                                          roleKey:'reception', password:'Mughadira#1' });
+    await Auth.login('mughadira', 'Mughadira#1');
+    const m = await Svc.members.create({ name:'مشتركة المغادِرة', phone:'', joinDate:T().D.today() });
+    await Auth.login(who.owner.username, AUTH_PW.owner);
+    await Svc.users.remove(temp.id);
+    const trace = Repos.audit.list(true).find(a => a.entity === 'member' && a.entityId === m.rec.id);
+    ok('حذف المستخدمة لا يمحو نسبتها في السجل',
+       !!trace && trace.actor === 'مغادِرة' && trace.actorId === temp.id,
+       trace ? `${trace.actor}/${trace.actorId}` : 'لا أثر');
+    ok('حساب محذوف لا يدخل بعد حذفه',
+       await codeOf(() => Auth.login('mughadira', 'Mughadira#1')) === 'BAD_LOGIN');
+    return results;
+  }
+
+  /* ------------- 4) نسبة الأفعال: كل فعل حسّاس له فاعل حقيقي ------------- */
+  async function accountability(){
+    const { Auth, Svc, Repos, D, U } = T();
+    const before = Repos.audit.list(true).length;
+    const historic = U.clone(Repos.audit.list(true).slice(0, 5));
+    const who = await authBoot();
+    const last = (entity, action) =>
+      U.sortBy(Repos.audit.list(true).filter(a => a.entity === entity && a.action === action), a => a.ts, -1)[0];
+
+    /* ---------- الاستقبال: ما تفعله يُنسب إليها ---------- */
+    await Auth.login(who.reception.username, AUTH_PW.reception);
+    const m = await Svc.members.create({ name:'مشتركة منسوبة', phone:'07700000001', joinDate:D.today() });
+    const a = await Svc.attendance.checkIn({ memberId:m.rec.id, date:D.today() });
+    const lm = last('member','create'), la = last('attendance','checkin');
+    ok('إنشاء مشتركة يُنسب إلى المستخدمة الداخلة',
+       !!lm && lm.actor === 'زهراء الاستقبال' && lm.actorId === who.reception.id,
+       lm ? lm.actor : 'لا حدث');
+    ok('تسجيل الحضور يُنسب إلى المستخدمة الداخلة',
+       !!la && la.actorId === who.reception.id, la ? la.actor : 'لا حدث');
+
+    /* ---------- المديرة: المال ينُسب إليها هي لا إلى «المالكة» ---------- */
+    await Auth.login(who.manager.username, AUTH_PW.manager);
+    await Svc.finance.addCapital({ date:D.today(), amount:500, type:'injection', method:'cash',
+                                   description:'ضخ منسوب' });
+    const lc = last('capital','create');
+    ok('حركة رأس المال تُنسب إلى المديرة التي نفّذتها',
+       !!lc && lc.actor === 'سارة المديرة' && lc.actorId === who.manager.id, lc ? lc.actor : 'لا حدث');
+    const y = D.addDays(D.today(), -1);
+    const cur = Svc.cashbook.get(y); if (cur) await Repos.cashDays.hardDelete(cur.id);
+    const day = await Svc.cashbook.close({ date:y, countedCash:0, notes:'إقفال منسوب' });
+    ok('الحقل المحفوظ «أقفله» يحمل اسم من أقفل فعلاً',
+       day.closedBy === 'سارة المديرة', day.closedBy);
+
+    /* ---------- المالكة: الإقفال والمستندات ---------- */
+    await Auth.login(who.owner.username, AUTH_PW.owner);
+    const key = D.monthsBack(26)[0];
+    if (Svc.periods.isClosed(key)) await Svc.periods.reopen(key, 'تهيئة');
+    const per = await Svc.periods.close(key);
+    ok('الفترة المقفلة تحمل اسم من أقفلها', per.closedBy === 'أم تبارك', per.closedBy);
+    const sup = Repos.suppliers.list()[0] || await Repos.suppliers.create({ name:'مورّد نسبة', phone:'' });
+    const prod = Repos.products.list()[0];
+    const { rec:pur } = await Svc.purchases.save(null, { supplierId:sup.id, date:D.today(),
+      lines:[{ productId:prod.id, qty:1, unitCost:100 }], discount:0 });
+    const postedRec = await Svc.purchases.post(pur.id);
+    ok('مستند الشراء يحمل اسم من رحّله', postedRec.postedBy === 'أم تبارك', postedRec.postedBy);
+
+    /* ---------- ثوابت النسبة ---------- */
+    const fresh = Repos.audit.list(true).filter(x => !historic.some(h => h.id === x.id));
+    const sinceAuth = fresh.filter(x => x.actorId);
+    ok('كل حدث جديد بعد الدخول يحمل معرّف فاعله واسمه',
+       sinceAuth.length > 0 && sinceAuth.every(x => !!x.actor),
+       `${sinceAuth.length} حدثاً منسوباً`);
+    const known = [who.owner.id, who.manager.id, who.reception.id, who.trainer.id];
+    ok('لا حدث منسوب إلى معرّف لا وجود له',
+       sinceAuth.every(x => known.includes(x.actorId) || !!Repos.users.get(x.actorId)),
+       sinceAuth.filter(x => !Repos.users.get(x.actorId)).length);
+    ok('اسم الفاعل المحفوظ يطابق اسم حسابه وقتها',
+       sinceAuth.every(x => { const u = Repos.users.get(x.actorId); return !u || u.name === x.actor; }));
+
+    /* ---------- الأحداث التاريخية لا يُخترع لها فاعل ---------- */
+    ok('الأحداث السابقة لتفعيل الدخول تبقى كما كُتبت — بلا فاعل مُخترَع',
+       historic.every(h => { const now = Repos.audit.get(h.id);
+         return !now || (now.actorId === h.actorId && now.actor === h.actor); }),
+       `فُحص ${historic.length} حدثاً تاريخياً`);
+    ok('عدد الأحداث نما ولم يُعَد كتابة القديم', Repos.audit.list(true).length > before);
+    return results;
+  }
+
+  /* ------------ 5) النسخة الاحتياطية: تحمل الحسابات لا كلمات المرور ------------ */
+  async function authBackup(){
+    const { Auth, Svc, Repos, Backup, DB, U } = T();
+    const who = await authBoot();
+    const code = who.code;
+
+    const b = Backup.build(false);
+    const raw = JSON.stringify(b);
+    ok('النسخة تحمل جدول المستخدمات', Array.isArray(b.data.users) && b.data.users.length === 4,
+       (b.data.users || []).length);
+    ok('النسخة لا تحوي أي كلمة مرور نصاً',
+       [AUTH_PW.owner, AUTH_PW.manager, AUTH_PW.reception, AUTH_PW.trainer]
+         .every(pw => raw.indexOf(pw) === -1));
+    ok('النسخة لا تحوي رمز الاسترجاع نصاً', raw.indexOf(code) === -1);
+    ok('ما في النسخة تلبيدٌ معلن الخوارزمية بملحه وتكراراته',
+       b.data.users.every(u => u.pass && u.pass.algo === 'pbkdf2-sha256'
+         && u.pass.salt && u.pass.iterations >= 20000 && u.pass.hash),
+       b.data.users.map(u => u.pass && u.pass.algo).join(','));
+    const meta = (b.data.meta || []).find(x => x.k === 'settings');
+    ok('رمز الاسترجاع في الإعدادات ملبَّد كذلك',
+       !!(meta && meta.v && meta.v.authRecovery && meta.v.authRecovery.hash
+          && !meta.v.authRecovery.code));
+
+    /* ---------- الاستعادة تُبقي الحسابات صالحة للدخول ---------- */
+    await Svc.users.create({ username:'baada', name:'بعد النسخة', roleKey:'trainer',
+                             password:'Baada#12345' });
+    ok('حساب أُضيف بعد النسخة موجود قبل الاستعادة', !!Svc.users.byUsername('baada'));
+    await Backup.restore(b);
+    ok('الاستعادة تُرجع جدول المستخدمات كما كان', Repos.users.list(true).length === 4);
+    ok('الحساب المُضاف بعد النسخة اختفى بالاستعادة', !Svc.users.byUsername('baada'));
+    await Auth.logout();
+    ok('الدخول بكلمة المرور نفسها يعمل بعد الاستعادة',
+       !!(await Auth.login('omtabarak', AUTH_PW.owner)));
+    ok('الصلاحيات بعد الاستعادة كما كانت',
+       Auth.session.roleKey === 'owner' && Auth.can('settings.users') === true);
+    await Auth.login('istiqbal', AUTH_PW.reception);
+    ok('حساب الاستقبال المستعاد يحتفظ بدوره المحدود',
+       Auth.can('members.create') === true && Auth.can('finance.money') === false);
+    await Auth.login('omtabarak', AUTH_PW.owner);
+    ok('رمز الاسترجاع المستعاد ما زال صالحاً', T().Auth.hasRecovery() === true);
+
+    /* ---------- نسخة من قبل الحسابات: النظام يعود بلا حسابات لا مقفلاً ---------- */
+    const old = downgrade(Backup.build(false), 7);
+    await Backup.restore(old);
+    ok('نسخة ما قبل الحسابات تُستعاد وتُرقّى بلا خطأ', DB.count('users') === 0);
+    ok('بعدها يعمل النظام بلا حسابات كما كان قبل المرحلة',
+       T().Settings.get('authEnabled') !== true && Auth.can('settings.danger') === true,
+       String(T().Settings.get('authEnabled')));
+    ok('الترقية لم تخترع مستخدمة وهمية', Repos.users.list(true).length === 0);
+    ok('الأدوار الأربعة موجودة بعد الترقية', Repos.roles.list(true).length === 4);
+    return results;
+  }
+
   async function writeProbe(){
     const { Repos, Svc, D } = T();
     const rec = await Repos.members.create({ name:'اختبار الاستمرارية', phone:'', joinDate:D.today(), code:'ت9999' });
@@ -1740,6 +2406,7 @@ window.TGTests = (() => {
     saveAndPrint, desk, notes, distributions, creditsOnArchive, search, startScreen,
     capitalMethods, purchases, allocations, periodClose, integrityP2,
     branding, onboarding,
+    auth, permMatrix, usersAdmin, accountability, authBackup,
     writeProbe, probeExists, totals, endDates, downgrade
   };
 })();

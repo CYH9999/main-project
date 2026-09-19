@@ -96,7 +96,7 @@ group('ثوابت الاشتراك', async (browser, url) => {
   record('ثوابت الاشتراك', rows, errors);
 });
 
-group('الترقية v4 ⇐ v7', async (browser, url) => {
+group('الترقية v4 ⇐ v8', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -105,10 +105,10 @@ group('الترقية v4 ⇐ v7', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v4 ⇐ v7', rows, errors);
+  record('الترقية v4 ⇐ v8', rows, errors);
 });
 
-group('الترقية v5 ⇐ v7', async (browser, url) => {
+group('الترقية v5 ⇐ v8', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -117,10 +117,10 @@ group('الترقية v5 ⇐ v7', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v5 ⇐ v7', rows, errors);
+  record('الترقية v5 ⇐ v8', rows, errors);
 });
 
-group('الترقية v3 ⇐ v7', async (browser, url) => {
+group('الترقية v3 ⇐ v8', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -129,10 +129,10 @@ group('الترقية v3 ⇐ v7', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v3 ⇐ v7', rows, errors);
+  record('الترقية v3 ⇐ v8', rows, errors);
 });
 
-group('الترقية v6 ⇐ v7', async (browser, url) => {
+group('الترقية v6 ⇐ v8', async (browser, url) => {
   const { ctx, page, errors } = await openApp(browser, url);
   const rows = await runIn(page, async () => {
     await window.TG.Seed.loadDemo(20);
@@ -141,7 +141,19 @@ group('الترقية v6 ⇐ v7', async (browser, url) => {
     return window.TGTests.results;
   });
   await ctx.close();
-  record('الترقية v6 ⇐ v7', rows, errors);
+  record('الترقية v6 ⇐ v8', rows, errors);
+});
+
+group('الترقية v7 ⇐ v8', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.migrations(7);
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الترقية v7 ⇐ v8', rows, errors);
 });
 
 /* ---------------------- مجموعات المرحلة الثانية ---------------------- */
@@ -2130,6 +2142,430 @@ group('الأداء على قاعدة كبيرة', async (browser, url) => {
   console.log('   ⏱  ' + Object.entries(timings).map(([k, v]) => `${k}=${v}ms`).join(' · '));
   await ctx0.close();
   record('الأداء على قاعدة كبيرة', rows, errors);
+});
+
+/* ---------------------- مجموعات المرحلة الثالثة/ب ----------------------
+   الهوية والصلاحيات. الأصل هنا أن الصلاحية تُفحص في الخدمة نفسها، فالمجموعات
+   تستدعي الخدمات مباشرة بلا واجهة. وتُختم بمرور حقيقي على شاشة الدخول في
+   المتصفح: كتابةٌ في الحقول وضغطٌ على الأزرار كما تفعل المستخدمة. */
+group('الدخول والجلسة والاسترجاع', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.auth();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الدخول والجلسة والاسترجاع', rows, errors);
+});
+
+group('مصفوفة الصلاحيات', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TG.go('dashboard'); window.TG.renderRoute();
+    window.TGTests.reset();
+    await window.TGTests.permMatrix();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('مصفوفة الصلاحيات', rows, errors);
+});
+
+group('إدارة المستخدمات وحمايتها', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.usersAdmin();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('إدارة المستخدمات وحمايتها', rows, errors);
+});
+
+group('نسبة الأفعال إلى فاعلها', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(20);
+    window.TGTests.reset();
+    await window.TGTests.accountability();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('نسبة الأفعال إلى فاعلها', rows, errors);
+});
+
+group('الحسابات في النسخة الاحتياطية', async (browser, url) => {
+  const { ctx, page, errors } = await openApp(browser, url);
+  const rows = await runIn(page, async () => {
+    await window.TG.Seed.loadDemo(15);
+    window.TGTests.reset();
+    await window.TGTests.authBackup();
+    return window.TGTests.results;
+  });
+  await ctx.close();
+  record('الحسابات في النسخة الاحتياطية', rows, errors);
+});
+
+/* مرور حقيقي بالمتصفح: لا استدعاء لخدمة هنا — كتابة في الحقول وضغط أزرار،
+   وإعادة تحميل فعلية، وقياس ما تراه العين في الشريط والقائمة. */
+group('شاشة الدخول في المتصفح', async (browser, url) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  const noise = t => /favicon|Failed to load resource: the server responded with a status of 404/i.test(t);
+  page.on('console', m => { if (m.type() === 'error' && !noise(m.text())) errors.push(m.text()); });
+  const boot = async () => {
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+    await page.evaluate(() => window.TG.ready);
+  };
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await boot();
+  const rows = [];
+  const say = (name, pass, detail) => rows.push({ name, pass:!!pass, detail:detail == null ? '' : String(detail) });
+  /* رسالة الخطأ تُكتب بعد انتهاء معالج غير متزامن (تلبيد كلمة المرور يأخذ
+     وقتاً): تُنتظر حتى تتغيّر فعلاً بدل قراءتها في اللحظة نفسها. */
+  const waitErr = async prev => {
+    await page.waitForFunction(p => {
+      const e = document.querySelector('#gErr');
+      return !!e && e.style.display !== 'none' && e.textContent.trim().length > 0
+             && e.textContent.trim() !== p;
+    }, prev || '', { timeout:10000 });
+    return (await page.textContent('#gErr') || '').trim();
+  };
+  /* الخروج كما تفعله المستخدمة: شارة الحساب ⇐ «حسابي» ⇐ خروج ⇐ تأكيد */
+  const CONFIRM = '.overlay .modal[aria-label="تسجيل الخروج"] [data-ok]';
+  const logout = async () => {
+    await page.click('#whoChip');
+    await page.waitForSelector('#acOut', { timeout:10000 });
+    await page.click('#acOut');
+    await page.waitForSelector(CONFIRM, { timeout:10000 });
+    await page.click(CONFIRM);
+    await page.waitForSelector('#gUser', { timeout:10000 });
+  };
+
+  /* بيانات حقيقية ثم تفعيل الدخول كما يفعله زرّ الإعدادات */
+  await page.evaluate(async () => {
+    await window.TG.Seed.loadDemo(15);
+    await window.TG.Settings.set({ authEnabled:true });
+  });
+
+  /* ---------- 1) إعادة التحميل تُظهر شاشة التهيئة لا شاشة دخول فارغة ---------- */
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await boot();
+  await page.waitForSelector('.gate-card', { timeout:10000 });
+  const setupTitle = await page.textContent('.gate-card h2');
+  say('أول تشغيل بعد التفعيل يفتح شاشة تهيئة الحساب الأول',
+      /تهيئة الحساب الأول/.test(setupTitle || ''), setupTitle);
+  say('الشاشة تحجب النظام خلفها حتى الدخول',
+      await page.isVisible('.gate'), '');
+
+  /* ---------- 2) التهيئة بالكتابة الفعلية ---------- */
+  await page.fill('#sName', 'أم تبارك');
+  await page.fill('#sUser', 'omtabarak');
+  await page.fill('#sPass', '12345');
+  await page.fill('#sPass2', '12345');
+  await page.click('#sGo');
+  const shortErr = await waitErr();
+  say('كلمة مرور قصيرة تُرفض برسالة مفهومة في الشاشة', /٦|6/.test(shortErr), shortErr);
+  await page.fill('#sPass', 'AmTabarak#2026');
+  await page.fill('#sPass2', 'AmTabarak#2027');
+  await page.click('#sGo');
+  const mismatch = await waitErr(shortErr);
+  say('عدم تطابق كلمتي المرور يُرفض في الشاشة', /غير متطابقتين/.test(mismatch), mismatch);
+  await page.fill('#sPass2', 'AmTabarak#2026');
+  await page.click('#sGo');
+  await page.waitForSelector('.gate-code', { timeout:10000 });
+  const code = (await page.textContent('.gate-code') || '').trim();
+  say('رمز الاسترجاع يُعرَض مرة واحدة بعد التهيئة', /^[A-Z0-9-]{19}$/.test(code), code);
+  say('المتابعة موقوفة حتى تُقرّ كتابة الرمز',
+      await page.isDisabled('#rGo'), '');
+  await page.check('#rAck');
+  await page.click('#rGo');
+  await page.waitForSelector('.gate', { state:'detached', timeout:10000 });
+  const chip = (await page.textContent('#whoami') || '').trim();
+  say('بعد التهيئة يظهر اسم المستخدمة ودورها في الشريط',
+      /أم تبارك/.test(chip) && /المالكة/.test(chip), chip);
+
+  /* ---------- 3) حسابان آخران بدورين مختلفين ---------- */
+  await page.evaluate(async () => {
+    await window.TG.Svc.users.create({ username:'istiqbal', name:'زهراء الاستقبال',
+      roleKey:'reception', password:'Istiqbal#2026' });
+    await window.TG.Svc.users.create({ username:'mudarriba', name:'هدى المدربة',
+      roleKey:'trainer', password:'Mudarriba#2026' });
+  });
+  const ownerNav = await page.$$eval('.nav-item', a => a.length);
+
+  /* ---------- 4) شاشة «حسابي» ثم الخروج ثم دخول الاستقبال بالكتابة ---------- */
+  await page.click('#whoChip');
+  await page.waitForSelector('#acOut', { timeout:10000 });
+  const acct = await page.textContent('.overlay');
+  say('شاشة «حسابي» تقول من أنا وماذا أستطيع',
+      /أم تبارك/.test(acct) && /المالكة/.test(acct) && /omtabarak/.test(acct), '');
+  await page.click('#acOut');
+  await page.waitForSelector(CONFIRM, { timeout:10000 });
+  say('الخروج يسأل قبل أن يُقفل النظام', await page.isVisible(CONFIRM), '');
+  await page.click(CONFIRM);
+  await page.waitForSelector('#gUser', { timeout:10000 });
+  say('الخروج يعيد شاشة الدخول فوراً', await page.isVisible('.gate'), '');
+  await page.fill('#gUser', 'istiqbal');
+  await page.fill('#gPass', 'كلمة خاطئة');
+  await page.click('#gGo');
+  const badMsg = await waitErr();
+  say('كلمة مرور خاطئة تُرفض برسالة واحدة لا تكشف وجود الحساب',
+      /غير صحيحة/.test(badMsg), badMsg);
+  say('حقل كلمة المرور يُفرَّغ بعد المحاولة الفاشلة',
+      (await page.inputValue('#gPass')) === '', '');
+  await page.fill('#gPass', 'Istiqbal#2026');
+  await page.click('#gGo');
+  await page.waitForSelector('.gate', { state:'detached', timeout:10000 });
+  const recNav = await page.$$eval('.nav-item', a => a.length);
+  const recChip = (await page.textContent('#whoami') || '').trim();
+  say('دخول الاستقبال ينجح ويظهر اسمها ودورها',
+      /زهراء الاستقبال/.test(recChip) && /الاستقبال/.test(recChip), recChip);
+  say(`القائمة تضيق بدور الاستقبال (${recNav} مدخلاً ⇐ ${ownerNav} للمالكة)`,
+      recNav > 0 && recNav < ownerNav, `${recNav}/${ownerNav}`);
+  const hidden = await page.evaluate(() =>
+    [...document.querySelectorAll('.nav-item')].map(b => b.dataset.route));
+  say('شاشات المال والإعدادات مخفيّة عن الاستقبال',
+      !hidden.includes('finance') && !hidden.includes('settings') && !hidden.includes('payroll'),
+      hidden.join(','));
+
+  /* ---------- 5) عمل يومي حقيقي بدور الاستقبال ---------- */
+  await page.click('.nav-item[data-route="members"]');
+  await page.waitForTimeout(150);
+  const daily = await page.evaluate(async () => {
+    const { Svc, D, Repos, Auth } = window.TG;
+    const m = await Svc.members.create({ name:'مشتركة من الاستقبال', phone:'07701234567',
+                                         joinDate:D.today() });
+    await Svc.attendance.checkIn({ memberId:m.rec.id, date:D.today() });
+    const log = window.TG.U.sortBy(Repos.audit.list(true), a => a.ts, -1)
+      .filter(a => a.actorId === Auth.session.actorId).slice(0, 4).map(a => [a.entity, a.actor]);
+    return { member:!!Repos.members.get(m.rec.id), log };
+  });
+  say('الاستقبال تُنشئ مشتركة وتسجّل حضوراً بلا عائق', daily.member, '');
+  /* الزرّ الممنوع لا يُعرض أصلاً — راحةٌ للعين فوق المنع الحقيقي تحتها */
+  await page.evaluate(() => { window.TG.go('members'); window.TG.renderRoute(); });
+  await page.waitForTimeout(150);
+  const recBtns = await page.evaluate(() => ({
+    arch: document.querySelectorAll('#mTable [data-arch]').length,
+    rows: document.querySelectorAll('#mTable tbody tr').length
+  }));
+  say('زرّ أرشفة المشتركة مخفيّ عن الاستقبال في كل سطور الجدول',
+      recBtns.rows > 0 && recBtns.arch === 0, JSON.stringify(recBtns));
+  say('الأحداث تُنسب إلى الاستقبال باسمها الحقيقي',
+      daily.log.length > 0 && daily.log.every(([, who]) => who === 'زهراء الاستقبال'),
+      JSON.stringify(daily.log));
+
+  /* ---------- 6) الممنوع ممنوع من الشاشة ومن تحتها ---------- */
+  const blocked = await page.evaluate(async () => {
+    const { Svc, D, Backup } = window.TG;
+    const out = {};
+    const t = async (k, fn) => { try { await fn(); out[k] = 'نُفِّذ!'; }
+                                 catch(e){ out[k] = e.code || e.message; } };
+    await t('إقفال فترة', () => Svc.periods.close(D.monthsBack(20)[0]));
+    await t('حركة رأس مال', () => Svc.finance.addCapital({ date:D.today(), amount:1,
+      type:'injection', method:'cash' }));
+    await t('إنشاء مستخدمة', () => Svc.users.create({ username:'dass', name:'دسّ',
+      roleKey:'owner', password:'Dass#12345' }));
+    await t('استعادة نسخة', () => Backup.restore(Backup.build(false)));
+    return out;
+  });
+  say('الأفعال الحسّاسة مرفوضة عند حدّها لا في الأزرار فقط',
+      Object.values(blocked).every(v => v === 'FORBIDDEN'), JSON.stringify(blocked));
+  /* الرفض من طبقة الأفعال نفسها — لا من نداء خدمة مباشر: الزرّ مخفيّ عن
+     الاستقبال، ولو وصلت إليه بأي طريق يُرفض الفعل برسالة مفهومة ولا يتغيّر شيء. */
+  const deny = await page.evaluate(async () => {
+    const m = window.TG.Repos.members.list().find(x => !x.archived);
+    let msg = '', code = '';
+    try { await window.TG.Actions.archiveMember(m.id); }
+    catch(e){ msg = e.message || ''; code = e.code || ''; }
+    return { msg, code, archived: !!window.TG.Repos.members.get(m.id).archived };
+  });
+  say('فعل ممنوع من طبقة الأفعال يُرفض برسالة عربية مفهومة ولا يغيّر شيئاً',
+      /ليس لديك صلاحية/.test(deny.msg) && deny.code === 'FORBIDDEN' && !deny.archived,
+      JSON.stringify(deny));
+
+  /* ---------- 7) إعادة التحميل: الجلسة تبقى في اللسان نفسه ---------- */
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await boot();
+  await page.waitForTimeout(200);
+  const afterReload = await page.evaluate(() => ({
+    gate: !!document.querySelector('.gate'),
+    chip: (document.getElementById('whoami') || {}).textContent || '',
+    route: window.TG.currentRoute().route
+  }));
+  say('إعادة التحميل لا تُخرج المستخدمة من جلستها',
+      !afterReload.gate && /زهراء الاستقبال/.test(afterReload.chip), JSON.stringify(afterReload));
+  say('الشاشة المفتوحة بعد إعادة التحميل مسموحة لدورها',
+      await page.evaluate(() => window.TG.Auth.can(window.TG.currentRoute().route + '.view')),
+      afterReload.route);
+
+  /* ---------- 8) دور ثالث: المدربة ---------- */
+  await logout();
+  await page.fill('#gUser', 'mudarriba');
+  await page.fill('#gPass', 'Mudarriba#2026');
+  await page.click('#gGo');
+  await page.waitForSelector('.gate', { state:'detached', timeout:10000 });
+  const trNav = await page.evaluate(() =>
+    [...document.querySelectorAll('.nav-item')].map(b => b.dataset.route));
+  say('المدربة ترى التدريبات والتمارين ولا ترى المال',
+      trNav.includes('trainings') && trNav.includes('exercises')
+      && !trNav.includes('finance') && !trNav.includes('pos'), trNav.join(','));
+
+  /* ---------- 9) الخروج ثم إعادة التحميل: البوابة تعود ---------- */
+  await logout();
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await boot();
+  await page.waitForSelector('.gate-card', { timeout:10000 });
+  say('بعد الخروج وإعادة التحميل يُطلب الدخول من جديد',
+      await page.isVisible('#gUser'), '');
+  const stored = await page.evaluate(() => {
+    try { return sessionStorage.getItem('tg_session'); } catch(e){ return 'ERR'; }
+  });
+  say('لا يبقى أثر للجلسة في تخزين اللسان بعد الخروج', stored === null, String(stored));
+
+  /* ---------- 10) الاسترجاع بالرمز من الشاشة ---------- */
+  await page.click('#gForgot');
+  await page.waitForSelector('#rCode', { timeout:10000 });
+  await page.fill('#rCode', 'AAAA-BBBB-CCCC-DDDD');
+  await page.fill('#rUser', 'omtabarak');
+  await page.fill('#rPass', 'JadidaPass#2026');
+  await page.click('#rGo2');
+  const recErr = await waitErr();
+  say('رمز استرجاع خاطئ يُرفض في الشاشة', /غير صحيح/.test(recErr), recErr);
+  await page.fill('#rCode', code);
+  await page.click('#rGo2');
+  await page.waitForSelector('.gate-code', { timeout:10000 });
+  const newCode = (await page.textContent('.gate-code') || '').trim();
+  say('الاسترجاع بالرمز الصحيح ينجح ويُصدر رمزاً جديداً',
+      /^[A-Z0-9-]{19}$/.test(newCode) && newCode !== code, `${code} ⇐ ${newCode}`);
+  await page.check('#rAck');
+  await page.click('#rGo');
+  await page.waitForSelector('#gUser', { timeout:10000 });
+  say('الاسترجاع لا يفتح جلسة من تلقائه — تُطلب كلمة المرور الجديدة',
+      await page.isVisible('#gPass'), '');
+  await page.fill('#gUser', 'omtabarak');
+  await page.fill('#gPass', 'AmTabarak#2026');
+  await page.click('#gGo');
+  const oldPwErr = await waitErr();
+  say('كلمة مرور المالكة القديمة سقطت بالاسترجاع', /غير صحيحة/.test(oldPwErr), oldPwErr);
+  await page.fill('#gPass', 'JadidaPass#2026');
+  await page.click('#gGo');
+  await page.waitForSelector('.gate', { state:'detached', timeout:10000 });
+  const backIn = (await page.textContent('#whoami') || '').trim();
+  say('المالكة تدخل بكلمة المرور الجديدة وتستعيد صلاحيتها كاملة',
+      /أم تبارك/.test(backIn) && await page.evaluate(() => window.TG.Auth.can('settings.danger')),
+      backIn);
+  await page.evaluate(() => { window.TG.go('members'); window.TG.renderRoute(); });
+  await page.waitForTimeout(150);
+  const ownBtns = await page.evaluate(() => ({
+    arch: document.querySelectorAll('#mTable [data-arch]').length,
+    rows: document.querySelectorAll('#mTable tbody tr').length
+  }));
+  say('الزرّ نفسه يظهر للمالكة على كل سطر',
+      ownBtns.rows > 0 && ownBtns.arch === ownBtns.rows, JSON.stringify(ownBtns));
+  await page.evaluate(() => { window.TG.go('settings', { sec:'danger' }); window.TG.renderRoute(); });
+  await page.waitForTimeout(150);
+  say('زرّ إعادة التهيئة يظهر للمالكة وحدها',
+      await page.evaluate(() => !!document.querySelector('#wipe')), '');
+
+  await ctx.close();
+  record('شاشة الدخول في المتصفح', rows, errors);
+});
+
+group('أثر الصلاحيات على الأداء', async (browser, url) => {
+  /* السؤال: هل أبطأت الحساباتُ ما كان سريعاً؟ القياس على الشاشة نفسها
+     مرّتين — بلا حسابات ثم بحساب داخل — وعلى الدخول نفسه. */
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e.message)));
+  const noise = t => /favicon|Failed to load resource: the server responded with a status of 404/i.test(t);
+  page.on('console', m => { if (m.type() === 'error' && !noise(m.text())) errors.push(m.text()); });
+  const boot = async () => {
+    await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:30000 });
+    await page.evaluate(() => window.TG.ready);
+  };
+  await page.goto(url, { waitUntil:'domcontentloaded' });
+  await boot();
+  await page.addScriptTag({ content: TESTS_JS });
+  await page.evaluate(() => window.TG.Seed.loadDemo(120));
+
+  const screen = route => page.evaluate(r => {
+    const runs = [];
+    for (let i = 0; i < 3; i++){
+      const t = performance.now();
+      window.TG.go(r); window.TG.renderRoute();
+      runs.push(performance.now() - t);
+    }
+    return Math.round(Math.min(...runs));
+  }, route);
+
+  const rows = [];
+  const beforeDesk = await screen('desk');
+  const beforeDash = await screen('dashboard');
+  const beforeMembers = await screen('members');
+  const t0 = Date.now();
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await boot();
+  const bootOff = Date.now() - t0;
+
+  /* تفعيل الحسابات ثم القياس نفسه بحساب استقبال داخل */
+  await page.addScriptTag({ content: TESTS_JS });
+  const setup = await page.evaluate(async () => {
+    const { Settings, Auth, Svc } = window.TG;
+    await Settings.set({ authEnabled:true });
+    Auth.restoreSession();
+    const t0 = performance.now();
+    const first = await Auth.setupFirstAdmin({ name:'أم تبارك', username:'omtabarak',
+                                               password:'AmTabarak#2026' });
+    const setupMs = Math.round(performance.now() - t0);
+    await Svc.users.create({ username:'istiqbal', name:'زهراء الاستقبال', roleKey:'reception',
+                             password:'Istiqbal#2026' });
+    await Auth.logout();
+    const t1 = performance.now();
+    await Auth.login('istiqbal', 'Istiqbal#2026');
+    const loginMs = Math.round(performance.now() - t1);
+    const t2 = performance.now();
+    try { await Auth.login('istiqbal', 'كلمة خاطئة'); } catch(e){}
+    const failMs = Math.round(performance.now() - t2);
+    window.TG.buildNav();
+    return { setupMs, loginMs, failMs };
+  });
+  const afterDesk = await screen('desk');
+  const afterDash = await screen('dashboard');
+  const afterMembers = await screen('members');
+  const t1 = Date.now();
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await boot();
+  const bootOn = Date.now() - t1;
+
+  const cmp = (name, before, after, limit) => rows.push({
+    name:`${name} ${after}ms ⇐ ${before}ms (الحد ${limit}ms)`,
+    pass: after <= limit, detail: after > limit ? 'أبطأ من الحد' : '' });
+  cmp('الاستقبال', beforeDesk, afterDesk, 1500);
+  cmp('لوحة التحكم', beforeDash, afterDash, 1500);
+  cmp('قائمة المشتركات', beforeMembers, afterMembers, 1500);
+  cmp('الإقلاع', bootOff, bootOn, 6000);
+  rows.push({ name:`الدخول فوريّ — ${setup.loginMs}ms (الحد 1500ms)`,
+              pass: setup.loginMs <= 1500, detail:'' });
+  rows.push({ name:`الدخول الفاشل لا يُميَّز بزمنه — ${setup.failMs}ms مقابل ${setup.loginMs}ms`,
+              pass: setup.failMs >= Math.round(setup.loginMs * 0.25),
+              detail:`ناجح=${setup.loginMs} فاشل=${setup.failMs}` });
+  rows.push({ name:`تهيئة أول حساب — ${setup.setupMs}ms (الحد 3000ms)`,
+              pass: setup.setupMs <= 3000, detail:'' });
+  const slower = [['الاستقبال', beforeDesk, afterDesk], ['لوحة التحكم', beforeDash, afterDash],
+                  ['المشتركات', beforeMembers, afterMembers]]
+    .filter(([, b, a]) => a > b + 120 && a > b * 1.6);
+  rows.push({ name:'لم تُبطئ الصلاحيات أي شاشة يومية إبطاءً محسوساً',
+              pass: !slower.length, detail: slower.map(([n, b, a]) => `${n}: ${b}⇐${a}`).join(' · ') });
+  console.log(`   ⏱  دخول=${setup.loginMs}ms تهيئة=${setup.setupMs}ms إقلاع=${bootOff}⇐${bootOn}ms`);
+  await ctx.close();
+  record('أثر الصلاحيات على الأداء', rows, errors);
 });
 
 /* -------------------------------- التشغيل -------------------------------- */

@@ -408,6 +408,31 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
 .hit .grow{flex:1;min-width:0}
 .hit .t-name{font-weight:600}
 
+/* ------------------------------ شاشة الدخول ------------------------------
+   بسيطة عمداً: بطاقة واحدة في وسط الشاشة، لا لوحة تحكّم ولا مصطلحات أمنية. */
+.gate{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg,var(--plum-900) 0%,var(--plum-700) 100%);padding:20px}
+.gate-card{background:var(--surface);border-radius:var(--r-lg);box-shadow:0 18px 50px rgba(0,0,0,.28);
+  width:100%;max-width:380px;padding:26px 24px}
+.gate-card .brand-mark,.gate-card .brand-logo{margin:0 auto 12px}
+.gate-card h2{font-size:19px;text-align:center;margin:0 0 4px}
+.gate-card .gate-sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:18px}
+.gate-card .field{margin-bottom:12px}
+.gate-card .btn{width:100%;justify-content:center}
+.gate-err{background:var(--red-50);border:1px solid #F0CFCF;color:var(--red-600);
+  border-radius:var(--r-sm);padding:9px 12px;font-size:13px;margin-bottom:12px}
+.gate-foot{text-align:center;margin-top:14px;font-size:12.5px;color:var(--muted)}
+.gate-foot button{background:none;border:0;color:var(--rose-700);cursor:pointer;
+  text-decoration:underline;font-size:12.5px;padding:4px}
+.gate-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:19px;letter-spacing:2px;
+  text-align:center;background:var(--surface-2);border:1px dashed var(--line);border-radius:var(--r-md);
+  padding:14px;margin:10px 0;direction:ltr}
+/* هوية المستخدمة في الشريط العلوي */
+.whoami{display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid var(--line);
+  border-radius:99px;background:var(--surface-2);font-size:12.5px;white-space:nowrap}
+.whoami b{font-weight:600}
+.whoami .role{color:var(--muted)}
+
 /* ------------------------------ الهوية البصرية ------------------------------ */
 .brand-banner{height:132px;border-radius:var(--r-lg);background-size:cover;background-position:center;
   border:1px solid var(--line);margin-bottom:16px;overflow:hidden;display:block}
@@ -621,6 +646,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
         <input type="search" id="globalSearch" class="inp" placeholder="ابحث عن مشتركة، موظفة، تمرين…" aria-label="بحث عام" autocomplete="off">
         <div class="gsearch-res hidden" id="globalSearchRes" role="listbox"></div>
       </div>
+      <div id="whoami" style="display:none"></div>
       <button class="btn btn-icon bell" id="btnBell" title="التنبيهات" aria-label="التنبيهات">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
         <span class="cnt hidden" id="bellCount">0</span>
@@ -653,7 +679,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.1.1', schema:7, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.3.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -838,7 +864,9 @@ const SCHEMA = {
   distributions:     { key:'id' },   /* توزيع أرباح لشريكة عن فترة مقفلة — نقد لا ربح */
   /* v7: دورة الشراء الكاملة — مستند شراء بسطوره، ودفعاته للمورّد */
   purchases:         { key:'id' },   /* مستند شراء من مورّد: سطوره ومستحقّه وحالته */
-  purchasePayments:  { key:'id' }    /* دفعة تُسدَّد لمورّد على مستند شراء */
+  purchasePayments:  { key:'id' },   /* دفعة تُسدَّد لمورّد على مستند شراء */
+  /* v8: المستخدمات — اسم الدخول والدور وبصمة كلمة المرور. لا كلمة مرور خام. */
+  users:             { key:'id' }
 };
 const STORE_NAMES = Object.keys(SCHEMA);
 /* اسم كل جدول بلغة صاحبة النادي. مصدر واحد تقرأ منه شاشة إعادة التهيئة وغيرها،
@@ -853,7 +881,7 @@ const STORE_LABELS = {
   subEvents:'حدث اشتراك (تجميد/تمديد)', credits:'حركة رصيد حصص', leads:'مهتمّة', tasks:'متابعة',
   classSessions:'حصة مجدولة', bookings:'حجز حصة', cashDays:'إقفال صندوق يومي', suppliers:'مورّد',
   notes:'ملاحظة على مشتركة', distributions:'توزيع أرباح',
-  purchases:'مستند شراء', purchasePayments:'دفعة مورّد'
+  purchases:'مستند شراء', purchasePayments:'دفعة مورّد', users:'مستخدمة'
 };
 const storeLabel = s => STORE_LABELS[s] || s;
 
@@ -1035,7 +1063,8 @@ const Repos = {
   notes:        Repo('notes','not'),
   distributions:Repo('distributions','dst'),
   purchases:    Repo('purchases','pur'),
-  purchasePayments: Repo('purchasePayments','ppm')
+  purchasePayments: Repo('purchasePayments','ppm'),
+  users:        Repo('users','usr')
 };
 
 
@@ -1262,6 +1291,163 @@ const PayMethods = {
 };
 
 
+/* ===== src/app/data/25-crypto.js ===================================================== */
+/* ============================ تلبيد كلمة المرور ==========================
+   القيد الحاكم: النظام يعمل بلا إنترنت وبلا اعتماد خارجي، وقد يُفتح من
+   `file://` حيث `crypto.subtle` غير متاح أصلاً (ليس سياقاً آمناً). فلا يصحّ
+   أن تتوقّف إمكانية الدخول على وجوده.
+
+   الحلّ: خوارزمية واحدة (PBKDF2-HMAC-SHA256) بتطبيقين يُعطيان النتيجة نفسها
+   بالبايت: تطبيق سريع عبر SubtleCrypto حين يتوفّر، وتطبيق بجافاسكربت خالصة
+   حين لا يتوفّر. فقاعدة أُنشئت على خادم محلي تُفتح من ملف والعكس.
+
+   وحدود الصدق: هذا تلبيد محلي في متصفح. يمنع قراءة كلمة المرور من النسخة
+   الاحتياطية أو من قاعدة البيانات بالعين، ولا يدّعي أكثر من ذلك. */
+const Crypto = (() => {
+  const K = [
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+
+  /* SHA-256 على مصفوفة بايتات — تطبيق قياسي بلا اعتماد خارجي */
+  function sha256(bytes){
+    const ml = bytes.length;
+    const withPad = new Uint8Array((((ml + 8) >> 6) + 1) << 6);
+    withPad.set(bytes);
+    withPad[ml] = 0x80;
+    const bits = ml * 8;
+    const dv = new DataView(withPad.buffer);
+    dv.setUint32(withPad.length - 4, bits >>> 0, false);
+    dv.setUint32(withPad.length - 8, Math.floor(bits / 4294967296), false);
+    let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,
+        h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+    const w = new Uint32Array(64);
+    for (let i = 0; i < withPad.length; i += 64){
+      for (let j = 0; j < 16; j++) w[j] = dv.getUint32(i + j * 4, false);
+      for (let j = 16; j < 64; j++){
+        const a = w[j-15], b = w[j-2];
+        const s0 = ((a>>>7)|(a<<25)) ^ ((a>>>18)|(a<<14)) ^ (a>>>3);
+        const s1 = ((b>>>17)|(b<<15)) ^ ((b>>>19)|(b<<13)) ^ (b>>>10);
+        w[j] = (w[j-16] + s0 + w[j-7] + s1) >>> 0;
+      }
+      let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+      for (let j = 0; j < 64; j++){
+        const S1 = ((e>>>6)|(e<<26)) ^ ((e>>>11)|(e<<21)) ^ ((e>>>25)|(e<<7));
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[j] + w[j]) >>> 0;
+        const S0 = ((a>>>2)|(a<<30)) ^ ((a>>>13)|(a<<19)) ^ ((a>>>22)|(a<<10));
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h=g; g=f; f=e; e=(d + t1) >>> 0; d=c; c=b; b=a; a=(t1 + t2) >>> 0;
+      }
+      h0=(h0+a)>>>0; h1=(h1+b)>>>0; h2=(h2+c)>>>0; h3=(h3+d)>>>0;
+      h4=(h4+e)>>>0; h5=(h5+f)>>>0; h6=(h6+g)>>>0; h7=(h7+h)>>>0;
+    }
+    const out = new Uint8Array(32);
+    const ov = new DataView(out.buffer);
+    [h0,h1,h2,h3,h4,h5,h6,h7].forEach((v, i) => ov.setUint32(i * 4, v, false));
+    return out;
+  }
+
+  function hmacSha256(key, msg){
+    let k = key;
+    if (k.length > 64) k = sha256(k);
+    const pad = new Uint8Array(64);
+    pad.set(k);
+    const ipad = new Uint8Array(64), opad = new Uint8Array(64);
+    for (let i = 0; i < 64; i++){ ipad[i] = pad[i] ^ 0x36; opad[i] = pad[i] ^ 0x5c; }
+    const inner = new Uint8Array(64 + msg.length);
+    inner.set(ipad); inner.set(msg, 64);
+    const ih = sha256(inner);
+    const outer = new Uint8Array(64 + 32);
+    outer.set(opad); outer.set(ih, 64);
+    return sha256(outer);
+  }
+
+  /* PBKDF2-HMAC-SHA256 بجافاسكربت خالصة (dkLen ثابت 32 بايت = كتلة واحدة) */
+  function pbkdf2Js(passBytes, saltBytes, iterations){
+    const block = new Uint8Array(saltBytes.length + 4);
+    block.set(saltBytes);
+    block[saltBytes.length + 3] = 1;                 /* INT(1) */
+    let u = hmacSha256(passBytes, block);
+    const out = u.slice(0);
+    for (let i = 1; i < iterations; i++){
+      u = hmacSha256(passBytes, u);
+      for (let j = 0; j < 32; j++) out[j] ^= u[j];
+    }
+    return out;
+  }
+
+  const enc = str => {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(String(str));
+    const s = unescape(encodeURIComponent(String(str)));
+    const a = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+  };
+  const toHex = a => Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+  const fromHex = h => {
+    const a = new Uint8Array(String(h).length / 2);
+    for (let i = 0; i < a.length; i++) a[i] = parseInt(String(h).substr(i * 2, 2), 16);
+    return a;
+  };
+  const subtle = () => {
+    try { return (typeof crypto !== 'undefined' && crypto.subtle) ? crypto.subtle : null; }
+    catch(e){ return null; }
+  };
+  /* بايتات عشوائية من مولّد المتصفح، وبديل عند غيابه */
+  function randomBytes(n){
+    const a = new Uint8Array(n);
+    try {
+      if (typeof crypto !== 'undefined' && crypto.getRandomValues) { crypto.getRandomValues(a); return a; }
+    } catch(e){ /* يسقط إلى البديل */ }
+    for (let i = 0; i < n; i++) a[i] = Math.floor(Math.random() * 256);
+    return a;
+  }
+
+  async function pbkdf2(password, saltHex, iterations){
+    const pass = enc(password), salt = fromHex(saltHex);
+    const s = subtle();
+    if (s){
+      try {
+        const key = await s.importKey('raw', pass, { name:'PBKDF2' }, false, ['deriveBits']);
+        const bits = await s.deriveBits({ name:'PBKDF2', salt, iterations, hash:'SHA-256' }, key, 256);
+        return toHex(new Uint8Array(bits));
+      } catch(e){ Log.warn('تعذّر التلبيد السريع — التحويل إلى التطبيق الداخلي', e); }
+    }
+    return toHex(pbkdf2Js(pass, salt, iterations));
+  }
+
+  return {
+    ITERATIONS: 20000,
+    sha256Hex: str => toHex(sha256(enc(str))),
+    pbkdf2, pbkdf2Js, hmacSha256, sha256, enc, toHex, fromHex, randomBytes,
+    hasSubtle: () => !!subtle(),
+    /* بصمة كلمة مرور جديدة: ملح عشوائي + عدد تكرارات مسجَّل داخل السجل نفسه،
+       فتبقى البصمات القديمة قابلة للتحقّق لو تغيّر العدد لاحقاً. */
+    async hash(password){
+      const salt = toHex(randomBytes(16));
+      const iterations = this.ITERATIONS;
+      return { algo:'pbkdf2-sha256', salt, iterations, hash:await pbkdf2(password, salt, iterations) };
+    },
+    async verify(password, rec){
+      if (!rec || !rec.hash || !rec.salt) return false;
+      const got = await pbkdf2(password, rec.salt, Number(rec.iterations) || this.ITERATIONS);
+      /* مقارنة بزمن ثابت: لا تكشف طول التطابق */
+      if (got.length !== rec.hash.length) return false;
+      let diff = 0;
+      for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ rec.hash.charCodeAt(i);
+      return diff === 0;
+    }
+  };
+})();
+
+
 /* ===== src/app/data/30-auth-roles.js ================================================= */
 /* ========================== Roles & Permissions ===========================
    المرحلة الحالية: البنية جاهزة والميزة مؤجّلة عمداً.
@@ -1289,14 +1475,18 @@ const PERMISSIONS = {
   payroll:    { label:'الرواتب',     actions:['view','create','edit','money'] },
   finance:    { label:'المالية',     actions:['view','create','edit','delete','money'] },
   reports:    { label:'التقارير',    actions:['view','export'] },
-  settings:   { label:'الإعدادات',   actions:['view','edit','danger'] }
+  /* «users» هي الصلاحية الوحيدة التي أضافتها هذه المرحلة. المراجعة أثبتت أن
+     بقية المفاتيح كانت كافية — الناقص كان تطبيقها لا وجودها. */
+  settings:   { label:'الإعدادات',   actions:['view','edit','danger','users'] }
 };
 const PERM_KEYS = Object.keys(PERMISSIONS).flatMap(m => PERMISSIONS[m].actions.map(a => `${m}.${a}`));
 /* أدوار جاهزة تعكس الواقع التشغيلي للنادي — تُحفظ في جدول roles عند أول تشغيل */
 const ROLE_PRESETS = [
   { key:'owner', name:'المالكة', system:true, description:'صلاحية كاملة بلا استثناء', perms:['*'] },
-  { key:'manager', name:'المديرة', system:true, description:'كل شيء عدا إعادة التهيئة والعمليات الخطرة',
-    perms:PERM_KEYS.filter(k => k !== 'settings.danger') },
+  /* المديرة لا تدير المستخدمات عمداً: من يصنع حساباً يصنع دوراً، ومن يصنع
+     دوراً يصنع لنفسه صلاحية المالكة. إدارة المستخدمات للمالكة وحدها. */
+  { key:'manager', name:'المديرة', system:true, description:'كل شيء عدا إعادة التهيئة وإدارة المستخدمات',
+    perms:PERM_KEYS.filter(k => k !== 'settings.danger' && k !== 'settings.users') },
   { key:'reception', name:'الاستقبال', system:true, description:'المشتركات والاشتراكات والحضور والبيع — بلا رواتب ولا تقارير مالية',
     perms:['dashboard.view','desk.view','members.view','members.create','members.edit','subs.view','subs.create','subs.money',
            'crm.view','crm.create','crm.edit','tasks.view','tasks.create','tasks.edit',
@@ -1308,30 +1498,144 @@ const ROLE_PRESETS = [
            'classes.view','classes.edit','tasks.view','exercises.view','exercises.create','exercises.edit'] }
 ];
 const Auth = {
-  /* الجلسة الحالية: تُملأ لاحقاً من شاشة دخول. اليوم = المالكة دائماً. */
+  /* الجلسة الحالية. حين تكون الصلاحيات معطّلة تبقى «المالكة» كما كانت تماماً،
+     فلا يتغيّر شيء في نادٍ لم يفعّل الدخول. وحين تُفعَّل تُملأ من المستخدمة
+     الداخلة، فتصير كل نسبة فعلٍ في النظام (14 موضعاً تقرأ actorName) حقيقية
+     بلا تعديل في أي خدمة. */
   session: { actorId:null, actorName:'المالكة', roleKey:'owner' },
+  SESSION_KEY: 'tg_session',
   enabled(){ return !!Settings.get('authEnabled'); },
+  /* هل هناك مستخدمة داخلة فعلاً؟ يعني شيئاً فقط حين تكون الصلاحيات مفعّلة. */
+  signedIn(){ return !this.enabled() || !!this.session.actorId; },
+  /* أول تشغيل بعد التفعيل: لا مستخدمات بعد ⇒ شاشة تهيئة لا شاشة دخول */
+  needsSetup(){ return this.enabled() && Repos.users.list(true).length === 0; },
+  currentUser(){ return this.session.actorId ? Repos.users.get(this.session.actorId) : null; },
   role(){
     const stored = Repos.roles.list(true).find(r => r.key === this.session.roleKey);
     return stored || ROLE_PRESETS.find(r => r.key === this.session.roleKey) || ROLE_PRESETS[0];
   },
-  /* القاعدة الذهبية: ما دامت الصلاحيات معطّلة، كل شيء مسموح — فلا تتغيّر أي شاشة اليوم. */
+  roleName(key){
+    const r = Repos.roles.list(true).find(x => x.key === key) || ROLE_PRESETS.find(x => x.key === key);
+    return r ? r.name : (key || '—');
+  },
+  permsOf(roleKey){
+    const r = Repos.roles.list(true).find(x => x.key === roleKey) || ROLE_PRESETS.find(x => x.key === roleKey);
+    return (r && r.perms) || [];
+  },
+  /* القاعدة الذهبية: ما دامت الصلاحيات معطّلة، كل شيء مسموح — فلا تتغيّر أي شاشة.
+     وحين تُفعَّل: لا صلاحية قبل الدخول، ثم صلاحيات الدور وحدها. */
   can(key){
     if (!this.enabled()) return true;
+    if (!this.session.actorId) return false;
     const perms = this.role().perms || [];
     if (perms.includes('*')) return true;
     return perms.includes(key);
   },
   canAny(module){ return !!PERMISSIONS[module] && this.can(`${module}.view`); },
-  /* نقطة التحقق الوحيدة التي تُستدعى من طبقة الأفعال */
+  /* نقطة التحقق الوحيدة التي تُستدعى من طبقة الأفعال والخدمات */
   require(key){
     if (this.can(key)) return true;
-    throw new AppError('لا تملكين صلاحية هذه العملية','FORBIDDEN', { key });
+    throw new AppError('ليس لديك صلاحية لتنفيذ هذا الإجراء','FORBIDDEN', { key });
+  },
+  /* من يملك إدارة المستخدمات = «مالكة» بالمعنى التشغيلي، ولو تغيّر اسم الدور */
+  isAdminRole(roleKey){
+    const p = this.permsOf(roleKey);
+    return p.includes('*') || p.includes('settings.users');
   },
   async ensureRoles(){
     if (Repos.roles.list(true).length) return 0;
     for (const r of ROLE_PRESETS) await Repos.roles.create(r);
     return ROLE_PRESETS.length;
+  },
+
+  /* ------------------------------ الدخول ------------------------------
+     سياسة الجلسة: تُحفظ في sessionStorage — تبقى مع إعادة تحميل الصفحة في
+     اللسان نفسه، وتزول بإغلاقه أو بالخروج. مناسبة لجهاز استقبال يُعاد تحميله
+     ولا يُترك مفتوحاً بحساب أحد بعد إغلاقه. لا مهلة خمول: الخروج صريح. */
+  async login(username, password){
+    if (!this.enabled()) throw new AppError('الصلاحيات غير مفعّلة','AUTH_OFF');
+    const u = Svc.users.byUsername(username);
+    /* رسالة واحدة للحالتين: لا يُكشف أي اسم موجود وأيّها غير موجود */
+    const fail = () => { throw new AppError('اسم المستخدمة أو كلمة المرور غير صحيحة','BAD_LOGIN'); };
+    if (!u) { await Crypto.hash(String(password || '')); fail(); }   /* زمن مماثل */
+    if (u.disabled) throw new AppError('هذا الحساب موقوف — راجعي المالكة','USER_DISABLED');
+    const ok = await Crypto.verify(String(password || ''), u.pass);
+    if (!ok) fail();
+    await this.startSession(u);
+    await Repos.users.update(u.id, { lastLoginAt:new Date().toISOString() });
+    await Audit.log('auth','login',`دخول ${u.name}`, u.id);
+    return u;
+  },
+  async startSession(u){
+    this.session = { actorId:u.id, actorName:u.name, roleKey:u.roleKey };
+    try { sessionStorage.setItem(this.SESSION_KEY, JSON.stringify({ id:u.id })); } catch(e){}
+    return this.session;
+  },
+  async logout(){
+    const prev = this.session.actorName;
+    const id = this.session.actorId;
+    this.session = { actorId:null, actorName:'', roleKey:null };
+    try { sessionStorage.removeItem(this.SESSION_KEY); } catch(e){}
+    if (id) await Audit.log('auth','logout',`خروج ${prev}`, id);
+    return true;
+  },
+  /* تُستدعى عند الإقلاع: تُعيد الجلسة إن كان اللسان نفسه ما زال مفتوحاً */
+  restoreSession(){
+    if (!this.enabled()){ this.session = { actorId:null, actorName:'المالكة', roleKey:'owner' }; return false; }
+    this.session = { actorId:null, actorName:'', roleKey:null };
+    let raw = null;
+    try { raw = sessionStorage.getItem(this.SESSION_KEY); } catch(e){ return false; }
+    if (!raw) return false;
+    let id = null;
+    try { id = JSON.parse(raw).id; } catch(e){ return false; }
+    const u = id ? Repos.users.get(id) : null;
+    if (!u || u.disabled){ try { sessionStorage.removeItem(this.SESSION_KEY); } catch(e){} return false; }
+    this.session = { actorId:u.id, actorName:u.name, roleKey:u.roleKey };
+    return true;
+  },
+
+  /* --------------------------- التهيئة والاسترجاع ---------------------------
+     أول مالكة تُنشأ بشاشة تهيئة صريحة، ومعها رمز استرجاع يُعرَض مرة واحدة.
+     الرمز يُخزَّن ملبَّداً مثل كلمة المرور تماماً — لا كلمة سرّ خفية في الكود،
+     ولا باب خلفي. ومن يفقد الرمز وكلمة المرور معاً يبقى أمامه طريق موثّق:
+     استعادة نسخة احتياطية أقدم، أو إعادة تهيئة كاملة من منطقة الخطر. */
+  async setupFirstAdmin(d){
+    if (!this.enabled()) throw new AppError('الصلاحيات غير مفعّلة','AUTH_OFF');
+    if (Repos.users.list(true).length) throw new AppError('تمت التهيئة من قبل','ALREADY_SETUP');
+    const rec = await Svc.users.create({ username:d.username, name:d.name, password:d.password,
+                                         roleKey:'owner' }, { bootstrap:true });
+    const code = this.newRecoveryCode();
+    await Settings.set({ authRecovery:await Crypto.hash(code) });
+    await this.startSession(rec);
+    await Audit.log('auth','setup',`تهيئة أول حساب مالكة: ${rec.name}`, rec.id);
+    return { user:rec, recoveryCode:code };
+  },
+  newRecoveryCode(){
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';        /* بلا حروف تلتبس بالأرقام */
+    const b = Crypto.randomBytes(16);
+    let out = '';
+    for (let i = 0; i < 16; i++){
+      out += abc[b[i] % abc.length];
+      if (i % 4 === 3 && i < 15) out += '-';
+    }
+    return out;
+  },
+  hasRecovery(){ const r = Settings.get('authRecovery'); return !!(r && r.hash); },
+  /* استرجاع صريح: رمز صحيح ⇒ كلمة مرور جديدة لحساب مالكة مُسمّى، ورمز جديد */
+  async recover(code, username, newPassword){
+    const rec = Settings.get('authRecovery');
+    if (!rec || !rec.hash) throw new AppError('لا يوجد رمز استرجاع مسجَّل','NO_RECOVERY');
+    const ok = await Crypto.verify(String(code || '').trim().toUpperCase(), rec);
+    if (!ok) throw new AppError('رمز الاسترجاع غير صحيح','BAD_RECOVERY');
+    const u = Svc.users.byUsername(username);
+    if (!u) throw new AppError('لا توجد مستخدمة بهذا الاسم','NOT_FOUND');
+    if (!this.isAdminRole(u.roleKey)) throw new AppError('رمز الاسترجاع يعيد كلمة مرور حساب مالكة فقط','NOT_ADMIN');
+    await Svc.users.setPassword(u.id, newPassword, { recovery:true });
+    if (u.disabled) await Repos.users.update(u.id, { disabled:false });
+    const next = this.newRecoveryCode();
+    await Settings.set({ authRecovery:await Crypto.hash(next) });
+    await Audit.log('auth','recover',`استرجاع كلمة مرور ${u.name} برمز الاسترجاع`, u.id);
+    return { user:u, recoveryCode:next };
   }
 };
 
@@ -1339,9 +1643,13 @@ const Auth = {
 /* ===== src/app/data/40-audit.js ====================================================== */
 /* =============================== Audit =================================== */
 const Audit = {
+  /* «من نفّذ» صار جزءاً من كل حدث. قبل هذه المرحلة كان السجل يقول ماذا حدث
+     ومتى ولا يقول مَن — بينما شاشة الخصوصية تَعِد بأنه يقول ذلك. الآن يفي. */
   async log(entity, action, summary, entityId){
     try{
-      await Repos.audit.create({ ts:new Date().toISOString(), entity, action, summary:String(summary||''), entityId:entityId||null });
+      await Repos.audit.create({ ts:new Date().toISOString(), entity, action,
+        summary:String(summary||''), entityId:entityId||null,
+        actorId:Auth.session.actorId || null, actor:Auth.session.actorName || '' });
       const all = Repos.audit.list(true);
       if (all.length > 1200){                                  // تقليم السجل حتى لا يتضخم
         const old = U.sortBy(all, x=>x.ts).slice(0, all.length-1000);
@@ -1960,6 +2268,146 @@ const Fields = {
 /* ===== src/app/services/00-index.js ================================================== */
 /* ================================ Services =============================== */
 const Svc = {};
+
+
+/* ===== src/app/services/05-users.js ================================================== */
+/* ============================== المستخدمات ==============================
+   حسابات محلية على هذا الجهاز: اسم دخول ودور وبصمة كلمة مرور. لا كلمة مرور
+   خام تُحفظ في أي مكان، ولا تخرج من الجهاز.
+
+   الحارس الأهم هنا ليس منع الغرباء — بل منع النادي من إقفال نفسه: لا يجوز
+   أن يبقى النظام بلا مالكة واحدة قادرة على الدخول وإدارة الحسابات. كل فعل
+   يُنقص عدد المالكات الفعّالات (إيقاف، حذف، تنزيل دور، تغيير دور) يمرّ
+   بالفحص نفسه. */
+Svc.users = {
+  MIN_PASSWORD: 6,
+  list(inclDisabled = true){
+    const a = U.sortBy(Repos.users.list(true), u => u.name);
+    return inclDisabled ? a : a.filter(u => !u.disabled);
+  },
+  get(id){ return Repos.users.get(id); },
+  byUsername(name){
+    const n = U.normAr(name);
+    if (!n) return null;
+    return Repos.users.list(true).find(u => U.normAr(u.username) === n) || null;
+  },
+  /* المالكات الفعّالات: من دورها يملك إدارة المستخدمات وحسابها غير موقوف */
+  activeAdmins(exceptId){
+    return Repos.users.list(true).filter(u => !u.disabled && u.id !== exceptId && Auth.isAdminRole(u.roleKey));
+  },
+  /* يُرمى قبل أي تعديل يُنقص المالكات إلى صفر */
+  guardLastAdmin(userId, nextRoleKey, nextDisabled){
+    const u = Repos.users.get(userId);
+    if (!u) return;
+    const wasAdmin = Auth.isAdminRole(u.roleKey) && !u.disabled;
+    if (!wasAdmin) return;
+    const stillAdmin = Auth.isAdminRole(nextRoleKey === undefined ? u.roleKey : nextRoleKey)
+                    && !(nextDisabled === undefined ? u.disabled : nextDisabled);
+    if (stillAdmin) return;
+    if (!this.activeAdmins(userId).length)
+      throw new AppError('لا يمكن ترك النظام بلا مالكة واحدة فعّالة — عيّني مالكة أخرى أولاً','LAST_ADMIN');
+  },
+  validate(d, id){
+    const r = V();
+    const uname = U.norm(d.username);
+    if (!uname) vErr(r, 'username', 'اسم المستخدمة مطلوب');
+    else if (uname.length < 3) vErr(r, 'username', 'اسم المستخدمة قصير جداً');
+    else {
+      const dupe = Repos.users.list(true).find(u => u.id !== id && U.normAr(u.username) === U.normAr(uname));
+      if (dupe) vErr(r, 'username', 'اسم المستخدمة مستعمل');
+    }
+    if (!U.norm(d.name)) vErr(r, 'name', 'الاسم المعروض مطلوب');
+    const roles = Repos.roles.list(true);
+    if (!d.roleKey || !roles.some(x => x.key === d.roleKey)) vErr(r, 'roleKey', 'اختاري الدور');
+    if (d.password !== undefined && d.password !== null && d.password !== ''){
+      if (String(d.password).length < this.MIN_PASSWORD)
+        vErr(r, 'password', `كلمة المرور ${this.MIN_PASSWORD} أحرف على الأقل`);
+      else if (d.password2 !== undefined && d.password !== d.password2)
+        vErr(r, 'password2', 'كلمتا المرور غير متطابقتين');
+    }
+    return r;
+  },
+  /* bootstrap: أول مالكة تُنشأ قبل وجود أي جلسة، فلا تمرّ بفحص الصلاحية */
+  async create(d, opts){
+    const o = opts || {};
+    if (!o.bootstrap) Auth.require('settings.users');
+    const val = this.validate(d, null);
+    if (!val.ok) throw new AppError('بيانات المستخدمة غير صحيحة','VALIDATION', val.errors);
+    if (!U.norm(d.password)) throw new AppError('كلمة المرور مطلوبة','VALIDATION', { password:'كلمة المرور مطلوبة' });
+    const rec = await Repos.users.create({
+      username:U.norm(d.username), name:U.norm(d.name), roleKey:d.roleKey,
+      pass:await Crypto.hash(String(d.password)), disabled:false,
+      lastLoginAt:null, passwordSetAt:new Date().toISOString(), notes:U.norm(d.notes) });
+    if (!o.bootstrap)
+      await Audit.log('user','create',`إنشاء مستخدمة ${rec.name} بدور ${Auth.roleName(rec.roleKey)}`, rec.id);
+    return rec;
+  },
+  async update(id, d){
+    Auth.require('settings.users');
+    const cur = Repos.users.get(id);
+    if (!cur) throw new AppError('المستخدمة غير موجودة','NOT_FOUND');
+    const val = this.validate(Object.assign({}, cur, d), id);
+    if (!val.ok) throw new AppError('بيانات المستخدمة غير صحيحة','VALIDATION', val.errors);
+    if (d.roleKey && d.roleKey !== cur.roleKey) this.guardLastAdmin(id, d.roleKey, undefined);
+    const rec = await Repos.users.update(id, { username:U.norm(d.username) || cur.username,
+      name:U.norm(d.name) || cur.name, roleKey:d.roleKey || cur.roleKey, notes:U.norm(d.notes) });
+    /* الجلسة الجارية تتبع تعديل صاحبتها فوراً — لا تبقى بدور قديم */
+    if (Auth.session.actorId === id) Auth.session = Object.assign({}, Auth.session,
+      { actorName:rec.name, roleKey:rec.roleKey });
+    await Audit.log('user','update',`تعديل مستخدمة ${rec.name} — الدور ${Auth.roleName(rec.roleKey)}`, id);
+    return rec;
+  },
+  async setDisabled(id, on){
+    Auth.require('settings.users');
+    const cur = Repos.users.get(id);
+    if (!cur) throw new AppError('المستخدمة غير موجودة','NOT_FOUND');
+    if (on && Auth.session.actorId === id)
+      throw new AppError('لا يمكنك إيقاف حسابك أنتِ','SELF_DISABLE');
+    if (on) this.guardLastAdmin(id, undefined, true);
+    const rec = await Repos.users.update(id, { disabled:!!on });
+    await Audit.log('user', on ? 'disable' : 'enable', `${on ? 'إيقاف' : 'تفعيل'} مستخدمة ${rec.name}`, id);
+    return rec;
+  },
+  async remove(id){
+    Auth.require('settings.users');
+    const cur = Repos.users.get(id);
+    if (!cur) throw new AppError('المستخدمة غير موجودة','NOT_FOUND');
+    if (Auth.session.actorId === id) throw new AppError('لا يمكنك حذف حسابك أنتِ','SELF_DELETE');
+    this.guardLastAdmin(id, undefined, true);
+    await Repos.users.hardDelete(id);
+    /* السجل يحتفظ باسمها في الأحداث السابقة — الحذف لا يمحو التاريخ */
+    await Audit.log('user','delete',`حذف مستخدمة ${cur.name}`, id);
+    return cur;
+  },
+  /* تغيير كلمة المرور: المالكة تُعيّنها لغيرها، وكلٌّ يغيّر كلمته بكلمته القديمة */
+  async setPassword(id, newPassword, opts){
+    const o = opts || {};
+    if (!o.recovery && !o.self) Auth.require('settings.users');
+    const cur = Repos.users.get(id);
+    if (!cur) throw new AppError('المستخدمة غير موجودة','NOT_FOUND');
+    if (String(newPassword || '').length < this.MIN_PASSWORD)
+      throw new AppError(`كلمة المرور ${this.MIN_PASSWORD} أحرف على الأقل`,'VALIDATION',
+        { password:`كلمة المرور ${this.MIN_PASSWORD} أحرف على الأقل` });
+    const rec = await Repos.users.update(id, { pass:await Crypto.hash(String(newPassword)),
+      passwordSetAt:new Date().toISOString() });
+    await Audit.log('user','password',`تغيير كلمة مرور ${rec.name}`, id);
+    return rec;
+  },
+  async changeOwnPassword(oldPassword, newPassword){
+    const u = Auth.currentUser();
+    if (!u) throw new AppError('لا توجد مستخدمة داخلة','NOT_SIGNED_IN');
+    if (!await Crypto.verify(String(oldPassword || ''), u.pass))
+      throw new AppError('كلمة المرور الحالية غير صحيحة','BAD_PASSWORD', { oldPassword:'غير صحيحة' });
+    return this.setPassword(u.id, newPassword, { self:true });
+  },
+  /* ملخّص يُعرَض في الشاشة: ماذا يستطيع هذا الدور بلغة الوحدات لا المفاتيح */
+  roleSummary(roleKey){
+    const perms = Auth.permsOf(roleKey);
+    if (perms.includes('*')) return { modules:Object.keys(PERMISSIONS).length, all:true };
+    const mods = new Set(perms.map(k => k.split('.')[0]));
+    return { modules:mods.size, all:false, names:[...mods].map(m => (PERMISSIONS[m] || {}).label || m) };
+  }
+};
 
 
 /* ===== src/app/services/10-members.js ================================================ */
@@ -2671,6 +3119,7 @@ Svc.finance = {
     return rec;
   },
   async addCapital(d){
+    Auth.require('finance.money');
     const val = Validate.capital(d);
     if (!val.ok) throw new AppError('بيانات الحركة غير صحيحة','VALIDATION', val.errors);
     if (d.type === 'withdrawal'){
@@ -2694,6 +3143,7 @@ Svc.finance = {
   /* السجل القديم الذي لم تُسجَّل طريقته يُصحَّح صراحةً بفعلٍ مسجَّل، لا يُخمَّن.
      وهذا وحده ما يُخرج مبلغاً من خانة «غير معروفة» إلى حساب الدرج. */
   async setCapitalMethod(id, method){
+    Auth.require('finance.money');
     const c = Repos.capital.get(id);
     if (!c) throw new AppError('الحركة غير موجودة','NOT_FOUND');
     const next = PayMethods.resolve(method);
@@ -2705,6 +3155,7 @@ Svc.finance = {
     return rec;
   },
   async archiveCapital(id, on=true){
+    Auth.require('finance.money');
     const c = Repos.capital.get(id);
     const rec = await Repos.capital.archive(id, on);
     await Audit.log('capital', on?'archive':'restore', `${on?'أرشفة':'استرجاع'} حركة ${c?Money.fmt(c.amount):''}`, id);
@@ -4408,6 +4859,7 @@ Svc.cashbook = {
   /* الإقفال يثبّت الأرقام كما كانت لحظة العدّ. فرقٌ بلا تفسير يُمنع: السطر
      الفارغ في دفتر الصندوق هو ما يُخفي السرقة والخطأ معاً. */
   async close(d){
+    Auth.require('cash.money');
     const val = this.validate(d);
     if (!val.ok) throw new AppError('بيانات الإقفال غير صحيحة','VALIDATION', val.errors);
     const existing = this.get(d.date);
@@ -4435,6 +4887,7 @@ Svc.cashbook = {
     return rec;
   },
   async reopen(date, reason){
+    Auth.require('cash.money');
     const rec = this.get(date);
     if (!rec || !rec.closedAt) throw new AppError('هذا اليوم غير مُقفل','NOT_FOUND');
     const out = await Repos.cashDays.update(rec.id, { closedAt:null, reopenedAt:new Date().toISOString(),
@@ -4648,6 +5101,7 @@ Svc.purchases = {
      تُسحب البقية، فلا يبقى مستند «نصف مُرحَّل» يظهر شراءً بلا بضاعة. */
   async post(id, opts){
     const o = opts || {};
+    Auth.require('inventory.create');
     const rec = Repos.purchases.get(id);
     if (!rec) throw new AppError('مستند الشراء غير موجود','NOT_FOUND');
     if (rec.status === 'posted') throw new AppError('هذا المستند مُرحَّل بالفعل','ALREADY_POSTED');
@@ -4692,6 +5146,7 @@ Svc.purchases = {
      المسدَّدة تمنع الإلغاء: مالٌ خرج فعلاً لا يُلغى بحذف ورقة. */
   async cancel(id, reason, opts){
     const o = opts || {};
+    Auth.require('inventory.delete');
     const rec = Repos.purchases.get(id);
     if (!rec) throw new AppError('مستند الشراء غير موجود','NOT_FOUND');
     if (rec.status === 'cancelled') throw new AppError('هذا المستند ملغى بالفعل','CANCELLED');
@@ -4756,6 +5211,7 @@ Svc.purchases = {
     return r;
   },
   async addPayment(d){
+    Auth.require('finance.money');
     const purchase = Repos.purchases.get(d.purchaseId);
     const val = this.validatePayment(d, purchase);
     if (!val.ok) throw new AppError('بيانات الدفعة غير صحيحة','VALIDATION', val.errors);
@@ -4769,6 +5225,7 @@ Svc.purchases = {
     return { rec, warnings:val.warnings };
   },
   async removePayment(id){
+    Auth.require('finance.money');
     const rec = Repos.purchasePayments.get(id);
     if (!rec) throw new AppError('الدفعة غير موجودة','NOT_FOUND');
     await Svc.periods.guardWrite(rec.date, 'حذف دفعة مورّد', {});
@@ -4920,6 +5377,8 @@ Svc.periods = {
     if (!reason)
       throw new AppError(`فترة ${D.monthName(closed.key)} مقفلة — لا يُسجَّل فيها «${what}» إلا بتصحيح مُعلَّل`,
         'PERIOD_CLOSED', { date:`الشهر مقفل منذ ${D.fmt(String(closed.closedAt).slice(0,10))}` });
+    /* التصحيح في فترة مقفلة صلاحية مالية لا يملكها الاستقبال */
+    Auth.require('finance.money');
     await Audit.log('period','correction',
       `تصحيح في فترة مقفلة ${D.monthName(closed.key)} — ${what}: ${reason}`, closed.key);
     return true;
@@ -5061,6 +5520,7 @@ Svc.periods = {
 
   async close(key, opts){
     const o = opts || {};
+    Auth.require('finance.money');
     if (!/^\d{4}-\d{2}$/.test(String(key))) throw new AppError('الفترة غير صحيحة','VALIDATION', { key:'اختاري شهراً' });
     if (D.cmp(D.endOfMonth(key), D.today()) > 0)
       throw new AppError('لا تُقفل فترة لم تنتهِ بعد','VALIDATION', { key:'الشهر لم ينتهِ' });
@@ -5083,6 +5543,7 @@ Svc.periods = {
   },
   /* إعادة الفتح ممنوعة ما دام هناك توزيع مبنيّ على أرقام هذه الفترة */
   async reopen(key, reason){
+    Auth.require('finance.money');
     if (!this.isClosed(key)) throw new AppError('هذه الفترة غير مقفلة','NOT_FOUND');
     const used = Svc.distributions.list(true).filter(d => this.monthsBetween(d.periodFrom, d.periodTo).includes(key));
     if (used.length)
@@ -5250,6 +5711,7 @@ Svc.distributions = {
              allClosed:rows.every(r => r.closed) };
   },
   async create(d){
+    Auth.require('finance.money');
     const val = this.validate(d);
     if (!val.ok) throw new AppError('بيانات التوزيع غير صحيحة','VALIDATION', val.errors);
     await Svc.periods.guardWrite(d.date, 'توزيع أرباح', d);
@@ -5275,6 +5737,7 @@ Svc.distributions = {
   /* تعديل توزيع مسجَّل: المبلغ والتفصيل يتحرّكان معاً أو لا يتحرّكان.
      لا يُترك سجلٌ مجموع أشهره يخالف مبلغه ولو لحظة واحدة. */
   async update(id, d){
+    Auth.require('finance.money');
     const cur = Repos.distributions.get(id);
     if (!cur) throw new AppError('التوزيع غير موجود','NOT_FOUND');
     /* التفصيل القديم لا يُحمل إلى التحقّق: تغيير المبلغ وحده يعيد بناءه تحته،
@@ -5298,6 +5761,7 @@ Svc.distributions = {
     return { rec, warnings:val.warnings };
   },
   async remove(id){
+    Auth.require('finance.money');
     const rec = Repos.distributions.get(id);
     if (!rec) throw new AppError('التوزيع غير موجود','NOT_FOUND');
     const partner = Repos.partners.get(rec.partnerId);
@@ -5387,6 +5851,7 @@ const Backup = {
   /* الاستعادة عملية "كل شيء أو لا شيء": نأخذ لقطة من البيانات الحالية،
      وإذا فشل أي جدول في المنتصف نعيد اللقطة كما كانت بدل ترك النظام نصف ممتلئ. */
   async restore(obj){
+    Auth.require('settings.danger');
     const v = this.validate(obj);
     if (!v.ok) throw new AppError(v.errors[0],'BACKUP_INVALID', v.errors);
     const snapshot = Object.fromEntries(STORE_NAMES.map(s => [s, DB.all(s)]));
@@ -5937,6 +6402,7 @@ const Migrations = {
     if (from < 5){ applied.push(await this.v4_to_v5()); }
     if (from < 6){ applied.push(await this.v5_to_v6()); }
     if (from < 7){ applied.push(await this.v6_to_v7()); }
+    if (from < 8){ applied.push(await this.v7_to_v8()); }
     if (from !== APP.schema || !rec) await DB.put('meta', { k:'schema', v:APP.schema });
     /* من كان عنده بيانات قبل هذا الإصدار يُعتبر مُهيّأً حتى لا تُزرع افتراضيات فوق بياناته */
     const st = DB.get('meta','settings');
@@ -6256,6 +6722,29 @@ Migrations.v6_to_v7 = async function(){
 };
 
 
+/* ============================ v7 → v8 =====================================
+   ترقية «الهوية والصلاحيات». لماذا رقم مخطط جديد أصلاً؟ لأن IndexedDB لا
+   تُنشئ جدولاً جديداً إلا برفع رقم نسخة القاعدة — فجدول المستخدمات لا يمكن
+   أن يوجد في قاعدة قائمة بغير ذلك. وهذا هو المبرّر الوحيد للرفع.
+
+   وما عدا إنشاء الجدول لا تلمس هذه الترقية بياناً واحداً: لا مبلغ، ولا
+   اشتراك، ولا سجلّ حدث. والنادي الذي لم يفعّل الصلاحيات لا يرى أي فرق —
+   الجدول يبقى فارغاً و`authEnabled` يبقى false ويظلّ كل شيء مسموحاً كما كان.
+
+   والأحداث التاريخية تبقى بلا «من نفّذها»: لم تكن تُسجَّل، ولا يجوز أن
+   نخترع لها فاعلاً بأثر رجعي. الأحداث الجديدة وحدها تحمل اسم من نفّذها. */
+Migrations.v7_to_v8 = async function(){
+  /* الجدول يُنشأ في onupgradeneeded من STORE_NAMES — لا كتابة هنا.
+     تُضمن الأدوار فقط، وهي عملية موجودة أصلاً وقابلة للتكرار بلا أثر. */
+  const roles = await Auth.ensureRoles();
+  const users = DB.count('users');
+  const parts = [];
+  if (roles) parts.push(`${roles} أدوار مزروعة`);
+  parts.push(`جدول المستخدمات جاهز (${users} مستخدمة)`);
+  return `v7→v8: ${parts.join('، ')} — لم تُمسّ أي بيانات عمل`;
+};
+
+
 /* ===== src/app/data/80-integrity.js ================================================== */
 /* ============================== Integrity ================================
    فحص العلاقات: سجلات يتيمة أو روابط مكسورة. يُستعمل في الإعدادات وفي الاختبارات. */
@@ -6514,6 +7003,7 @@ const UI = {
     ov.querySelectorAll('[data-close]').forEach(b => b.onclick = () => handle.close());
     UI.stack.push(handle);
     if (onMount) onMount(ov, handle);
+    applyPerms(ov);
     const first = ov.querySelector('input:not([type=hidden]),select,textarea');
     if (first) setTimeout(()=>first.focus(), 40);
     return handle;
@@ -6579,6 +7069,9 @@ const UI = {
       state.sort = (state.sort && state.sort.i === i) ? { i, d:-state.sort.d } : { i, d:1 };
       state.page = 1; onSort && onSort(cols[i].sort, state.sort.d);
     });
+    /* الجدول يُعيد رسم نفسه عند تبديل الصفحة بلا مرور على renderRoute،
+       فتُكنَس الصفحة الجديدة هنا أيضاً ولا يظهر زرٌّ ممنوع في صفحة ثانية. */
+    applyPerms(container);
   },
   /* ------------------------------- Forms ------------------------------- */
   field(name, label, input, hint){
@@ -6873,6 +7366,7 @@ const Brand = {
             banner:'image/png,image/jpeg,image/webp,image/gif' },
   accept(kind){ return this.ACCEPT[kind === 'banner' ? 'banner' : 'logo']; },
   async setMedia(kind, file){
+    Auth.require('settings.edit');
     const key = kind === 'banner' ? 'bannerMediaId' : 'logoMediaId';
     const prev = this.get()[key];
     const ok = String(this.accept(kind)).split(',');
@@ -6889,6 +7383,7 @@ const Brand = {
     return saved;
   },
   async clearMedia(kind){
+    Auth.require('settings.edit');
     const key = kind === 'banner' ? 'bannerMediaId' : 'logoMediaId';
     const prev = this.get()[key];
     if (!prev) return null;
@@ -6914,6 +7409,7 @@ const Brand = {
     document.title = `${this.name()} — نظام الإدارة`;
   },
   async saveDetails(d){
+    Auth.require('settings.edit');
     const b = Object.assign({}, this.get(), {
       subtitle:U.norm(d.subtitle), phone:U.norm(d.phone), address:U.norm(d.address),
       instagram:U.norm(d.instagram).replace(/^@/, ''), footer:U.norm(d.footer) });
@@ -7354,6 +7850,16 @@ function currentRoute(){
   const ok = Views[r] && Auth.can(`${(Views[r] && Views[r].perm) || r}.view`);
   return { route: ok ? r : 'dashboard', params: Object.fromEntries(new URLSearchParams(qs||'')) };
 }
+/* ------------------------ الأزرار بحسب الصلاحية ------------------------
+   الزرّ الموسوم data-perm يُنزع ممّن لا يملك صلاحيته. هذا راحةٌ للعين لا
+   حاجزٌ أمني: المنع الحقيقي في الخدمة نفسها (Auth.require)، وهو ما تُثبته
+   مصفوفة الاختبارات بنداء الخدمة مباشرةً بلا واجهة. ولذلك تبقى الكنسة
+   واحدة في مكان واحد: لا نسخة ثانية من نظام الصلاحيات في الشاشات. */
+function applyPerms(root){
+  (root || document).querySelectorAll('[data-perm]').forEach(el => {
+    if (!Auth.can(el.dataset.perm)) el.remove();
+  });
+}
 function renderRoute(){
   const { route, params } = currentRoute();
   State.route = route; State.params = params;
@@ -7376,6 +7882,7 @@ function renderRoute(){
   root.innerHTML = '<div class="view"></div>';
   try { v.render(root.firstChild, params); }
   catch(e){ Log.error('فشل عرض الشاشة', e); root.firstChild.innerHTML = UI.empty('تعذّر عرض هذه الشاشة', e.message||''); }
+  applyPerms(root);
   navBadges();
   root.scrollIntoView({ block:'start' });
 }
@@ -7863,7 +8370,7 @@ Views.members = {
             <button class="btn btn-sm btn-icon" data-view="${r.m.id}" title="الملف">${svg(ICON.eye,15)}</button>
             <button class="btn btn-sm btn-icon" data-edit="${r.m.id}" title="تعديل">${svg(ICON.edit,15)}</button>
             <button class="btn btn-sm btn-primary" data-renew="${r.m.id}">اشتراك</button>
-            <button class="btn btn-sm btn-icon ${r.m.archived?'':'btn-danger'}" data-arch="${r.m.id}" title="${r.m.archived?'استرجاع':'أرشفة'}">${svg(r.m.archived?ICON.undo:ICON.trash,15)}</button>
+            <button class="btn btn-sm btn-icon ${r.m.archived?'':'btn-danger'}" data-perm="members.delete" data-arch="${r.m.id}" title="${r.m.archived?'استرجاع':'أرشفة'}">${svg(r.m.archived?ICON.undo:ICON.trash,15)}</button>
           </div>` }
       ];
       UI.table($('mTable'), { cols, rows, state:f, rowCls:r=>r.m.archived?'archived-row':'',
@@ -8531,7 +9038,7 @@ Views.subs = {
             <button class="btn btn-sm btn-icon" data-pmts="${r.s.id}" title="سجل الدفعات">${svg(ICON.coins,15)}</button>
             ${!r.s.archived && r.pay.due>0?`<button class="btn btn-sm" data-pay="${r.s.id}">قبض</button>`:''}
             <button class="btn btn-sm btn-icon" data-edit="${r.s.id}" title="تعديل">${svg(ICON.edit,15)}</button>
-            <button class="btn btn-sm btn-icon ${r.s.archived?'':'btn-danger'}" data-arch="${r.s.id}" title="${r.s.archived?'استرجاع':'أرشفة'}">${svg(r.s.archived?ICON.undo:ICON.trash,15)}</button></div>` }
+            <button class="btn btn-sm btn-icon ${r.s.archived?'':'btn-danger'}" data-perm="subs.delete" data-arch="${r.s.id}" title="${r.s.archived?'استرجاع':'أرشفة'}">${svg(r.s.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ];
       UI.table($('sTable'), { cols, rows, state:f, rowCls:r=>r.s.archived?'archived-row':'',
         empty:UI.empty('لا اشتراكات مطابقة','سجّلي اشتراكاً جديداً من زر «اشتراك جديد»'),
@@ -9340,7 +9847,7 @@ Views.payroll = {
           <button class="btn btn-sm btn-icon" data-edit="${x.p.id}" ${x.p.status==='paid'?'disabled':''} title="تعديل البنود">${svg(ICON.edit,15)}</button>
           ${x.p.status==='paid'
             ? `<button class="btn btn-sm" data-unpay="${x.p.id}">إلغاء الدفع</button>`
-            : `<button class="btn btn-sm btn-primary" data-pay="${x.p.id}">تسجيل الدفع</button>`}</div>` }
+            : `<button class="btn btn-sm btn-primary" data-perm="payroll.money" data-pay="${x.p.id}">تسجيل الدفع</button>`}</div>` }
     ];
     UI.table($('pTable'), { cols, rows, state:{page:1,pageSize:50},
       empty:UI.empty('لا توجد كشوف لهذا الشهر','اضغطي «إنشاء كشوف الشهر» لتوليد كشف لكل موظفة على رأس العمل') });
@@ -9425,11 +9932,11 @@ Views.finance = {
         <strong>${missing.length} يوم فيه حركة نقدية ولم يُقفَل صندوقه.</strong>
         <div class="t-sub" style="margin:6px 0 10px">اليوم الذي لا يُقفَل يضيع الفرق فيه بلا أثر.</div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
-          ${missing.map(mday => `<button class="btn btn-sm" data-close="${mday.date}">
+          ${missing.map(mday => `<button class="btn btn-sm" data-perm="cash.money" data-close="${mday.date}">
             ${D.fmt(mday.date)} <span class="t-sub">(${Money.fmt(mday.cashIn)})</span></button>`).join('')}
         </div></div></div>` : ''}
       <div class="card"><div class="card-head"><h3>إقفال اليوم — ${D.fmt(today)}</h3><div class="sp"></div>
-        <button class="btn btn-sm btn-primary" data-close="${today}">${p.closed ? 'إعادة الإقفال' : 'إقفال الصندوق'}</button></div>
+        <button class="btn btn-sm btn-primary" data-perm="cash.money" data-close="${today}">${p.closed ? 'إعادة الإقفال' : 'إقفال الصندوق'}</button></div>
         <div class="card-body">
         <table class="mini-tbl" style="max-width:420px"><tbody>
           <tr><td>الرصيد الافتتاحي</td><td class="num ta-l">${Money.fmt(p.opening)}</td></tr>
@@ -9520,7 +10027,7 @@ Views.finance = {
             <td class="num">${Money.fmt(c.expectedCash)}</td><td class="num">${Money.fmt(c.countedCash)}</td>
             <td class="num ${c.difference < 0 ? 'money-neg' : c.difference > 0 ? 'money-pos' : ''}">${Money.fmt(c.difference)}</td>
             <td class="t-sub">${U.esc(c.notes || '')}</td>
-            <td class="ta-l">${c.closedAt ? `<button class="btn btn-sm" data-reopen="${c.date}">إعادة فتح</button>` : '<span class="pill warn">غير مقفل</span>'}</td></tr>`).join('')}
+            <td class="ta-l">${c.closedAt ? `<button class="btn btn-sm" data-perm="cash.money" data-reopen="${c.date}">إعادة فتح</button>` : '<span class="pill warn">غير مقفل</span>'}</td></tr>`).join('')}
         </tbody></table>` : UI.empty('لا إقفالات بعد','أقفلي صندوق اليوم لتبدأ المطابقة اليومية')}
       </div></div>`;
     body.querySelectorAll('[data-close]').forEach(b => b.onclick = () => Forms.cashClose(b.dataset.close));
@@ -9576,7 +10083,7 @@ Views.finance = {
           <td>${U.esc(x.supplier ? x.supplier.name : '—')}</td><td class="num">${D.fmt(x.p.date)}</td>
           <td class="num">${Money.fmt(x.st.total)}</td><td class="num">${Money.fmt(x.st.paid)}</td>
           <td class="num"><strong class="money-neg">${Money.fmt(x.st.due)}</strong></td>
-          <td class="ta-l"><button class="btn btn-sm btn-primary" data-dupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
+          <td class="ta-l"><button class="btn btn-sm btn-primary" data-perm="finance.money" data-dupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
         </tbody><tfoot><tr><th colspan="5">الإجمالي</th><th class="num">${Money.fmt(payables.due)}</th><th></th></tr></tfoot></table>
         <div class="t-sub" style="margin-top:6px">ما لنا على المشتركات يُقبض فيصير إيراداً، وما علينا للموردين يُسدَّد
           ولا يصير مصروفاً ثانياً — تكلفته سُجّلت يوم رُحِّل مستندها.</div>
@@ -9671,7 +10178,7 @@ Views.finance = {
             ${r.paymentId ? `<button class="btn btn-sm" data-src="${r.paymentId}" title="سجل دفعات المستند">${svg(ICON.eye,14)} المستند</button>`
               : r.source==='subscription' && r.refId ? `<button class="btn btn-sm" data-srcsub="${r.refId}" title="الاشتراك">${svg(ICON.eye,14)} الاشتراك</button>`
               : `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
-               <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
+               <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-perm="finance.delete" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
       ];
       UI.table($('rTable'), { cols, rows, state:f, rowCls:r=>r.archived?'archived-row':'',
         empty:UI.empty('لا توجد إيرادات في هذه الفترة','الاشتراكات تُسجَّل هنا تلقائياً عند إنشائها'),
@@ -9734,7 +10241,7 @@ Views.finance = {
             ${r.refType==='payroll' ? `<button class="btn btn-sm" data-srcpay="${r.refId}" title="كشف الراتب">${svg(ICON.eye,14)} كشف الراتب</button>`
               : r.refType==='stock' ? `<button class="btn btn-sm" data-srcstk="${r.refId}" title="حركة الشراء">${svg(ICON.eye,14)} حركة الشراء</button>`
               : `<button class="btn btn-sm btn-icon" data-edit="${r.id}">${svg(ICON.edit,15)}</button>
-               <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
+               <button class="btn btn-sm btn-icon ${r.archived?'':'btn-danger'}" data-perm="finance.delete" data-arch="${r.id}">${svg(r.archived?ICON.undo:ICON.trash,15)}</button>`}</div>` }
       ];
       UI.table($('eTable'), { cols, rows, state:f, rowCls:r=>r.archived?'archived-row':'',
         empty:UI.empty('لا توجد مصروفات في هذه الفترة','سجّلي أول مصروف من زر «مصروف جديد»'),
@@ -9796,11 +10303,11 @@ Views.finance = {
         <div class="t-sub" style="margin:6px 0 10px">سُجّلت قبل أن يسأل النظام عن الطريقة، فهي خارج حساب درج الصندوق:
           خصمها أو إضافتها تخميناً يصنع فرقاً لا تفسير له. حدّدي طريقة كلٍّ منها لتدخل الحساب.</div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
-          ${unknownCap.slice(0, 12).map(c => `<button class="btn btn-sm" data-capm="${c.id}">
+          ${unknownCap.slice(0, 12).map(c => `<button class="btn btn-sm" data-perm="finance.money" data-capm="${c.id}">
             ${D.fmt(c.date)} — ${Money.fmt(c.amount)}</button>`).join('')}
         </div></div></div>` : ''}
       <div class="card"><div class="card-head"><h3>حركات رأس المال</h3><div class="sp"></div>
-        <button class="btn btn-sm btn-primary" id="cAdd">${svg(ICON.plus,15,2.4)} حركة جديدة</button></div>
+        <button class="btn btn-sm btn-primary" data-perm="finance.money" id="cAdd">${svg(ICON.plus,15,2.4)} حركة جديدة</button></div>
         <div id="cTable"></div></div></div>`;
 
     const cRows = U.sortBy(Repos.capital.list(true), c=>c.date, -1);
@@ -9814,8 +10321,8 @@ Views.finance = {
             : `${U.esc(PayMethods.label(c.method))}${Svc.cashbook.isCash(c.method) ? ' <span class="t-sub">(الدرج)</span>' : ' <span class="pill">خارج الدرج</span>'}` },
         { h:'المبلغ', sort:c=>c.amount, render:c=>`<strong class="num ${c.type==='injection'?'money-pos':'money-neg'}">${Money.fmt(c.amount)}</strong>` },
         { h:'', cls:'ta-l', render:c=>`<div class="t-actions">
-            ${c.method === PayMethods.UNKNOWN_KEY ? `<button class="btn btn-sm" data-capm="${c.id}">تحديد الطريقة</button>` : ''}
-            <button class="btn btn-sm btn-icon ${c.archived?'':'btn-danger'}" data-arch="${c.id}">${svg(c.archived?ICON.undo:ICON.trash,15)}</button></div>` }
+            ${c.method === PayMethods.UNKNOWN_KEY ? `<button class="btn btn-sm" data-perm="finance.money" data-capm="${c.id}">تحديد الطريقة</button>` : ''}
+            <button class="btn btn-sm btn-icon ${c.archived?'':'btn-danger'}" data-perm="finance.money" data-arch="${c.id}">${svg(c.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ], empty:UI.empty('لا حركات رأس مال','سجّلي رأس المال الابتدائي ليُحسب رصيد السيولة بدقة'),
       onPage:()=>Views.finance.capital(body) });
     $('cTable').querySelectorAll('[data-arch]').forEach(b => b.onclick = async () => {
@@ -9855,14 +10362,14 @@ Views.finance = {
       ${open.length ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-body">
         <strong>${open.length} فترة انتهت ولم تُقفل بعد.</strong>
         <div class="t-sub" style="margin:6px 0 10px">أقفليها ليصبح توزيع أرباحها ممكناً برقم ثابت.</div>
-        <button class="btn btn-sm btn-primary" id="pdClose">إقفال فترة</button></div></div>` : ''}
+        <button class="btn btn-sm btn-primary" data-perm="finance.money" id="pdClose">إقفال فترة</button></div></div>` : ''}
       <div class="card"><div class="card-head"><h3>الشركاء</h3><div class="sp"></div>
         <span class="chip ${shareSum === 100 ? 'chip-active' : 'chip-soon'}">مجموع الحصص ${U.round2(shareSum)}%</span>
-        <button class="btn btn-sm" id="pdPeriods">إقفال فترة</button>
+        <button class="btn btn-sm" data-perm="finance.money" id="pdPeriods">إقفال فترة</button>
         <button class="btn btn-sm btn-primary" id="prAdd">${svg(ICON.plus,15,2.4)} شريك</button></div>
         <div class="card-body tight" id="prTable"></div></div>
       <div class="card"><div class="card-head"><h3>سجل التوزيعات</h3><div class="sp"></div>
-        <button class="btn btn-sm btn-primary" id="dsAdd" ${closed.length ? '' : 'disabled title="أقفلي فترة أولاً"'}>${svg(ICON.plus,15,2.4)} توزيع</button></div>
+        <button class="btn btn-sm btn-primary" data-perm="finance.money" id="dsAdd" ${closed.length ? '' : 'disabled title="أقفلي فترة أولاً"'}>${svg(ICON.plus,15,2.4)} توزيع</button></div>
         <div class="card-body tight" id="dsTable"></div></div>
       ${closed.length ? `<div class="card"><div class="card-head"><h3>الفترات المقفلة</h3></div><div class="card-body">
         <table class="mini-tbl"><thead><tr><th>الفترة</th><th>الإيراد</th><th>المصروف</th><th>صافي الربح المثبَّت</th><th>أُقفلت</th><th></th></tr></thead><tbody>
@@ -9873,7 +10380,7 @@ Views.finance = {
             ${(p.acknowledged || []).length ? `<div class="t-sub">${(p.acknowledged || []).length} تنبيهاً أُقرّ</div>` : ''}</td>
           <td class="ta-l"><div class="t-actions">
             <button class="btn btn-sm" data-sum-p="${p.key}">الملخّص</button>
-            <button class="btn btn-sm" data-reopen-p="${p.key}">إعادة فتح</button></div></td></tr>`).join('')}
+            <button class="btn btn-sm" data-perm="finance.money" data-reopen-p="${p.key}">إعادة فتح</button></div></td></tr>`).join('')}
         </tbody></table></div></div>` : ''}
       </div>`;
 
@@ -9892,7 +10399,7 @@ Views.finance = {
             return `<strong class="num ${v > 0 ? 'money-neg' : ''}">${Money.fmt(v)}</strong>`; } },
         { h:'', cls:'ta-l', render:p=>`<div class="t-actions">
             <button class="btn btn-sm" data-stmt="${p.id}">كشف الحساب</button>
-            <button class="btn btn-sm btn-primary" data-dist="${p.id}">توزيع</button>
+            <button class="btn btn-sm btn-primary" data-perm="finance.money" data-dist="${p.id}">توزيع</button>
             <button class="btn btn-sm btn-icon" data-edit="${p.id}">${svg(ICON.edit,15)}</button>
             <button class="btn btn-sm btn-icon btn-danger" data-del="${p.id}">${svg(ICON.trash,15)}</button></div>` }
       ], empty:UI.empty('لا يوجد شركاء','أضيفي الشريكات ونسبهنّ ليُحسب نصيب كلٍّ منهنّ') });
@@ -9905,7 +10412,7 @@ Views.finance = {
         { h:'المبلغ', render:d=>`<strong class="num money-neg">${Money.fmt(d.amount)}</strong>` },
         { h:'الطريقة', render:d=>U.esc(PayMethods.label(d.method)) },
         { h:'ملاحظات', render:d=>`<span class="t-sub">${U.esc(d.notes || '')}</span>` },
-        { h:'', cls:'ta-l', render:d=>`<button class="btn btn-sm btn-icon btn-danger" data-dsdel="${d.id}">${svg(ICON.trash,15)}</button>` }
+        { h:'', cls:'ta-l', render:d=>`<button class="btn btn-sm btn-icon btn-danger" data-perm="finance.money" data-dsdel="${d.id}">${svg(ICON.trash,15)}</button>` }
       ], empty:UI.empty('لا توزيعات','التوزيع يقلّل السيولة ولا يقلّل الربح — ويسبقه إقفال الفترة') });
 
     const on = (sel, fn) => body.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
@@ -9998,7 +10505,7 @@ Views.pos = {
         { h:'', cls:'ta-l', render:r=>`<div class="t-actions">
             <button class="btn btn-sm btn-icon" data-view="${r.sl.id}" title="عرض">${svg(ICON.eye,15)}</button>
             ${!r.sl.archived && r.st.due>0?`<button class="btn btn-sm" data-pay="${r.sl.id}">قبض</button>`:''}
-            <button class="btn btn-sm btn-icon ${r.sl.archived?'':'btn-danger'}" data-arch="${r.sl.id}" title="${r.sl.archived?'استرجاع':'إلغاء'}">${svg(r.sl.archived?ICON.undo:ICON.trash,15)}</button></div>` }
+            <button class="btn btn-sm btn-icon ${r.sl.archived?'':'btn-danger'}" data-perm="pos.delete" data-arch="${r.sl.id}" title="${r.sl.archived?'استرجاع':'إلغاء'}">${svg(r.sl.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ];
       UI.table($('slTable'), { cols, rows, state:f, rowCls:r=>r.sl.archived?'archived-row':'',
         empty:UI.empty('لا فواتير مطابقة','سجّلي أول عملية بيع من زر «بيع جديد»'),
@@ -10088,7 +10595,7 @@ Views.inventory = {
             <button class="btn btn-sm btn-icon" data-hist="${r.p.id}" title="سجل الحركة">${svg(ICON.eye,15)}</button>
             <button class="btn btn-sm" data-buy="${r.p.id}">شراء</button>
             <button class="btn btn-sm btn-icon" data-edit="${r.p.id}" title="تعديل">${svg(ICON.edit,15)}</button>
-            <button class="btn btn-sm btn-icon ${r.p.archived?'':'btn-danger'}" data-arch="${r.p.id}" title="${r.p.archived?'استرجاع':'أرشفة'}">${svg(r.p.archived?ICON.undo:ICON.trash,15)}</button></div>` }
+            <button class="btn btn-sm btn-icon ${r.p.archived?'':'btn-danger'}" data-perm="inventory.delete" data-arch="${r.p.id}" title="${r.p.archived?'استرجاع':'أرشفة'}">${svg(r.p.archived?ICON.undo:ICON.trash,15)}</button></div>` }
       ];
       UI.table($('invTable'), { cols, rows, state:f, rowCls:r=>r.p.archived?'archived-row':'',
         empty:UI.empty('لا أصناف مطابقة','أضيفي أول صنف لتتبّع مخزون المكمّلات والملابس والمشروبات'),
@@ -10144,7 +10651,7 @@ Views.inventory = {
           <td>${U.esc(x.supplier ? x.supplier.name : '—')}</td><td class="num">${D.fmt(x.p.date)}</td>
           <td class="num">${Money.fmt(x.st.total)}</td><td class="num">${Money.fmt(x.st.paid)}</td>
           <td class="num"><strong class="money-neg">${Money.fmt(x.st.due)}</strong></td>
-          <td class="ta-l"><button class="btn btn-sm btn-primary" data-pupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
+          <td class="ta-l"><button class="btn btn-sm btn-primary" data-perm="finance.money" data-pupay="${x.p.id}">تسديد</button></td></tr>`).join('')}
         </tbody><tfoot><tr><th colspan="5">الإجمالي</th><th class="num">${Money.fmt(payables.due)}</th><th></th></tr></tfoot></table>
       </div></div>` : ''}
       <div class="card">
@@ -10306,7 +10813,7 @@ Views.attendance = {
             : '<span class="t-sub">مشتركة محذوفة</span>' },
         { h:'الحصة', render:r=>r.tr?U.esc(r.tr.title):'<span class="t-sub">—</span>' },
         { h:'حالة الاشتراك', render:r=>r.m?UI.chip(Svc.members.status(r.m.id).status):'' },
-        { h:'', cls:'ta-l', render:r=>`<button class="btn btn-sm btn-icon btn-danger" data-del="${r.a.id}" title="حذف">${svg(ICON.trash,15)}</button>` }
+        { h:'', cls:'ta-l', render:r=>`<button class="btn btn-sm btn-icon btn-danger" data-perm="attendance.delete" data-del="${r.a.id}" title="حذف">${svg(ICON.trash,15)}</button>` }
       ];
       UI.table($('attTable'), { cols, rows, state:f,
         empty:UI.empty('لا حضور في هذا اليوم','استعملي البحث السريع في الأعلى لتسجيل الحضور'),
@@ -10972,8 +11479,8 @@ Views.settings = {
               <h4 style="font-size:13px;margin-bottom:8px">الشعار</h4>
               <div class="media-drop">
                 ${logo ? `<img src="${U.esc(Brand.renderUrl('logo'))}" alt="" data-brand-prev="logo">` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
-                <input type="file" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
-                ${logo ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
+                <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
+                ${logo ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
               </div>
               ${mediaInfo('logo')}
               <div class="t-sub" style="margin-top:6px">يُفضَّل مربّع الشكل وبخلفية شفافة.</div>
@@ -10982,8 +11489,8 @@ Views.settings = {
               <h4 style="font-size:13px;margin-bottom:8px">اللافتة العريضة</h4>
               <div class="media-drop wide">
                 ${banner ? `<img src="${U.esc(Brand.renderUrl('banner'))}" alt="" data-brand-prev="banner">` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
-                <input type="file" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
-                ${banner ? '<button class="btn btn-sm btn-danger" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
+                <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
+                ${banner ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
               </div>
               ${mediaInfo('banner')}
               <div class="t-sub" style="margin-top:6px">صورة عريضة (نحو 4:1). تُقصّ ولا تُمطّ، وتظهر أعلى شاشة الاستقبال.</div>
@@ -11013,7 +11520,7 @@ Views.settings = {
             ${UI.field('instagram','حساب انستغرام', UI.input('instagram', b.instagram, { placeholder:'بلا @' }))}
             ${UI.field('footer','عبارة أسفل الوصل', UI.input('footer', b.footer, { placeholder:'شكراً لثقتكِ بنا' }))}
           </div>
-          <button class="btn btn-primary" id="bSave">حفظ</button>
+          <button class="btn btn-primary" data-perm="settings.edit" id="bSave">حفظ</button>
         </div></div>
 
         <div class="card" style="margin-top:14px"><div class="card-head"><h3>معاينة الترويسة المطبوعة</h3>
@@ -11317,7 +11824,7 @@ Views.settings = {
         <div class="row">
           <button class="btn btn-primary" id="bkExport">${svg(ICON.down, 16)} تصدير نسخة كاملة</button>
           <button class="btn" id="bkExportLite">تصدير بدون الوسائط</button>
-          <button class="btn btn-dark" id="bkImport">${svg(ICON.up, 16)} استعادة من ملف</button>
+          <button class="btn btn-dark" data-perm="settings.danger" id="bkImport">${svg(ICON.up, 16)} استعادة من ملف</button>
           <input type="file" id="bkFile" accept="application/json,.json" class="hidden">
         </div>
         <div class="t-sub" style="margin-top:12px">الوسائط (الصور والشعار والمرفقات): ${media.count} ملفاً بحجم
@@ -11361,16 +11868,52 @@ Views.settings = {
 
     /* ------------------------ الصلاحيات والخصوصية ------------------------ */
     const secRoles = () => {
-      box.innerHTML = `<div class="card"><div class="card-head"><h3>الأدوار والصلاحيات</h3>
-          <div class="sp"></div><span class="chip chip-none"><span class="dot"></span>البنية جاهزة — التفعيل مؤجّل</span></div>
+      const on = Auth.enabled();
+      const users = Svc.users.list();
+      const canManage = Auth.can('settings.users');
+      const roles = Repos.roles.list(true).length ? Repos.roles.list(true) : ROLE_PRESETS;
+      box.innerHTML = `<div class="card"><div class="card-head"><h3>الدخول والصلاحيات</h3>
+          <div class="sp"></div><span class="chip ${on ? 'chip-active' : 'chip-none'}"><span class="dot"></span>${on ? 'مفعّل' : 'غير مفعّل'}</span></div>
           <div class="card-body">
-          <p class="t-sub" style="margin-top:0">النظام يعمل الآن بمستخدمة واحدة كاملة الصلاحية. بنية الأدوار جاهزة
-            (${PERM_KEYS.length} صلاحية عبر ${Object.keys(PERMISSIONS).length} وحدة) ونقاط التحقق موجودة في طبقة الأفعال،
-            فتفعيلها لاحقاً لا يحتاج إلا شاشة دخول — بلا تعديل في الشاشات ولا الخدمات.</p>
+          <p class="t-sub" style="margin-top:0">${on
+            ? 'كل مستخدمة تدخل باسمها، وكل إجراء حسّاس يُسجَّل باسم من نفّذته.'
+            : 'النظام يعمل الآن بلا تسجيل دخول: كل شيء مسموح، وسجل الأحداث ينسب كل إجراء إلى «المالكة».'}</p>
+          <div class="field"><label class="switch"><input type="checkbox" id="authOn" ${on ? 'checked' : ''}
+            ${on && !canManage ? 'disabled' : ''}> تفعيل تسجيل الدخول والصلاحيات</label></div>
+          ${!on ? `<div class="t-sub">عند التفعيل ستُطلب تهيئة حساب المالكة الأول مباشرة، ومعه رمز استرجاع يُعرَض مرة واحدة.</div>` : ''}
+          ${on && Auth.hasRecovery() ? '<div class="t-sub">رمز الاسترجاع مسجَّل. وهو الطريق الوحيد لاستعادة كلمة مرور المالكة عند نسيانها.</div>' : ''}
+        </div></div>
+
+        ${on ? `<div class="card" style="margin-top:14px"><div class="card-head"><h3>المستخدمات</h3><div class="sp"></div>
+          ${canManage ? '<button class="btn btn-sm btn-primary" id="uAdd">مستخدمة جديدة</button>' : ''}</div>
+          <div class="card-body">
+          ${canManage ? '' : '<p class="t-sub" style="margin-top:0">إدارة المستخدمات للمالكة وحدها.</p>'}
+          <div class="tbl-wrap"><table class="tbl"><thead><tr><th>الاسم</th><th>اسم الدخول</th><th>الدور</th><th>آخر دخول</th><th>الحالة</th><th></th></tr></thead><tbody>
+          ${users.map(u => `<tr class="${u.disabled ? 'archived-row' : ''}">
+            <td class="t-name">${U.esc(u.name)}${Auth.session.actorId === u.id ? ' <span class="pill">أنتِ</span>' : ''}</td>
+            <td class="t-sub">${U.esc(u.username)}</td>
+            <td>${U.esc(Auth.roleName(u.roleKey))}</td>
+            <td class="t-sub num">${u.lastLoginAt ? D.fmt(u.lastLoginAt.slice(0, 10)) : '—'}</td>
+            <td>${u.disabled ? '<span class="chip chip-expired"><span class="dot"></span>موقوف</span>'
+                             : '<span class="chip chip-active"><span class="dot"></span>فعّال</span>'}</td>
+            <td class="ta-l">${canManage ? `<div class="t-actions">
+              <button class="btn btn-sm" data-uedit="${u.id}">تعديل</button>
+              <button class="btn btn-sm" data-upw="${u.id}">كلمة المرور</button>
+              <button class="btn btn-sm ${u.disabled ? '' : 'btn-danger'}" data-utog="${u.id}">${u.disabled ? 'تفعيل' : 'إيقاف'}</button>
+            </div>` : ''}</td></tr>`).join('')}
+          </tbody></table></div>
+          ${users.length ? '' : '<div class="t-sub" style="margin-top:10px">لا مستخدمات بعد.</div>'}
+        </div></div>` : ''}
+
+        <div class="card" style="margin-top:14px"><div class="card-head"><h3>الأدوار</h3></div>
+          <div class="card-body">
+          <p class="t-sub" style="margin-top:0">أربعة أدوار تغطّي واقع النادي
+            (${PERM_KEYS.length} صلاحية عبر ${Object.keys(PERMISSIONS).length} وحدة). الصلاحيات تُفحص في طبقة الأفعال
+            نفسها لا في الأزرار وحدها: إخفاء الزر راحةٌ للعين، والمنع الحقيقي تحته.</p>
           <div class="tbl-wrap"><table class="tbl"><thead><tr><th>الدور</th><th>الوصف</th><th>الوحدات المتاحة</th></tr></thead><tbody>
-          ${ROLE_PRESETS.map(r => { const n = r.perms.includes('*') ? Object.keys(PERMISSIONS).length
-              : new Set(r.perms.map(k => k.split('.')[0])).size;
-            return `<tr><td class="t-name">${U.esc(r.name)}</td><td class="t-sub">${U.esc(r.description)}</td>
+          ${roles.map(r => { const n = (r.perms || []).includes('*') ? Object.keys(PERMISSIONS).length
+              : new Set((r.perms || []).map(k => k.split('.')[0])).size;
+            return `<tr><td class="t-name">${U.esc(r.name)}</td><td class="t-sub">${U.esc(r.description || '')}</td>
               <td><span class="num">${n}</span> <span class="t-sub">من ${Object.keys(PERMISSIONS).length}</span></td></tr>`; }).join('')}
           </tbody></table></div></div></div>
 
@@ -11389,6 +11932,48 @@ Views.settings = {
         </div></div>`;
       box.querySelector('#privSave').onclick = async () =>
         save({ hideSensitiveInLists:box.querySelector('#privLists').checked }, 'تحديث إعدادات الخصوصية');
+
+      /* تفعيل الدخول: التفعيل يقود مباشرة إلى تهيئة أول مالكة، والإيقاف
+         يحتاج صلاحية إدارة المستخدمات حتى لا تُلغيه مستخدمة محدودة. */
+      const authBox = box.querySelector('#authOn');
+      if (authBox) authBox.onchange = async () => {
+        const want = authBox.checked;
+        if (want){
+          if (!await UI.confirm({ title:'تفعيل تسجيل الدخول', confirmText:'تفعيل',
+            message:'سيُطلب منك إنشاء حساب المالكة الآن، ثم يصبح الدخول مطلوباً لكل من يستعمل النظام.' })){
+            authBox.checked = false; return; }
+          await Settings.set({ authEnabled:true });
+          await Audit.log('settings','auth','تفعيل تسجيل الدخول والصلاحيات');
+          if (Auth.needsSetup()) return Gate.setup();
+          Auth.restoreSession(); buildNav(); paintWhoAmI(); renderRoute();
+          if (!Auth.session.actorId) Gate.login();
+          return;
+        }
+        if (!Auth.can('settings.users')){ authBox.checked = true;
+          return UI.toast('ليس لديك صلاحية لتنفيذ هذا الإجراء','err'); }
+        if (!await UI.confirm({ title:'إيقاف تسجيل الدخول', danger:true, confirmText:'إيقاف',
+          message:'سيعمل النظام بلا حسابات: كل من يفتح الجهاز يستطيع كل شيء، وتعود نسبة الإجراءات إلى «المالكة».' })){
+          authBox.checked = true; return; }
+        await Settings.set({ authEnabled:false });
+        await Audit.log('settings','auth','إيقاف تسجيل الدخول والصلاحيات');
+        Auth.session = { actorId:null, actorName:'المالكة', roleKey:'owner' };
+        try { sessionStorage.removeItem(Auth.SESSION_KEY); } catch(e){}
+        buildNav(); paintWhoAmI(); renderRoute();
+      };
+
+      const ua = box.querySelector('#uAdd');
+      if (ua) ua.onclick = () => Forms.user();
+      box.querySelectorAll('[data-uedit]').forEach(b => b.onclick = () => Forms.user(b.dataset.uedit));
+      box.querySelectorAll('[data-upw]').forEach(b => b.onclick = () => Forms.userPassword(b.dataset.upw));
+      box.querySelectorAll('[data-utog]').forEach(b => b.onclick = async () => {
+        const u = Repos.users.get(b.dataset.utog);
+        if (!u) return;
+        if (!u.disabled && !await UI.confirm({ title:`إيقاف ${U.esc(u.name)}`, danger:true, confirmText:'إيقاف',
+          message:'لن تستطيع الدخول حتى تُفعَّلي حسابها من جديد. سجلّ أعمالها السابق يبقى كما هو.' })) return;
+        const res = await guard(null, () => Svc.users.setDisabled(u.id, !u.disabled),
+          u.disabled ? 'فُعّل الحساب' : 'أُوقف الحساب');
+        if (res) renderRoute();
+      });
     };
 
     /* ---------------------------- سجل الأحداث ---------------------------- */
@@ -11413,7 +11998,7 @@ Views.settings = {
           <strong>لا تعود أي بيانات تلقائياً بعدها</strong> — تبدئين من صفحة بيضاء.</p>
         <p class="sens">قبل المتابعة: خذي نسخة احتياطية من قسم «النسخ الاحتياطي». بعد التنفيذ يتحقّق البرنامج
           من خلوّ كل جدول على القرص فعلاً، ويرفض أن يعلن النجاح إن بقي شيء.</p>
-        <button class="btn btn-danger" id="wipe">إعادة تهيئة كاملة</button></div></div>`;
+        <button class="btn btn-danger" data-perm="settings.danger" id="wipe">إعادة تهيئة كاملة</button></div></div>`;
       box.querySelector('#wipe').onclick = () => Actions.wipe();
     };
 
@@ -13546,9 +14131,9 @@ Screens.purchase = function(id){
       footer:`${p.status === 'draft' ? `<button class="btn btn-primary" id="puDoPost">ترحيل المستند</button>
                 <button class="btn" id="puEdit">تعديل</button>
                 <button class="btn btn-danger" id="puDel">حذف المسودة</button>` : ''}
-              ${p.status === 'posted' ? `${st.due > 0 ? '<button class="btn btn-primary" id="puDoPay">تسديد دفعة</button>' : ''}
+              ${p.status === 'posted' ? `${st.due > 0 ? '<button class="btn btn-primary" data-perm="finance.money" id="puDoPay">تسديد دفعة</button>' : ''}
                 <button class="btn" id="puPrint">${svg(ICON.print,15)} طباعة</button>
-                <button class="btn btn-danger" id="puCancel">إلغاء المستند</button>` : ''}
+                <button class="btn btn-danger" data-perm="inventory.delete" id="puCancel">إلغاء المستند</button>` : ''}
               ${p.status === 'cancelled' ? '<button class="btn" id="puPrint">' + svg(ICON.print,15) + ' طباعة</button>' : ''}
               <button class="btn" id="puSupp">كشف المورّد</button>
               <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
@@ -14715,7 +15300,7 @@ Screens.partnerStatement = function(partnerId){
             : '<span class="pill warn">بلا تفصيل (توزيع قديم)</span>'}</td></tr>`; }).join('')}
         </tbody></table>` : '<div class="t-sub">لا توزيعات بعد.</div>'}`,
     footer:`<button class="btn btn-primary" id="psPrint">${svg(ICON.print,15)} طباعة الكشف</button>
-            <button class="btn" id="psDist">توزيع أرباح</button>
+            <button class="btn" data-perm="finance.money" id="psDist">توزيع أرباح</button>
             <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
     onMount(ov, h){
       ov.querySelector('#psPrint').onclick = () =>
@@ -15013,6 +15598,295 @@ Actions.globalSearch = function(q){ /*v5*/
 };
 
 
+/* ===== src/app/flows/09-forms-users.js =============================================== */
+/* نماذج المستخدمات: إنشاء وتعديل وتغيير كلمة المرور. المالكة وحدها تصل إليها،
+   والخدمة تفحص الصلاحية مرة أخرى تحتها فلا يكفي إخفاء الزر. */
+Forms.user = function(id){
+  const u = id ? Repos.users.get(id) : null;
+  if (id && !u) return UI.toast('المستخدمة غير موجودة','err');
+  const roles = Repos.roles.list(true).length ? Repos.roles.list(true) : ROLE_PRESETS;
+  const h = UI.modal({
+    title: u ? `تعديل ${u.name}` : 'مستخدمة جديدة', size:'narrow',
+    body:`<div id="usForm">
+      ${UI.field('name','الاسم المعروض', UI.input('name', u ? u.name : ''), 'يظهر في سجل الأحداث وفي الوصولات')}
+      ${UI.field('username','اسم الدخول', UI.input('username', u ? u.username : '',
+        { attrs:'autocapitalize="off" spellcheck="false"' }))}
+      ${UI.field('roleKey','الدور', UI.select('roleKey', u ? u.roleKey : 'reception',
+        roles.map(r => ({ v:r.key, t:r.name }))), 'يحدّد ما تستطيع فعله')}
+      ${u ? '' : UI.field('password','كلمة المرور', UI.input('password','', { type:'password' }),
+        `${Svc.users.MIN_PASSWORD} أحرف على الأقل`)}
+      ${u ? '' : UI.field('password2','تأكيد كلمة المرور', UI.input('password2','', { type:'password' }))}
+      <div class="full">${UI.field('notes','ملاحظة', UI.input('notes', u ? u.notes : ''))}</div>
+      <div class="t-sub" id="usRole" style="margin-top:8px"></div>
+    </div>`,
+    footer:`<button class="btn btn-primary" id="usSave">${u ? 'حفظ' : 'إنشاء'}</button>
+            <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){
+      const scope = ov.querySelector('#usForm');
+      /* ماذا يستطيع هذا الدور — بلغة الوحدات لا بمفاتيح الصلاحيات */
+      const sync = () => {
+        const sum = Svc.users.roleSummary(scope.querySelector('[name=roleKey]').value);
+        ov.querySelector('#usRole').textContent = sum.all ? 'هذا الدور يستطيع كل شيء في النظام.'
+          : `${sum.modules} وحدة: ${sum.names.slice(0, 7).join('، ')}${sum.names.length > 7 ? '…' : ''}`;
+      };
+      scope.querySelector('[name=roleKey]').onchange = sync;
+      sync();
+      ov.querySelector('#usSave').onclick = async () => {
+        const d = UI.read(scope);
+        const res = await guard(scope, () => u ? Svc.users.update(u.id, d) : Svc.users.create(d));
+        if (!res) return;
+        UI.toast(u ? 'حُفظت البيانات' : `أُنشئ حساب ${res.name}`);
+        h.close(); renderRoute();
+      };
+    }
+  });
+};
+
+Forms.userPassword = function(id){
+  const u = Repos.users.get(id);
+  if (!u) return UI.toast('المستخدمة غير موجودة','err');
+  const h = UI.modal({ title:`كلمة مرور ${u.name}`, size:'narrow',
+    body:`<div id="upForm">
+      <div class="t-sub" style="margin-bottom:10px">تُعيَّن كلمة مرور جديدة مباشرة — لا تُعرَض القديمة ولا يمكن قراءتها.</div>
+      ${UI.field('password','كلمة المرور الجديدة', UI.input('password','', { type:'password' }),
+        `${Svc.users.MIN_PASSWORD} أحرف على الأقل`)}
+      ${UI.field('password2','تأكيد كلمة المرور', UI.input('password2','', { type:'password' }))}
+    </div>`,
+    footer:`<button class="btn btn-primary" id="upSave">حفظ</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+    onMount(ov){
+      ov.querySelector('#upSave').onclick = async () => {
+        const scope = ov.querySelector('#upForm'), d = UI.read(scope);
+        if (d.password !== d.password2) return UI.showErrors(scope, { password2:'كلمتا المرور غير متطابقتين' });
+        const res = await guard(scope, () => Svc.users.setPassword(u.id, d.password));
+        if (!res) return;
+        UI.toast('تم تغيير كلمة المرور'); h.close(); renderRoute();
+      };
+    } });
+};
+
+
+/* ===== src/app/flows/25-gate.js ====================================================== */
+/* ============================== بوّابة الدخول ============================
+   ثلاث شاشات في واحدة، تُبنى في الجذر نفسه فوق التطبيق:
+     · التهيئة   — أول تشغيل بعد تفعيل الصلاحيات: تُنشأ أول مالكة ورمز استرجاع
+     · الدخول    — اسم وكلمة مرور، لا أكثر
+     · الاسترجاع — رمز الاسترجاع ⇒ كلمة مرور جديدة لحساب مالكة
+
+   المبدأ: الشاشة بسيطة وعربية وخالية من مصطلحات الأمن، وتقول للمستخدمة ما
+   عليها فعله لا ما يجري تقنياً. */
+const Gate = {
+  el:null,
+  showing(){ return !!this.el; },
+  close(){ if (this.el){ this.el.remove(); this.el = null; } },
+  mount(html, wire){
+    this.close();
+    const d = document.createElement('div');
+    d.className = 'gate';
+    d.innerHTML = `<div class="gate-card">${Brand.logoHtml(52)}${html}</div>`;
+    document.body.appendChild(d);
+    this.el = d;
+    const first = d.querySelector('input:not([type=hidden])');
+    if (first) setTimeout(() => first.focus(), 60);
+    /* Enter يُقدّم النموذج: الاستقبال لا تبحث عن الزر بالفأرة */
+    d.addEventListener('keydown', e => {
+      if (e.key === 'Enter'){ const b = d.querySelector('[data-submit]'); if (b) b.click(); }
+    });
+    if (wire) wire(d);
+    return d;
+  },
+  err(d, msg){
+    const box = d.querySelector('#gErr');
+    if (box){ box.textContent = msg; box.style.display = msg ? 'block' : 'none'; }
+  },
+
+  /* ------------------------------ الدخول ------------------------------ */
+  login(){
+    this.mount(`
+      <h2>${U.esc(Brand.name())}</h2>
+      <div class="gate-sub">سجّلي دخولك للمتابعة</div>
+      <div class="gate-err" id="gErr" style="display:none"></div>
+      <div class="field"><label for="gUser">اسم المستخدمة</label>
+        <input class="inp" id="gUser" autocomplete="username" autocapitalize="off" spellcheck="false"></div>
+      <div class="field"><label for="gPass">كلمة المرور</label>
+        <input class="inp" id="gPass" type="password" autocomplete="current-password"></div>
+      <button class="btn btn-primary" id="gGo" data-submit>دخول</button>
+      <div class="gate-foot">
+        <button type="button" id="gForgot">نسيتِ كلمة المرور؟</button>
+      </div>`, d => {
+      d.querySelector('#gGo').onclick = async () => {
+        const btn = d.querySelector('#gGo');
+        const user = d.querySelector('#gUser').value, pass = d.querySelector('#gPass').value;
+        if (!U.norm(user) || !pass) return this.err(d, 'اكتبي اسم المستخدمة وكلمة المرور');
+        btn.disabled = true; this.err(d, '');
+        try {
+          await Auth.login(user, pass);
+          this.close();
+          await afterSignIn();
+        } catch(e){
+          this.err(d, e.message || 'تعذّر الدخول');
+          d.querySelector('#gPass').value = '';
+          d.querySelector('#gPass').focus();
+        } finally { btn.disabled = false; }
+      };
+      d.querySelector('#gForgot').onclick = () => this.recover();
+    });
+  },
+
+  /* ------------------------------ التهيئة ------------------------------ */
+  setup(){
+    this.mount(`
+      <h2>تهيئة الحساب الأول</h2>
+      <div class="gate-sub">أنشئي حساب المالكة — وهو الحساب الوحيد الذي يدير بقية الحسابات</div>
+      <div class="gate-err" id="gErr" style="display:none"></div>
+      <div class="field"><label for="sName">الاسم المعروض</label>
+        <input class="inp" id="sName" placeholder="مثال: أم تبارك"></div>
+      <div class="field"><label for="sUser">اسم المستخدمة للدخول</label>
+        <input class="inp" id="sUser" autocapitalize="off" spellcheck="false" placeholder="بالإنجليزية أو العربية"></div>
+      <div class="field"><label for="sPass">كلمة المرور</label>
+        <input class="inp" id="sPass" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="sPass2">تأكيد كلمة المرور</label>
+        <input class="inp" id="sPass2" type="password" autocomplete="new-password"></div>
+      <button class="btn btn-primary" id="sGo" data-submit>إنشاء الحساب</button>
+      <div class="gate-foot">لن تُطلب كلمة المرور من أحد غيرك، ولا تُحفظ مكتوبة في أي مكان.</div>`, d => {
+      d.querySelector('#sGo').onclick = async () => {
+        const btn = d.querySelector('#sGo');
+        const v = k => d.querySelector('#' + k).value;
+        if (!U.norm(v('sName')) || !U.norm(v('sUser'))) return this.err(d, 'اكتبي الاسم واسم المستخدمة');
+        if (v('sPass').length < Svc.users.MIN_PASSWORD)
+          return this.err(d, `كلمة المرور ${Svc.users.MIN_PASSWORD} أحرف على الأقل`);
+        if (v('sPass') !== v('sPass2')) return this.err(d, 'كلمتا المرور غير متطابقتين');
+        btn.disabled = true; this.err(d, '');
+        try {
+          const res = await Auth.setupFirstAdmin({ name:v('sName'), username:v('sUser'), password:v('sPass') });
+          this.recoveryShown(res.recoveryCode);
+        } catch(e){ this.err(d, e.message || 'تعذّرت التهيئة'); btn.disabled = false; }
+      };
+    });
+  },
+
+  /* رمز الاسترجاع يُعرَض مرة واحدة — والمتابعة مشروطة بإقرار كتابته */
+  recoveryShown(code){
+    this.mount(`
+      <h2>رمز الاسترجاع</h2>
+      <div class="gate-sub">اكتبيه على ورقة واحفظيها في مكان آمن — لن يُعرَض مرة أخرى</div>
+      <div class="gate-code">${U.esc(code)}</div>
+      <div class="gate-sub" style="text-align:right">هذا الرمز هو طريقك الوحيد لاستعادة كلمة مرور المالكة
+        إن نُسيت. وإن ضاع الرمز وكلمة المرور معاً يبقى أمامك استعادة نسخة احتياطية أقدم.</div>
+      <div class="field"><label class="switch"><input type="checkbox" id="rAck"> كتبتُه وحفظتُه</label></div>
+      <button class="btn btn-primary" id="rGo" disabled data-submit>متابعة</button>`, d => {
+      const ack = d.querySelector('#rAck'), go = d.querySelector('#rGo');
+      ack.onchange = () => { go.disabled = !ack.checked; };
+      /* التهيئة تفتح الجلسة بنفسها فيُدخَل مباشرة. أمّا الاسترجاع فلا يفتح
+         جلسة — يُعيد كلمة المرور فقط — فتُطلب الكلمة الجديدة هنا بدل ترك
+         الشاشة بلا بوابة ولا صلاحية. */
+      go.onclick = async () => {
+        if (!Auth.session.actorId) return this.login();
+        this.close();
+        await afterSignIn();
+      };
+    });
+  },
+
+  /* ------------------------------ الاسترجاع ------------------------------ */
+  recover(){
+    this.mount(`
+      <h2>استرجاع كلمة المرور</h2>
+      <div class="gate-sub">أدخلي رمز الاسترجاع الذي كُتب عند التهيئة</div>
+      <div class="gate-err" id="gErr" style="display:none"></div>
+      <div class="field"><label for="rCode">رمز الاسترجاع</label>
+        <input class="inp" id="rCode" style="direction:ltr;text-align:center" placeholder="XXXX-XXXX-XXXX-XXXX"></div>
+      <div class="field"><label for="rUser">اسم مستخدمة المالكة</label>
+        <input class="inp" id="rUser" autocapitalize="off" spellcheck="false"></div>
+      <div class="field"><label for="rPass">كلمة المرور الجديدة</label>
+        <input class="inp" id="rPass" type="password" autocomplete="new-password"></div>
+      <button class="btn btn-primary" id="rGo2" data-submit>تعيين كلمة المرور</button>
+      <div class="gate-foot"><button type="button" id="rBack">رجوع إلى الدخول</button></div>`, d => {
+      d.querySelector('#rBack').onclick = () => this.login();
+      d.querySelector('#rGo2').onclick = async () => {
+        const btn = d.querySelector('#rGo2');
+        const code = d.querySelector('#rCode').value, user = d.querySelector('#rUser').value,
+              pass = d.querySelector('#rPass').value;
+        if (!U.norm(code) || !U.norm(user)) return this.err(d, 'اكتبي الرمز واسم المستخدمة');
+        if (pass.length < Svc.users.MIN_PASSWORD)
+          return this.err(d, `كلمة المرور ${Svc.users.MIN_PASSWORD} أحرف على الأقل`);
+        btn.disabled = true; this.err(d, '');
+        try {
+          const res = await Auth.recover(code, user, pass);
+          this.recoveryShown(res.recoveryCode);
+        } catch(e){ this.err(d, e.message || 'تعذّر الاسترجاع'); btn.disabled = false; }
+      };
+    });
+  }
+};
+
+/* بعد الدخول: الشاشات تُبنى من جديد بصلاحيات هذه المستخدمة لا بصلاحيات سابقتها */
+async function afterSignIn(){
+  buildNav();
+  paintWhoAmI();
+  const start = Settings.get('startScreen') === 'dashboard' ? 'dashboard' : 'desk';
+  go(Auth.can(`${start}.view`) ? start : firstAllowedRoute());
+  renderRoute();
+}
+/* أول شاشة يسمح بها دورها — كي لا تقع مستخدمة على شاشة ممنوعة عند الدخول */
+function firstAllowedRoute(){
+  const cands = ['desk','dashboard','members','attendance','classes','trainings','exercises','reports','settings'];
+  return cands.find(k => Auth.can(`${k}.view`)) || 'settings';
+}
+/* بطاقة «من الداخلة الآن» في الشريط العلوي — ومنها الخروج وتغيير كلمة المرور */
+function paintWhoAmI(){
+  const host = document.getElementById('whoami');
+  if (!host) return;
+  if (!Auth.enabled() || !Auth.session.actorId){ host.innerHTML = ''; host.style.display = 'none'; return; }
+  host.style.display = '';
+  host.innerHTML = `<span class="whoami" id="whoChip" role="button" tabindex="0" title="الحساب والخروج">
+      <b>${U.esc(Auth.session.actorName)}</b><span class="role">${U.esc(Auth.roleName(Auth.session.roleKey))}</span>
+    </span>`;
+  const chip = host.querySelector('#whoChip');
+  const open = () => Screens.account();
+  chip.onclick = open;
+  chip.onkeydown = e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); } };
+}
+
+/* شاشة الحساب: من أنا، ماذا أستطيع، تغيير كلمة المرور، الخروج */
+Screens.account = function(){
+  const u = Auth.currentUser();
+  const sum = u ? Svc.users.roleSummary(u.roleKey) : null;
+  const h = UI.modal({ title:'حسابي', size:'narrow',
+    body:`<dl class="doc-kv">
+        <dt>الاسم</dt><dd>${U.esc(Auth.session.actorName)}</dd>
+        <dt>اسم الدخول</dt><dd>${U.esc(u ? u.username : '—')}</dd>
+        <dt>الدور</dt><dd>${U.esc(Auth.roleName(Auth.session.roleKey))}</dd>
+        <dt>ماذا تستطيعين</dt><dd>${sum ? (sum.all ? 'كل شيء في النظام'
+          : `${sum.modules} وحدة: ${U.esc(sum.names.slice(0, 6).join('، '))}${sum.names.length > 6 ? '…' : ''}`) : '—'}</dd>
+        ${u && u.lastLoginAt ? `<dt>آخر دخول</dt><dd class="num">${D.fmt(u.lastLoginAt.slice(0,10))} ${U.esc(u.lastLoginAt.slice(11,16))}</dd>` : ''}
+      </dl>
+      <div id="acPw" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <h4 style="font-size:13px;margin:0 0 8px">تغيير كلمة المرور</h4>
+        ${UI.field('oldPassword','كلمة المرور الحالية', UI.input('oldPassword','', { type:'password' }))}
+        ${UI.field('newPassword','كلمة المرور الجديدة', UI.input('newPassword','', { type:'password' }))}
+        <button class="btn btn-sm" id="acSave">حفظ كلمة المرور</button>
+      </div>`,
+    footer:`<button class="btn btn-danger" id="acOut">تسجيل الخروج</button>
+            <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
+    onMount(ov){
+      ov.querySelector('#acSave').onclick = async () => {
+        const scope = ov.querySelector('#acPw'), d = UI.read(scope);
+        const res = await guard(scope, () => Svc.users.changeOwnPassword(d.oldPassword, d.newPassword));
+        if (!res) return;
+        UI.toast('تم تغيير كلمة المرور'); h.close();
+      };
+      ov.querySelector('#acOut').onclick = async () => {
+        if (!await UI.confirm({ title:'تسجيل الخروج', confirmText:'خروج',
+          message:'سيُقفل النظام ويحتاج تسجيل دخول جديد.' })) return;
+        await Auth.logout();
+        h.close();
+        paintWhoAmI();
+        Gate.login();
+      };
+    } });
+};
+
+
 /* ===== src/app/flows/30-boot.js ====================================================== */
 /* ============================================================================
    Bootstrap
@@ -15047,9 +15921,14 @@ async function boot(){
   /* الأدوار تُزرع دائماً إن كان جدولها فارغاً — بنية لا تُنتظر لتفعيل الميزة */
   await Auth.ensureRoles();
 
+  /* الجلسة تُستعاد قبل بناء التنقّل: الشريط الجانبي يُبنى بصلاحيات من تدخل
+     لا بصلاحيات مفتوحة ثم يُصحَّح بعدها. */
+  Auth.restoreSession();
+
   Brand.applyToShell();                              // الشعار والاسم والوصف من الإعدادات
   $('verLabel').textContent = `الإصدار ${APP.version}`;
   buildNav();
+  paintWhoAmI();
 
   if (adapter.kind === 'memory')
     UI.toast('المتصفح يمنع الحفظ المحلي — البيانات لن تبقى بعد الإغلاق. افتحي الملف من متصفح عادي (غير وضع التصفح الخاص).','err', 12000);
@@ -15084,6 +15963,15 @@ async function boot(){
     UI.toast((ev.reason && ev.reason.message) || 'فشلت العملية','err');
   });
 
+  /* البوّابة آخر خطوة: النظام جاهز خلفها، فإن أُغلقت ظهر جاهزاً فوراً.
+     وإن كانت الصلاحيات معطّلة لا تظهر أصلاً ولا يتغيّر شيء في نادٍ لم يفعّلها. */
+  if (Auth.enabled() && !Auth.session.actorId){
+    if (Auth.needsSetup()) Gate.setup(); else Gate.login();
+  } else if (Auth.enabled()){
+    /* جلسة مستعادة: ابدئي على شاشة يسمح بها دورها */
+    if (!Auth.can(`${State.route}.view`)) go(firstAllowedRoute());
+  }
+
   renderRoute();
   if (mig.applied.length) UI.toast('تمت ترقية بياناتك إلى الإصدار ' + APP.version + ' بنجاح', 'ok', 6000);
   const alerts = Svc.notify.build().filter(n => n.level === 'red');
@@ -15111,7 +15999,7 @@ async function bootSafely(){
 /* واجهة مكشوفة للاختبار الآلي وللصيانة من Console */
 window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, PayMethods, Backup, Seed, Audit, Migrations, Integrity, Exporter,
               STORE_LABELS, storeLabel,
-              Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS,
+              Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, renderRoute, go, State, buildNav, currentRoute, navBadges,
