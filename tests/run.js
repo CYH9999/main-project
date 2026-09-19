@@ -10,7 +10,10 @@ const { chromium } = require('playwright');
 
 const ROOT = path.join(__dirname, '..');
 const APP_FILE = 'tabarak-gym 3.0.html';
-const CHROME = process.env.TG_CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+/* متصفّح الاختبار: المسار المثبّت في بيئة التطوير إن وُجد، وإلا متصفّح
+   Playwright نفسه — فالمجموعة تعمل على أي جهاز بلا ضبط يدويّ. */
+const PINNED = process.env.TG_CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = fs.existsSync(PINNED) ? PINNED : undefined;
 const TESTS_JS = fs.readFileSync(path.join(__dirname, 'browser-tests.js'), 'utf8');
 
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
@@ -2662,11 +2665,18 @@ group('أثر الصلاحيات على الأداء', async (browser, url) => {
   record('أثر الصلاحيات على الأداء', rows, errors);
 });
 
+/* ------------------------- مجموعات سطح المكتب -------------------------
+   تُسجَّل هنا لأنها تحتاج خادمها الخاص: مجلّد البناء + ترويسة CSP المشحونة.
+   انظري tests/desktop.js — فيها شرح ما الذي يختلف فعلاً عن المتصفح. */
+require('./desktop.js')({ group, record, chromium, CHROME, TESTS_JS });
+
+
 /* -------------------------------- التشغيل -------------------------------- */
 (async () => {
+  (await import('../scripts/prepare-frontend.mjs')).prepare();   /* app/index.html قبل أي اختبار */
   const srv = await serve();
   const url = `http://127.0.0.1:${srv.address().port}/`;
-  const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
+  const browser = await chromium.launch(Object.assign({ args: ['--no-sandbox'] }, CHROME ? { executablePath: CHROME } : {}));
   const picked = only.length ? groups.filter(g => only.some(o => g.name.includes(o))) : groups;
   for (const g of picked){
     process.stdout.write(`▶ ${g.name}\n`);

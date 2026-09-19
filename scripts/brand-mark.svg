@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- هوية تبارك جيم: حقل باذنجاني (plum-900) يحمل علامة النظام نفسها
+       المرسومة في الشريط الجانبي — دائرة وردية (rose-600) وثقل أبيض. -->
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#31203A"/>
+      <stop offset="1" stop-color="#1C1220"/>
+    </linearGradient>
+    <linearGradient id="disc" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#DB5C86"/>
+      <stop offset="1" stop-color="#A8305A"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#field)"/>
+  <circle cx="256" cy="256" r="168" fill="url(#disc)"/>
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#FDF4F7" stroke-opacity=".38" stroke-width="10"/>
+  <g fill="#FFFFFF">
+    <rect x="150" y="238" width="212" height="36" rx="18"/>
+    <rect x="122" y="202" width="46" height="108" rx="23"/>
+    <rect x="344" y="202" width="46" height="108" rx="23"/>
+  </g>
+  <g fill="#FDF4F7" fill-opacity=".92">
+    <rect x="96" y="222" width="30" height="68" rx="15"/>
+    <rect x="386" y="222" width="30" height="68" rx="15"/>
+  </g>
+</svg>

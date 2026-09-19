@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "واجهة تبارك جيم لا تستدعي أي واجهة نظام أصلية: لا ملفات، ولا صدفة، ولا شبكة، ولا حوارات نظام. فقائمة الصلاحيات فارغة عن قصد — ما لا يُمنح لا يُساء استعماله.",
+  "windows": ["main"],
+  "permissions": []
+}

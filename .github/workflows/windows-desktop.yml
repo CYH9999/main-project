@@ -1,0 +1,104 @@
+# ============================================================================
+# بناء تطبيق تبارك جيم لويندوز.
+#
+# لماذا في CI؟ لأن مثبّت ويندوز لا يُبنى إلا على ويندوز: NSIS وWiX وأيقونة
+# الملف التنفيذي كلها أدوات ويندوز. فهذا الملف هو الطريق المُعاد إنتاجه من
+# المستودع إلى ملف تثبيت حقيقي، بلا جهاز مطوّر في الوسط.
+#
+# المخرَج غير موقَّع رقميّاً — لا شهادة توقيع في هذا المستودع ولا يجوز أن
+# تكون. انظري docs/DESKTOP-BUILD.md.
+# ============================================================================
+name: بناء سطح المكتب — ويندوز
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/tabarak-gym-windows-desktop-**']
+    paths:
+      - 'tabarak-gym 3.0.html'
+      - 'src-tauri/**'
+      - 'scripts/**'
+      - 'package.json'
+      - '.github/workflows/windows-desktop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- الاختبارات
+  tests:
+    name: مجموعة الاختبارات (متصفح + سطح المكتب)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: تثبيت الاعتماديات
+        run: npm install
+      - name: تنزيل متصفّح الاختبار
+        run: npx playwright install --with-deps chromium
+      - name: تشغيل المجموعة كاملة
+        run: npm test
+
+  # ------------------------------------------------------------------ المثبِّت
+  installer:
+    name: مثبّت ويندوز (x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: تحديث سلسلة أدوات الصدأ
+        run: rustup update stable && rustup default stable
+
+      - name: ذاكرة مؤقتة لبناء الصدأ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: تثبيت الاعتماديات
+        run: npm install
+
+      - name: تهيئة الواجهة (المصدر الواحد ⇐ مجلّد البناء)
+        run: npm run prepare:frontend
+
+      - name: بناء مثبّت NSIS
+        run: npx tauri build --bundles nsis
+
+      - name: بناء حزمة MSI (اختياري — لا يُسقط البناء إن تعذّر)
+        continue-on-error: true
+        run: npx tauri build --bundles msi
+
+      - name: قياس المخرجات
+        shell: pwsh
+        run: |
+          $bundle = "src-tauri/target/release/bundle"
+          Write-Host "=== الملف التنفيذي ==="
+          Get-ChildItem "src-tauri/target/release" -Filter *.exe |
+            ForEach-Object { "{0,-40} {1,10:N0} bytes" -f $_.Name, $_.Length }
+          Write-Host "=== المثبّتات ==="
+          Get-ChildItem $bundle -Recurse -Include *.exe,*.msi -ErrorAction SilentlyContinue |
+            ForEach-Object { "{0,-60} {1,12:N0} bytes ({2:N1} MB)" -f $_.Name, $_.Length, ($_.Length/1MB) }
+          Write-Host "=== بصمات SHA-256 ==="
+          Get-ChildItem $bundle -Recurse -Include *.exe,*.msi -ErrorAction SilentlyContinue |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.Name }
+
+      - name: رفع المثبّت
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabarak-gym-windows-installer
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
