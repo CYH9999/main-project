@@ -56,6 +56,9 @@
     "windows": {
       "webviewInstallMode": { "type": "offlineInstaller" },
       "allowDowngrades": false,
+      "wix": {
+        "language": ["ar-SA"]
+      },
       "nsis": {
         "installMode": "perMachine",
         "languages": ["Arabic", "English"],

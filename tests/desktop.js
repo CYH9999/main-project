@@ -176,6 +176,12 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     ok('هدف البناء مثبّت ويندوز', c.bundle.targets.includes('nsis'), c.bundle.targets.join('،'));
     ok('واجهة المثبّت تشمل العربية', bw.nsis.languages.includes('Arabic'), bw.nsis.languages.join('،'));
     ok('وضع WebView2 معروف ومكتوب', !!bw.webviewInstallMode.type, bw.webviewInstallMode.type);
+    /* حزمة MSI: صفحة الترميز لا تُترك على en-US.
+       en-US ترميزه 1252 ولا يمثّل حرفاً عربياً واحداً، فيسقط رابط WiX
+       (light.exe) على اسم منتج عربيّ. ar-SA ترميزه 1256 ويمثّله. */
+    ok('ترميز حزمة MSI عربيّ لا لاتينيّ',
+       !!bw.wix && (bw.wix.language || []).includes('ar-SA'),
+       JSON.stringify(bw.wix || null));
     ok('المثبّت يعمل بلا إنترنت (نسخة WebView2 مضمّنة)',
        bw.webviewInstallMode.type === 'offlineInstaller', bw.webviewInstallMode.type);
     ok('لا مفاتيح توقيع في المستودع',
