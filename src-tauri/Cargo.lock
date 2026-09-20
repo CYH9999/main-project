@@ -2990,10 +2990,14 @@ dependencies = [
 
 [[package]]
 name = "tabarak-gym-desktop"
-version = "7.5.0"
+version = "7.6.0"
 dependencies = [
+ "base64 0.22.1",
+ "serde",
  "tauri",
  "tauri-build",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

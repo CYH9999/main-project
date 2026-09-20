@@ -42,6 +42,9 @@ jobs:
       - name: تشغيل المجموعة كاملة
         run: npm test
 
+      - name: اختبارات طرف الصدأ (المسارات والتعقيم والتقليم)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --bins
+
   # ------------------------------------------------------------------ المثبِّت
   installer:
     name: مثبّت ويندوز (x64)
@@ -72,6 +75,9 @@ jobs:
 
       - name: تهيئة الواجهة (المصدر الواحد ⇐ مجلّد البناء)
         run: npm run prepare:frontend
+
+      - name: اختبارات طرف الصدأ على ويندوز
+        run: cargo test --manifest-path src-tauri/Cargo.toml --bins
 
       - name: بناء مثبّت NSIS
         run: npx tauri build --bundles nsis

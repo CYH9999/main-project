@@ -158,8 +158,26 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
        !/localhost|127\.0\.0\.1/.test(JSON.stringify(c.bundle)));
     const mainRs = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
     ok('نافذة الطرفية مخفيّة في بناء الإصدار', /windows_subsystem = "windows"/.test(mainRs));
-    ok('غلاف الصدأ لا يحمل منطق عمل',
-       mainRs.split('\n').filter(l => l.trim() && !l.trim().startsWith('//')).length <= 12);
+    /* «الغلاف لا يحمل منطق عمل» كان يُقاس بعدد الأسطر. وبعد أن صار فيه
+       جسر ملفات وطباعة لم يعد العدد يقول شيئاً — فيُقاس المعنى نفسه:
+       لا مفردة عمل واحدة في الصدأ، ولا مسار يأتي من الواجهة، ولا صدفة
+       ولا شبكة، وقائمة الأوامر مغلقة معروفة. */
+    const rustSrc = fs.readdirSync(path.join(ROOT, 'src-tauri', 'src'))
+      .map(f => fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', f), 'utf8')).join('\n');
+    const business = ['member', 'subscription', 'payment', 'revenue', 'expense', 'receipt',
+                      'invoice', 'inventory', 'supplier', 'salary', 'attendance'];
+    const leaked = business.filter(w => new RegExp(`\\b${w}`, 'i').test(rustSrc));
+    ok('لا مفردة من مفردات العمل في طرف الصدأ', leaked.length === 0, leaked.join('، '));
+    ok('لا تنفيذ أوامر نظام', !/std::process|Command::new/.test(rustSrc));
+    ok('لا شبكة', !/reqwest|TcpStream|hyper::|ureq/.test(rustSrc));
+    const cmds = (rustSrc.match(/#\[tauri::command\]\s*(?:pub\s+)?fn\s+(\w+)/g) || [])
+      .map(m => m.split(/\s+/).pop());
+    const allowed = ['tg_env', 'tg_save', 'tg_list_backups', 'tg_read_backup', 'tg_prune_backups', 'tg_print'];
+    ok('الأوامر المكشوفة هي المعروفة وحدها',
+       cmds.length === allowed.length && cmds.every(c => allowed.includes(c)), cmds.join('، '));
+    /* أهمّ قيد: لا أمر يقبل مساراً. الفئة تقرّر المجلّد في الصدأ. */
+    const takesPath = /fn tg_\w+\([^)]*\b(path|dir|folder|full_path)\s*:\s*(String|PathBuf|&str)/.test(rustSrc);
+    ok('ولا أمر يقبل مساراً من الواجهة', !takesPath);
 
     /* ----- CSP ----- */
     const csp = c.app.security.csp || '';
@@ -726,7 +744,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
       let downloaded = null;
       const realDl = UI.download;
       UI.download = (blob, name) => { downloaded = { size:blob.size, name }; };
-      try { window.TG.Exporter.csv('المشتركات.csv', [{ k:'name', t:'الاسم' }], [{ name:'مشتركة' }]); }
+      try { window.TG.Exporter.csv('المشتركات.csv', [{ h:'الاسم', key:'name' }], [{ name:'مشتركة' }]); }
       finally { UI.download = realDl; }
       ok('التصدير يُنتج ملفاً باسم عربيّ', !!downloaded && /^المشتركات/.test(downloaded.name),
          downloaded && downloaded.name);
@@ -763,8 +781,8 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
       const real = UI.download;
       UI.download = (blob, name) => grabbed.push({ name, size:blob.size, type:blob.type });
       try {
-        Exporter.csv(`المشتركات-${D.today()}.csv`, [{ k:'name', t:'الاسم' }], Repos.members.list());
-        Exporter.xlsx(`تقرير-${D.today()}.xlsx`, [{ name:'المشتركات', cols:[{ k:'name', t:'الاسم' }], rows:Repos.members.list() }]);
+        Exporter.csv(`المشتركات-${D.today()}.csv`, [{ h:'الاسم', key:'name' }], Repos.members.list());
+        Exporter.xlsx(`تقرير-${D.today()}.xlsx`, [{ name:'المشتركات', cols:[{ h:'الاسم', key:'name' }], rows:Repos.members.list() }]);
         Actions.exportBackup && await Actions.exportBackup(false);
       } finally { UI.download = real; }
       ok('كل التصديرات مرّت من نقطة تنزيل واحدة', grabbed.length >= 2, grabbed.length);

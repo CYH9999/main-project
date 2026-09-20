@@ -686,7 +686,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.5.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.6.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -728,6 +728,10 @@ const D = (() => {
   }
   const fromDate = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
   const today = () => fromDate(new Date());
+  /* ختم زمنيّ لأسماء الملفات: يوم وساعة ودقيقة. نسختان في اليوم الواحد
+     لا تتزاحمان على اسم واحد، والترتيب الأبجدي للمجلّد هو الترتيب الزمنيّ. */
+  const stamp = (dt) => { const d = dt || new Date();
+    return `${fromDate(d)}-${pad(d.getHours())}${pad(d.getMinutes())}`; };
   const daysInMonth = (y,m) => new Date(y, m, 0).getDate();          // m = 1..12
   function addDays(iso, n){ const d = toDate(iso); d.setDate(d.getDate()+Number(n||0)); return fromDate(d); }
   /* إضافة أشهر مع تثبيت آخر يوم في الشهر: 31/01 + شهر = 28/02 (أو 29 في الكبيسة) */
@@ -754,7 +758,7 @@ const D = (() => {
   function relative(iso){ const n = diffDays(today(), iso);
     if (n===0) return 'اليوم'; if (n===1) return 'غداً'; if (n===-1) return 'أمس';
     return n>0 ? `بعد ${n} يوم` : `قبل ${Math.abs(n)} يوم`; }
-  return { isISO, toDate, fromDate, today, addDays, addMonths, diffDays, cmp, monthKey, startOfMonth,
+  return { isISO, toDate, fromDate, today, stamp, addDays, addMonths, diffDays, cmp, monthKey, startOfMonth,
            endOfMonth, monthName, monthShort, dayName, fmt, monthsBack, relative, daysInMonth, AR_M, AR_D };
 })();
 
@@ -5986,7 +5990,61 @@ const Backup = {
     /* counts تبقى ما استُعيد فعلاً لا ما كان في الملف */
     return Object.assign({}, restored, { _skipped:skipped, _skippedTotal:skippedTotal });
   },
-  async markExported(){ await Settings.set({ lastBackupAt:new Date().toISOString() }); }
+  async markExported(){ await Settings.set({ lastBackupAt:new Date().toISOString() }); },
+
+  /* ========================= النسخ التلقائي =========================
+     نسخة واحدة في اليوم التقويمي، تُكتب بعد أن يستقرّ الإقلاع لا أثناءه،
+     وتُقلَّم إلى أربع عشرة نسخة. وثلاث قواعد تحكمها:
+
+       · لا تُعطّل الإقلاع. تفشل فتُسجَّل ويمضي النظام؛ فالنسخة حماية
+         للبيانات لا شرطٌ لفتحها.
+       · لا تدّعي نجاحاً. الفشل يُقال في السجل ولا يُحدَّث ختم اليوم،
+         فتُعاد المحاولة في التشغيل التالي بدل أن يُظنّ أن اليوم نُسخ.
+       · لا تحذف الأحدث ولا تمسّ اليدوية. التقليم في طرف الصدأ يحذف من
+         مجلّد «automatic» وحده، وبعد أن يوجد ما هو أحدث منه.
+
+     ومجلّد «manual» لا يُقلَّم أبداً: فيه ما تطلبه المستخدمة بيدها، وفيه
+     نسخة الأمان التي تُؤخذ قبل كل استعادة — وهي أثمن نسخة في النظام لأنها
+     نقطة الرجوع الوحيدة من فعل لا يُتراجع عنه. */
+  AUTO_KEEP: 14,
+  _busy: false,
+  autoState(){ return Settings.get('autoBackup') || {}; },
+  /* مستحقّة إن لم تُؤخذ نسخة تلقائية اليوم، وفي سطح المكتب وحده */
+  autoDue(){ return Desktop.on() && !this._busy && this.autoState().lastDay !== D.today(); },
+  async runAuto(){
+    if (!Desktop.on() || this._busy) return null;
+    this._busy = true;
+    try {
+      const obj = this.build(true);                     /* بالوسائط: نقطة رجوع لا فهرس */
+      const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
+      const r = await DesktopFiles.save(blob, `نسخة-تلقائية-${D.stamp()}.json`, 'backup-auto');
+      await Settings.set({ autoBackup:{ lastDay:D.today(), lastAt:new Date().toISOString(), lastName:r.name } });
+      let pruned = [];
+      try { pruned = await Desktop.call('tg_prune_backups', { keep:this.AUTO_KEEP }) || []; }
+      catch(e){ Log.warn('تعذّر تقليم النسخ التلقائية', e); }
+      await Audit.log('system','backup',
+        `نسخة تلقائية: ${r.name}` + (pruned.length ? ` — أُزيلت ${pruned.length} نسخة قديمة` : ''));
+      return r;
+    } catch(e){
+      Log.error('تعذّرت النسخة التلقائية', e);          /* ختم اليوم لا يُحدَّث */
+      return null;
+    } finally { this._busy = false; }
+  },
+  /* نسخة الأمان قبل الاستعادة — تُحفظ حيث لا يصلها التقليم */
+  async safetyBackup(){
+    if (!Desktop.on()) return null;
+    try {
+      const obj = this.build(true);
+      const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
+      return await DesktopFiles.save(blob, `قبل-الاستعادة-${D.stamp()}.json`, 'backup');
+    } catch(e){ Log.error('تعذّرت نسخة الأمان قبل الاستعادة', e); return null; }
+  },
+  /* بعد استعادة: اليوم يُعلَّم منسوخاً. النسخة التي استُعيدت ما زالت على
+     القرص، فنسخة تلقائية فورية تكرار لا حماية. */
+  async markRestored(){
+    try { await Settings.set({ autoBackup:Object.assign({}, this.autoState(), { lastDay:D.today() }) }); }
+    catch(e){ Log.warn('تعذّر تعليم يوم الاستعادة', e); }
+  }
 };
 
 
@@ -7077,6 +7135,97 @@ const ICON = {
 const svg = (p, sz=18, sw=1.8) =>
   `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
+/* ===== src/app/platform/00-desktop.js ============================================== */
+/* ============================== وقت التشغيل ==============================
+   نقطة واحدة تُسأل: هل نحن داخل تطبيق سطح المكتب أم في متصفّح؟
+
+   ولماذا نقطة واحدة؟ لأن البديل أن يتناثر `if (tauri)` في عشرات الشاشات،
+   فيختلف سلوك زرّ عن زرّ ويصير كل إصلاح لاحق بحثاً في الملف كلّه. هنا
+   تُسأل `Desktop.on()` وحدها، ومن ورائها يتغيّر مسار الحفظ والطباعة فقط —
+   لا منطق عمل ولا شاشة.
+
+   الجسر الأصليّ ستّة أوامر لا أكثر، وكلّها في `src-tauri/src/main.rs`.
+   ولا يُمرَّر إليها مسار قطّ: تُرسل فئة من قائمة مغلقة واسم ملف، وطرف
+   الصدأ يبني المسار ويعقّم الاسم. فما لا يُمرَّر لا يُساء استعماله. */
+const Desktop = {
+  /* `__TAURI_INTERNALS__` يُحقن في كل نافذة Tauri قبل أي سطر من سطور الصفحة،
+     ولا يتعلّق بـ`withGlobalTauri` — وهي مطفأة عندنا عمداً فلا تُكشف واجهة
+     Tauri كاملةً للصفحة. */
+  on(){
+    try { return !!(window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function'); }
+    catch(e){ return false; }
+  },
+  async call(cmd, args){
+    if (!this.on()) throw new AppError('هذه الوظيفة متاحة في تطبيق سطح المكتب','NO_DESKTOP');
+    try { return await window.__TAURI_INTERNALS__.invoke(cmd, args || {}); }
+    catch(e){
+      const msg = (e && e.message) || String(e || 'تعذّرت العملية');
+      throw new AppError(msg, 'DESKTOP_CALL', e);
+    }
+  },
+  _env: null,
+  async env(){
+    if (!this._env) this._env = await this.call('tg_env');
+    return this._env;
+  },
+  /* المجلّد كما يُقرأ لا كما يُكتب في المسارات: «المستندات ‹ تبارك جيم ‹ …» */
+  pretty(path){
+    const p = String(path || '');
+    const i = p.replace(/\\/g, '/').lastIndexOf('/' + FOLDERS.root + '/');
+    if (i < 0) return p;
+    return (FOLDERS.root + p.slice(i + FOLDERS.root.length + 1)).replace(/[\\/]/g, ' ‹ ');
+  },
+};
+
+/* أسماء المجلّدات كما يبنيها طرف الصدأ — للعرض وحده، لا لبناء مسار. */
+const FOLDERS = { root:'تبارك جيم', exports:'Exports', backups:'Backups' };
+
+/* ============================== حفظ الملفات ==============================
+   مخرج واحد لكل ما ينتج عن النظام من ملفات. في المتصفح يبقى التنزيل كما
+   كان؛ وفي سطح المكتب يُكتب الملف في مجلّده تحت «المستندات» بلا حوار حفظ
+   ولا مرور بمجلّد التنزيلات.
+
+   والمولّدات لم تُمسّ: CSV وExcel وWord والنسخة الاحتياطية تُبنى كما كانت
+   بالبايت نفسه. ما تغيّر آخرُ خطوة وحدها — أين يُكتب الناتج. */
+const DesktopFiles = {
+  /* الفئة تقرّر المجلّد، واللاحقة تخمّنها حين لا تُذكر — فلا يضيع ملف
+     لأن نقطة نداء نسيت أن تقول من أي نوع هي. */
+  categoryOf(filename, explicit){
+    if (explicit) return explicit;
+    const ext = String(filename || '').split('.').pop().toLowerCase();
+    if (ext === 'csv') return 'csv';
+    if (ext === 'xlsx' || ext === 'xls') return 'excel';
+    if (ext === 'docx' || ext === 'doc') return 'word';
+    if (ext === 'json') return 'backup';
+    return 'csv';
+  },
+  async blobToBase64(blob){
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000)
+      bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  },
+  /* يقرأ النصّ **بلا أن يبتلع علامة الترتيب**.
+     `Blob.text()` تفكّ الترميز بقواعد «UTF-8 decode» وهي تحذف الـBOM في
+     المقدّمة. وملفات CSV عندنا تبدأ به عمداً: بغيره يفتح إكسل على ويندوز
+     الأسماء العربية حروفاً مشوّشة. فهذه الخطوة وحدها كانت ستُفسد كل تصدير
+     عربيّ في النسخة المكتبية بلا أن يُرمى خطأ واحد. */
+  async textOf(blob){
+    const buf = await blob.arrayBuffer();
+    return new TextDecoder('utf-8', { ignoreBOM:true }).decode(buf);
+  },
+  /* يحفظ ويُعيد وصف ما حُفظ، أو يرمي بسبب مفهوم. لا يدّعي نجاحاً لم يقع. */
+  async save(blob, filename, category){
+    const cat = this.categoryOf(filename, category);
+    const text = /^(text\/|application\/json)/.test(blob.type || '');
+    const payload = { category:cat, filename:String(filename || 'ملف') };
+    if (text) payload.text = await this.textOf(blob);
+    else payload.b64 = await this.blobToBase64(blob);
+    return Desktop.call('tg_save', payload);
+  },
+};
+
 const UI = {
   /* ------------------------------- Toast ------------------------------- */
   toast(msg, kind='ok', ms=3400){
@@ -7282,11 +7431,121 @@ const UI = {
   },
   PALETTE:['#C43E6B','#432C4C','#157F63','#B98A2E','#3A63A8','#DB5C86','#7A6E82','#B4353F','#2E8B8B','#8E5FA8'],
   /* ------------------------------ Export ------------------------------- */
-  download(blob, filename){
+  /* مخرج الملفات الوحيد في النظام. في المتصفح تنزيل كما كان، وفي سطح
+     المكتب كتابةٌ في مجلّد «تبارك جيم» تحت المستندات. والنداء واحد في
+     الحالين فلا تعرف شاشةٌ أين تُكتب ملفاتها. */
+  download(blob, filename, category){
+    if (Desktop.on()) return UI.saveNative(blob, filename, category);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+    return Promise.resolve(null);
+  },
+  async saveNative(blob, filename, category){
+    try {
+      const r = await DesktopFiles.save(blob, filename, category);
+      const kind = { csv:'CSV', excel:'Excel', word:'Word' }[DesktopFiles.categoryOf(filename, category)];
+      UI.toast(`${kind ? 'تم حفظ ملف ' + kind : 'تم حفظ الملف'} — ${U.esc(Desktop.pretty(r.folder))}`, 'ok', 7000);
+      return r;
+    } catch(e){
+      Log.error('تعذّر حفظ الملف', e);
+      /* لا يُقال «حُفظ» لملف لم يُكتب، والسبب يُقال كما جاء من النظام */
+      UI.toast('تعذّر حفظ الملف: ' + ((e && e.message) || 'سبب غير معروف'), 'err', 9000);
+      /* ولا يُعاد رميه: نقاط النداء (Exporter.csv وأخواتها) لا تنتظر هذا
+         الوعد، فرميُه يصير رفضاً غير ملتقَط — يلتقطه الحارس العام فيُظهر
+         **رسالة خطأ ثانية** فوق هذه ويملأ السجلّ بضجيج. الفشل قيل مرة
+         واحدة كاملة؛ ومن يحتاج أن يعرف (النسخة الاحتياطية) ينادي
+         `DesktopFiles.save` مباشرةً ويتولّى أمره. */
+      return null;
+    }
+  },
+  /* ---------------------------- الطباعة الأصلية ----------------------------
+     في المتصفح يفتح النظام نافذة أو إطاراً ويطبعه. وهذا لا يعمل في تطبيق
+     سطح المكتب: `window.print()` داخل WebView2 **لا تفتح حواراً** — لا حوار
+     متصفّح ولا حوار نظام — فتمضي الضغطة بلا أثر. هذا ما رأته المستخدمة.
+
+     الطريق الرسميّ على ويندوز هو `ICoreWebView2_16::ShowPrintUI`، وهي تطبع
+     **ما في العرض كلّه** لا جزءاً منه. فالمستند يُوضع محتوىً علويّاً في
+     الصفحة نفسها، وقاعدةُ طباعة تُخفي كل ما عداه، ثم يُنادى الأمر الأصليّ،
+     ثم تعود الشاشة كما كانت.
+
+     والمستند واحد: نفس البيانات ونفس HTML ونفس أنماط الطباعة التي يبنيها
+     المتصفح. لم يُصنع قالب ويندوز ثانٍ، فلا يتفرّق الوصل بتفرّق الجهاز.
+
+     وقواعد الهوية على حالها: المطبوع يأخذ الإطار الثابت دائماً، لأن الذي
+     يبني الترويسة هو `Brand.printHeader` نفسه لا مسار جديد. */
+  _printing: false,
+  _printUndo: null,
+  printCss(o){
+    const page = o.slip ? '@page{size:80mm auto;margin:4mm}'
+                        : `@page{size:${o.landscape ? 'A4 landscape' : 'A4'};margin:14mm 12mm}`;
+    return `#tgPrintRoot{display:none}
+@media print{
+  ${page}
+  html,body{height:auto!important;min-height:0!important;overflow:visible!important;background:#fff!important}
+  body>*:not(#tgPrintRoot){display:none!important}
+  #tgPrintRoot{display:block!important;background:#fff;color:#000;margin:0;padding:0}
+  #tgPrintRoot .doc,#tgPrintRoot .print-wrap{padding:0}
+  #tgPrintRoot .print-banner{display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:2px solid var(--plum-900);padding-bottom:8px;margin-bottom:14px;font-size:15px}
+  #tgPrintRoot table{page-break-inside:auto}
+  #tgPrintRoot thead{display:table-header-group}
+  #tgPrintRoot tfoot{display:table-footer-group}
+  #tgPrintRoot tr{page-break-inside:avoid;break-inside:avoid}
+  #tgPrintRoot .rep-sec{page-break-inside:auto}
+  #tgPrintRoot .rep-h,#tgPrintRoot h3,#tgPrintRoot h4{page-break-after:avoid}
+  #tgPrintRoot .page-break{page-break-after:always}
+  #tgPrintRoot .card{box-shadow:none}
+}`;
+  },
+  /* يُعيد true إن فُتحت واجهة الطباعة، وnull إن لم تُفتح — والرسالة تُقال
+     بلغة المستخدمة لا بلغة المتصفّح. */
+  async printNative(bodyHtml, opts){
+    const o = opts || {};
+    if (UI._printing) return null;               /* ضغطتان متتاليتان: واحدة تكفي */
+    UI._printing = true;
+    if (UI._printUndo) UI._printUndo();          /* بقايا طباعة سابقة لا تُطبع مرتين */
+
+    const style = document.createElement('style');
+    style.id = 'tgPrintStyle';
+    style.textContent = UI.printCss(o);
+    const root = document.createElement('div');
+    root.id = 'tgPrintRoot';
+    root.setAttribute('dir', 'rtl');
+    root.innerHTML = bodyHtml;
+    document.body.appendChild(style);
+    document.body.appendChild(root);
+
+    let closed = false;
+    const undo = () => {
+      if (closed) return; closed = true;
+      try { style.remove(); root.remove(); } catch(e){}
+      window.removeEventListener('afterprint', onAfter);
+      if (UI._printUndo === undo) UI._printUndo = null;
+      UI._printing = false;                      /* انتهت هذه الطباعة: الطريق مفتوح */
+    };
+    const onAfter = () => setTimeout(undo, 400);
+    UI._printUndo = undo;
+    window.addEventListener('afterprint', onAfter);
+    /* `ShowPrintUI` لا تقول متى أُغلق الحوار. فـ`afterprint` إن جاء، وإلا
+       حارسٌ بعيد يُنظّف. والمستند مخفيّ على الشاشة فبقاؤه لا يُرى. */
+    const guard = setTimeout(undo, 180000);
+
+    try {
+      await Desktop.call('tg_print');
+      return true;
+    } catch(e){
+      clearTimeout(guard); undo();
+      Log.error('تعذّرت الطباعة الأصلية', e);
+      UI.toast('تعذرت الطباعة — تأكدي من وجود طابعة أو من إعدادات الطباعة.', 'err', 9000);
+      return null;
+    } finally {
+      /* القفل يُفتح حين تنتهي الطباعة (`undo`). وهذا حارسٌ لو لم يصل
+         `afterprint` أصلاً: يمنع الضغطة المزدوجة ولا يحبس من تريد طباعة
+         مستند ثانٍ بعد الأول. */
+      setTimeout(() => { UI._printing = false; }, 2500);
+    }
   },
   /* ------------------------------ وعاء الطباعة ------------------------------
      الطباعة كانت معلّقة على `window.open`. وهذا يكفي في المتصفح، ولا يكفي في
@@ -7328,13 +7587,16 @@ const UI = {
   },
   /* نافذة طباعة مستقلة: A4، ترويسة متكررة للجداول، وصفوف لا تنقطع في منتصفها */
   printSection(title, html, opts={}){
+    const head = opts.plain ? '' : `<div class="print-banner">
+        <strong>${U.esc(Settings.get('gymName'))} — ${U.esc(title)}</strong>
+        <span>${U.esc(D.fmt(D.today()))}</span></div>`;
+    /* سطح المكتب: المستند نفسه، وواجهة طباعة ويندوز الحقيقية */
+    if (Desktop.on())
+      return UI.printNative(`<div class="print-wrap">${head}${html}</div>`, opts);
     const t = UI.printTarget();
     if (!t) return null;
     const w = t.win, doc = t.doc;
     const css = document.querySelector('style').textContent;
-    const head = opts.plain ? '' : `<div class="print-banner">
-        <strong>${U.esc(Settings.get('gymName'))} — ${U.esc(title)}</strong>
-        <span>${U.esc(D.fmt(D.today()))}</span></div>`;
     doc.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${U.esc(title)}</title>
       <style>${css}
         @page { size:${opts.landscape ? 'A4 landscape' : 'A4'}; margin:14mm 12mm; }
@@ -7682,7 +7944,7 @@ ${sh.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformat
     ];
     sh.forEach((s, i) => files.push({ name:`xl/worksheets/sheet${i+1}.xml`, text:sheetXml(s.cols, s.rows, s.name) }));
     const blob = new Blob([zip(files)], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    UI.download(blob, filename);
+    UI.download(blob, filename, 'excel');
     return blob;
   }
 
@@ -7739,7 +8001,7 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
 <w:bidi/></w:sectPr></w:body></w:document>` }
     ];
     const blob = new Blob([zip(files)], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    UI.download(blob, filename);
+    UI.download(blob, filename, 'word');
     return blob;
   }
 
@@ -7755,7 +8017,7 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
       const v = r[c.key];
       return c.type === 'number' ? num(v) : q(v);
     })))].join('\r\n');
-    UI.download(new Blob(['\uFEFF' + body], { type:'text/csv;charset=utf-8' }), filename);
+    UI.download(new Blob(['\uFEFF' + body], { type:'text/csv;charset=utf-8' }), filename, 'csv');
     return body;
   }
 
@@ -12195,6 +12457,43 @@ Views.settings = {
       box.querySelector('#bkExportLite').onclick = () => Actions.exportBackup(false);
       box.querySelector('#bkImport').onclick = () => box.querySelector('#bkFile').click();
       box.querySelector('#bkFile').onchange = e => { const f = e.target.files[0]; if (f) Actions.importBackup(f); e.target.value = ''; };
+
+      /* على سطح المكتب: النسخ موجودة في مجلّد معروف، فتُعرض ليُستعاد منها
+         مباشرةً بدل البحث عنها في مدير الملفات. */
+      if (!Desktop.on()) return;
+      const disk = document.createElement('div');
+      disk.className = 'card';
+      disk.style.marginTop = '14px';
+      disk.innerHTML = `<div class="card-head"><h3>النسخ المحفوظة على الجهاز</h3></div>
+        <div class="card-body"><div id="bkList" class="t-sub">جارٍ القراءة…</div></div>`;
+      box.appendChild(disk);
+      (async () => {
+        let env = null, list = [];
+        try { env = await Desktop.env(); } catch(e){ Log.warn('تعذّر قراءة مواضع الحفظ', e); }
+        try { list = await Desktop.call('tg_list_backups') || []; }
+        catch(e){ Log.error('تعذّرت قراءة مجلّد النسخ', e); }
+        const out = disk.querySelector('#bkList');
+        if (!out) return;
+        const where = env
+          ? `<p class="t-sub" style="margin:0 0 10px">المكان: <strong>${U.esc(Desktop.pretty(env.backups))}</strong>
+               — والتصديرات في <strong>${U.esc(Desktop.pretty(env.exports))}</strong>.
+               تبقى هذه الملفات بعد إغلاق التطبيق وبعد إلغاء تثبيته.</p>` : '';
+        if (!list.length){ out.innerHTML = where + '<p style="margin:0">لا نسخ محفوظة بعد.</p>'; return; }
+        const rows = list.slice(0, 40).map(b => `<tr>
+            <td>${U.esc(b.name)}</td>
+            <td>${b.kind === 'automatic' ? 'تلقائية' : 'يدوية'}</td>
+            <td class="num">${(b.bytes / 1048576).toFixed(1)} م.ب</td>
+            <td class="num">${U.esc(D.fmt(D.fromDate(new Date(b.modified))))}</td>
+            <td><button class="btn btn-sm" data-perm="settings.danger"
+                  data-restore="${U.esc(b.name)}" data-kind="${U.esc(b.kind)}">استعادة</button></td>
+          </tr>`).join('');
+        out.innerHTML = where + `<table class="tbl"><thead><tr><th>الملف</th><th>النوع</th>
+            <th>الحجم</th><th>التاريخ</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+        out.querySelectorAll('[data-restore]').forEach(b => {
+          b.onclick = () => Actions.restoreFromDisk(b.dataset.kind, b.dataset.restore);
+        });
+        applyPerms(out);
+      })();
     };
 
     /* ------------------------- البيانات وسلامتها ------------------------- */
@@ -15073,12 +15372,22 @@ Object.assign(Actions, {
     try{
       const obj = Backup.build(includeMedia);
       const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
-      UI.download(blob, `نسخة-تبارك-جيم-${D.today()}${includeMedia?'':'-بدون-وسائط'}.json`);
-      await Backup.markExported();
-      await Audit.log('system','backup',`تصدير نسخة احتياطية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل)`);
-      UI.toast('تم تصدير النسخة الاحتياطية');
+      const name = `نسخة-تبارك-جيم-${D.stamp()}${includeMedia?'':'-بدون-وسائط'}.json`;
+      /* في سطح المكتب تُكتب النسخة في مجلّدها وتُعلن مكانها؛ وفي المتصفح
+         تنزيل كما كان. الرسالة تُقال مرة واحدة لا مرتين. */
+      if (Desktop.on()){
+        const r = await DesktopFiles.save(blob, name, 'backup');
+        await Backup.markExported();
+        await Audit.log('system','backup',`نسخة احتياطية يدوية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل) — ${r.name}`);
+        UI.toast(`تم حفظ النسخة الاحتياطية — ${U.esc(Desktop.pretty(r.folder))}`, 'ok', 8000);
+      } else {
+        UI.download(blob, name);
+        await Backup.markExported();
+        await Audit.log('system','backup',`تصدير نسخة احتياطية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل)`);
+        UI.toast('تم تصدير النسخة الاحتياطية');
+      }
       if (State.route === 'settings') renderRoute();
-    }catch(e){ Log.error('فشل التصدير', e); UI.toast('تعذّر تصدير النسخة: ' + e.message,'err'); }
+    }catch(e){ Log.error('فشل التصدير', e); UI.toast('تعذّر حفظ النسخة: ' + e.message,'err', 9000); }
   },
   async importBackup(file){
     let obj;
@@ -15100,16 +15409,48 @@ Object.assign(Actions, {
         ${mediaWarn}
         <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''}</p>` });
     if (!ok) return;
+
+    /* نقطة رجوع قبل فعل لا يُتراجع عنه: البيانات الحالية تُحفظ أولاً.
+       وإن تعذّر ذلك لا نمضي بصمت — تُسأل المستخدمة صراحةً. */
+    if (Desktop.on()){
+      Backup._busy = true;                      /* لا نسخة تلقائية في أثناء ذلك */
+      let safe = null;
+      try { safe = await Backup.safetyBackup(); } finally { Backup._busy = false; }
+      if (safe) UI.toast(`حُفظت نسخة أمان من بياناتك الحالية — ${U.esc(safe.name)}`, 'ok', 7000);
+      else {
+        const go = await UI.confirm({ title:'تعذّرت نسخة الأمان', danger:true,
+          confirmText:'استعادة بلا نقطة رجوع',
+          message:'لم نتمكّن من حفظ نسخة من بياناتك <strong>الحالية</strong> قبل استبدالها. '
+                + 'المتابعة الآن تعني أن ما لديك اليوم سيُستبدل بلا ما يُرجعه.' });
+        if (!go) return;
+      }
+    }
+
     try {
+      Backup._busy = true;
       const counts = await Backup.restore(obj);
       const skipped = counts._skippedTotal || 0;
       const total = STORE_NAMES.reduce((a, s) => a + (Number(counts[s]) || 0), 0);
       /* الرقم المعروض هو ما دخل فعلاً. وإن سقط شيء يُقال بصوت مسموع لا في سجل لا يُقرأ. */
       if (skipped) UI.toast(`تمت الاستعادة — ${total} سجل، واستُبعد ${skipped} سجلاً تالفاً بلا معرّف`, 'warn', 9000);
       else UI.toast(`تمت الاستعادة — ${total} سجل`);
+      await Backup.markRestored();
       $('brandName').textContent = Settings.get('gymName');
       renderRoute();
     } catch(e){ Log.error('فشل الاستعادة', e); UI.toast('فشلت الاستعادة: ' + e.message,'err'); }
+    finally { Backup._busy = false; }
+  },
+
+  /* استعادة من نسخة على القرص — مسار سطح المكتب: لا بحث في مجلّد التنزيلات */
+  async restoreFromDisk(kind, name){
+    try {
+      const text = await Desktop.call('tg_read_backup', { kind, name });
+      const file = new File([text], name, { type:'application/json' });
+      return Actions.importBackup(file);
+    } catch(e){
+      Log.error('تعذّرت قراءة النسخة', e);
+      UI.toast('تعذّرت قراءة النسخة: ' + ((e && e.message) || ''), 'err', 8000);
+    }
   },
   async loadDemo(){
     if (Settings.get('demoLoaded')){
@@ -15261,6 +15602,8 @@ const Print = {
   /* نافذة طباعة مستقلة تحمل أنماط النظام + قالب الصفحة */
   open(title, html, opts){
     const o = opts || {};
+    /* سطح المكتب: المستند نفسه يُطبع بواجهة ويندوز — انظري UI.printNative */
+    if (Desktop.on()) return UI.printNative(html, o);
     const t = UI.printTarget();                 /* نافذة أو إطار — انظري UI.printTarget */
     if (!t) return null;
     const w = t.win, doc = t.doc;
@@ -16449,6 +16792,13 @@ async function boot(){
   const alerts = Svc.notify.build().filter(n => n.level === 'red');
   if (alerts.length) setTimeout(() => UI.toast(alerts[0].title, 'warn', 6000), 900);
   Log.info('النظام جاهز', { adapter:adapter.kind, records:STORE_NAMES.reduce((a,s)=>a+DB.count(s),0) });
+
+  /* النسخة التلقائية آخر ما يحدث، ومؤجَّلة بعد أول رسم: الإقلاع لا ينتظرها،
+     والترقية والاستعادة قد انتهتا قبلها. وفشلها لا يُرى في الشاشة ولا
+     يوقف شيئاً — يُسجَّل وتُعاد المحاولة غداً. */
+  if (Backup.autoDue())
+    setTimeout(() => { Backup.runAuto().catch(e => Log.warn('النسخة التلقائية', e)); }, 4000);
+
   return { adapter:adapter.kind, migration:mig };
 }
 
@@ -16473,6 +16823,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
+              Desktop, DesktopFiles, FOLDERS,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, renderRoute, go, State, buildNav, currentRoute, navBadges,
               ready:AppReady };

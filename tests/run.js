@@ -2684,6 +2684,7 @@ group('أثر الصلاحيات على الأداء', async (browser, url) => {
    تُسجَّل هنا لأنها تحتاج خادمها الخاص: مجلّد البناء + ترويسة CSP المشحونة.
    انظري tests/desktop.js — فيها شرح ما الذي يختلف فعلاً عن المتصفح. */
 require('./desktop.js')({ group, record, chromium, CHROME, TESTS_JS });
+require('./desktop-io.js')({ group, record, TESTS_JS });
 
 
 /* -------------------------------- التشغيل -------------------------------- */
