@@ -80,6 +80,15 @@ jobs:
       - name: اختبارات طرف الصدأ على ويندوز
         run: cargo test --manifest-path src-tauri/Cargo.toml --bins
 
+      # الذاكرة المؤقّتة تُعيد `src-tauri/target` كما كان، وفيه مثبّتات
+      # الإصدارات السابقة. فتُرفع مع الجديد ويُنزّل أحدُها بالخطأ. تُمسح
+      # مخرجات التغليف قبل البناء حتى لا تحوي الحزمة إلا بناء اليوم.
+      - name: مسح مخرجات تغليف سابقة
+        shell: pwsh
+        run: |
+          $b = "src-tauri/target/release/bundle"
+          if (Test-Path $b) { Remove-Item -Recurse -Force $b }
+
       - name: بناء مثبّت NSIS
         run: npx tauri build --bundles nsis
 
