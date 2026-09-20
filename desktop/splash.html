@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تبارك جيم</title>
+<!-- ============================================================================
+     نافذة البدء.
+
+     هذه الصفحة **ليست تطبيقاً ثانياً**: لا قاعدة بيانات، ولا إعدادات، ولا
+     منطق عمل، ولا نداء واحد إلى الجسر الأصليّ. صورة ثابتة واسم ومؤشّر انتظار،
+     تُغلقها الواجهة الحقيقية حين تجهز (`tg_ready`) أو يُغلقها حارس زمنيّ في
+     `src-tauri/src/main.rs`. فما تراه المستخدمة أول ثانية هو هوية النظام لا
+     نافذة بيضاء تُرسم أمامها.
+
+     ولا سكربت فيها أصلاً — فلا شيء يمكن أن يعلق أو يفشل هنا.
+     ============================================================================ -->
+<style>
+  :root{ --plum-900:#31203A; --plum-700:#4A3357; --rose-100:#FDF4F7; --rose-300:#E7BACB; }
+  *{ box-sizing:border-box; margin:0; padding:0 }
+  html,body{ height:100%; overflow:hidden }
+  body{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+    background:linear-gradient(160deg,var(--plum-900) 0%,#1C1220 100%);
+    color:var(--rose-100); user-select:none; -webkit-user-select:none;
+    font-family:"Segoe UI",Tahoma,system-ui,sans-serif;
+  }
+  .mark{ width:104px; height:104px; display:block; animation:rise .5s ease-out both }
+  .name{ font-size:22px; font-weight:700; letter-spacing:.3px; animation:rise .5s ease-out .06s both }
+  .sub{ font-size:12.5px; color:var(--rose-300); animation:rise .5s ease-out .12s both }
+  /* شريط انتظار غير محدَّد: يقول «يجري التحميل» ولا يكذب بنسبة مئوية
+     لا أحد يقيسها. */
+  .bar{ width:168px; height:3px; border-radius:99px; background:rgba(253,244,247,.16); overflow:hidden; margin-top:6px }
+  .bar i{ display:block; width:40%; height:100%; border-radius:99px; background:var(--rose-300);
+          animation:slide 1.15s ease-in-out infinite }
+  @keyframes rise{ from{ opacity:0; transform:translateY(7px) } to{ opacity:1; transform:none } }
+  @keyframes slide{ 0%{ transform:translateX(160%) } 100%{ transform:translateX(-260%) } }
+
+  /* تقليل الحركة: شعار ثابت، بلا صعود ولا شريط متحرّك. الانتظار يُقال
+     بكلمة لا بحركة. */
+  @media (prefers-reduced-motion:reduce){
+    .mark,.name,.sub{ animation:none }
+    .bar{ background:none; height:auto; width:auto; margin-top:2px }
+    .bar i{ display:none }
+    .bar::after{ content:"جارٍ التحميل…"; font-size:12px; color:var(--rose-300) }
+  }
+</style>
+</head>
+<body>
+  <svg class="mark" viewBox="0 0 512 512" aria-hidden="true">
+    <defs>
+      <linearGradient id="disc" x1="0.15" y1="0" x2="0.85" y2="1">
+        <stop offset="0" stop-color="#DB5C86"/><stop offset="1" stop-color="#A8305A"/>
+      </linearGradient>
+    </defs>
+    <circle cx="256" cy="256" r="168" fill="url(#disc)"/>
+    <circle cx="256" cy="256" r="168" fill="none" stroke="#FDF4F7" stroke-opacity=".38" stroke-width="10"/>
+    <g fill="#FFFFFF">
+      <rect x="150" y="238" width="212" height="36" rx="18"/>
+      <rect x="122" y="202" width="46" height="108" rx="23"/>
+      <rect x="344" y="202" width="46" height="108" rx="23"/>
+    </g>
+    <g fill="#FDF4F7" fill-opacity=".92">
+      <rect x="96" y="222" width="30" height="68" rx="15"/>
+      <rect x="386" y="222" width="30" height="68" rx="15"/>
+    </g>
+  </svg>
+  <div class="name">تبارك جيم</div>
+  <div class="sub">نظام إدارة النادي</div>
+  <div class="bar" role="status" aria-label="جارٍ التحميل"><i></i></div>
+</body>
+</html>

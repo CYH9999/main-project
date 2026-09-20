@@ -1,10 +1,12 @@
-// نافذة واحدة تحمل واجهة تبارك جيم نفسها، وجسر أصليّ ضيّق لثلاثة أشياء لا
-// يستطيع محرّك العرض وحده أن يفعلها في تطبيق مكتبي:
+// نافذة واحدة تحمل واجهة تبارك جيم نفسها (ونافذة بدء لا تحمل شيئاً)، وجسر
+// أصليّ ضيّق لما لا يستطيع محرّك العرض وحده أن يفعله في تطبيق مكتبي:
 //
 //   1. فتح واجهة طباعة ويندوز الحقيقية (ShowPrintUI) — `window.print()` في
 //      WebView2 لا تفتح حواراً، فكانت الطباعة تسقط صامتة.
 //   2. كتابة ملف إلى مجلّد معروف بدل «تنزيل» ينتهي في Downloads.
-//   3. قراءة مجلّد النسخ الاحتياطية وتقليمه.
+//   3. قراءة مجلّدات النظام وتقليم النسخ التلقائية.
+//   4. فتح ملفٍّ أو مجلّدٍ من مجلّدات النظام ببرنامج ويندوز المعتاد.
+//   5. إظهار النافذة الرئيسية حين تجهز الواجهة، وإغلاق نافذة البدء.
 //
 // وما لا يفعله هذا الجسر أهمّ ممّا يفعله: لا يقبل مساراً من الواجهة أبداً.
 // الواجهة ترسل فئةً من قائمة مغلقة واسم ملف، والمسار يُبنى هنا. فلا سبيل
@@ -14,9 +16,15 @@
 mod paths;
 
 use base64::Engine;
-use paths::{assert_inside, category_dir, plan_prune, safe_file_name, unique_path, Category, ROOT_DIR};
+use paths::{
+    assert_inside, category_dir, existing_category_dir, has_category_extension, plan_prune,
+    resolve_existing, safe_file_name, unique_path, Category, ROOT_DIR,
+};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 
 #[derive(Serialize)]
@@ -36,12 +44,22 @@ struct BackupFile {
 }
 
 #[derive(Serialize)]
+struct FileRow {
+    category: String,
+    kind: String,
+    name: String,
+    bytes: u64,
+    modified: u64,
+}
+
+#[derive(Serialize)]
 struct Env {
     platform: String,
     root: String,
     exports: String,
     backups: String,
     can_print: bool,
+    can_open: bool,
 }
 
 fn documents(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -61,6 +79,7 @@ fn tg_env(app: tauri::AppHandle) -> Result<Env, String> {
         exports: root.join("Exports").display().to_string(),
         backups: root.join("Backups").display().to_string(),
         can_print: cfg!(windows),
+        can_open: cfg!(windows),
     })
 }
 
@@ -114,20 +133,30 @@ fn tg_save(
     })
 }
 
-fn list_kind(app: &tauri::AppHandle, cat: Category, kind: &str) -> Vec<BackupFile> {
+/// أحدث ما في مجلّد فئةٍ من ملفات النظام.
+///
+/// ثلاث قواعد تحكم القراءة:
+///   · لا تُنشئ مجلّداً — فتحُ شاشةٍ ليس سبباً لخلق مجلّدات فارغة.
+///   · لا تُعيد إلا ما ينتجه النظام (اللاحقة من لواحق الفئة). ما تضعه
+///     المستخدمة في المجلّد بيدها ليس ملفّ تطبيق فلا يُعرض ولا يُفتح.
+///   · تتوقّف عند حدٍّ أعلى. مجلّد فيه آلاف التصديرات لا يجوز أن يُجمَّد
+///     الشاشة، وما يهمّ هو الأحدث لا الكلّ.
+fn read_category(app: &tauri::AppHandle, cat: Category, limit: usize) -> Vec<FileRow> {
     let Ok(docs) = documents(app) else {
         return Vec::new();
     };
-    let Ok(dir) = category_dir(&docs, cat) else {
+    let Some(dir) = existing_category_dir(&docs, cat) else {
         return Vec::new();
     };
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
+    let kind = if cat == Category::BackupAuto { "automatic" } else { "manual" };
     let mut out = Vec::new();
-    for entry in rd.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+    // حارس القراءة: لا يُفحص أكثر من هذا العدد من المدخلات مهما كبر المجلّد
+    for entry in rd.flatten().take(4000) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !has_category_extension(&name, cat) {
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
@@ -140,15 +169,29 @@ fn list_kind(app: &tauri::AppHandle, cat: Category, kind: &str) -> Vec<BackupFil
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        out.push(BackupFile {
-            kind: kind.to_string(),
-            name: entry.file_name().to_string_lossy().to_string(),
+        out.push(FileRow {
+            category: cat.key().to_string(),
+            kind: if cat.is_backup() { kind.to_string() } else { cat.key().to_string() },
+            name,
             bytes: meta.len(),
             modified,
         });
     }
     out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out.truncate(limit);
     out
+}
+
+fn list_kind(app: &tauri::AppHandle, cat: Category, kind: &str) -> Vec<BackupFile> {
+    read_category(app, cat, 500)
+        .into_iter()
+        .map(|f| BackupFile {
+            kind: kind.to_string(),
+            name: f.name,
+            bytes: f.bytes,
+            modified: f.modified,
+        })
+        .collect()
 }
 
 /// النسخ الموجودة على القرص — اليدوية والتلقائية، الأحدث أولاً.
@@ -199,6 +242,126 @@ fn tg_prune_backups(app: tauri::AppHandle, keep: usize) -> Result<Vec<String>, S
         }
     }
     Ok(removed)
+}
+
+/// كل ما أنتجه النظام على القرص — نسخاً وتصديرات، الأحدث أولاً.
+///
+/// لا جدول ثانياً في قاعدة البيانات يسجّل «ما صُدِّر»: سجلٌّ كهذا يكذب أول
+/// مرّة يُحذف فيها ملف من خارج التطبيق. المصدر هو المجلّد نفسه.
+#[tauri::command]
+fn tg_list_files(app: tauri::AppHandle, per_category: Option<usize>) -> Result<Vec<FileRow>, String> {
+    // حدٌّ لكل فئة: الشاشة تعرض الأحدث، والقرص قد يحوي آلافاً
+    let limit = per_category.unwrap_or(60).clamp(1, 300);
+    let mut all = Vec::new();
+    for cat in Category::ALL {
+        all.extend(read_category(&app, cat, limit));
+    }
+    all.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(all)
+}
+
+/// يفتح ملفاً من ملفات النظام ببرنامج ويندوز المعتاد له.
+///
+/// **لا يقبل مساراً.** فئةٌ من قائمة مغلقة واسمُ ملف، ثم `resolve_existing`
+/// تعقّم الاسم وتبني المسار وتتحقّق أنه تحت مجلّده وأن لاحقته من لواحق
+/// الفئة وأنه ملف قائم. فلا يصل إلى نظام التشغيل شيء اختارته الواجهة.
+///
+/// والتنفيذ بـ`explorer.exe` لا بصدفة: الوسيط يُمرَّر عنصراً واحداً في
+/// `argv` بلا تفسير، فلا اقتباس يُكسر ولا أمر يُحقن. ولهذا أيضاً لا تُضاف
+/// إضافة `shell` إلى Tauri: ما لا يُمنح لا يُساء استعماله.
+#[tauri::command]
+fn tg_open_file(app: tauri::AppHandle, category: String, name: String) -> Result<(), String> {
+    let cat = Category::parse(&category).ok_or("فئة غير معروفة")?;
+    let file = resolve_existing(&documents(&app)?, cat, &name)?;
+    open_with_shell(&file)
+}
+
+/// يفتح مجلّد فئةٍ في مستكشف ويندوز. يُنشأ إن لم يكن موجوداً حتى لا تُقال
+/// للمستخدمة «افتحي مجلّداً» ثم لا يُفتح شيء.
+#[tauri::command]
+fn tg_open_folder(app: tauri::AppHandle, category: Option<String>) -> Result<(), String> {
+    let docs = documents(&app)?;
+    let dir = match category.as_deref() {
+        None | Some("") | Some("root") => {
+            let root = docs.join(ROOT_DIR);
+            std::fs::create_dir_all(&root).map_err(|e| format!("تعذّر إنشاء المجلّد: {e}"))?;
+            root
+        }
+        Some(c) => {
+            let cat = Category::parse(c).ok_or("فئة غير معروفة")?;
+            category_dir(&docs, cat)?
+        }
+    };
+    open_with_shell(&dir)
+}
+
+/// النداء الوحيد الذي يخرج إلى نظام التشغيل — وكل ما يصله بُني هنا لا هناك.
+fn open_with_shell(target: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // `explorer.exe <path>` يفتح الملف ببرنامجه المعتاد والمجلّد في
+        // المستكشف. ورمز خروجه لا يدلّ على النجاح (يُعيد 1 كثيراً وهو ناجح)،
+        // فالمقيس هو أن الإطلاق نفسه وقع.
+        std::process::Command::new("explorer.exe")
+            .arg(target)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("تعذّر فتح الملف: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        Err("فتح الملفات متاح في تطبيق ويندوز".into())
+    }
+}
+
+/* ============================ بدء التشغيل ============================
+   نافذة البدء ليست زينة: النافذة الرئيسية تبقى مخفيّة حتى تجهز الواجهة،
+   فلا ترى المستخدمة هيكلاً فارغاً يُملأ أمامها. وثلاث قواعد تحكمها:
+
+     · لا تبقى أبداً. الواجهة تنادي `tg_ready` عند الجاهزية **وعند فشل
+       الإقلاع أيضاً**؛ ومن فوقهما حارسٌ زمنيّ في هذا الملف يكشف النافذة
+       الرئيسية مهما حدث. فشاشةُ بدءٍ عالقة أسوأ من غياب شاشة بدء.
+     · لا تُبطئ. لا انتظار مفتعل: ما يُنتظر هو زمن الإقلاع الحقيقي وحده،
+       وتحته حدّ أدنى قصير يكفي لإتمام التلاشي فلا تومض النافذة وميضاً.
+     · تُكشف مرّة واحدة. `REVEALED` يمنع تكرار الإظهار والإغلاق.
+*/
+static STARTED: OnceLock<Instant> = OnceLock::new();
+static REVEALED: AtomicBool = AtomicBool::new(false);
+/// أقصر زمن تبقى فيه نافذة البدء — مهلة انتقال لا حشوٌ لبلوغ رقم.
+const MIN_SPLASH_MS: u128 = 350;
+/// الحارس: بعده تُكشف النافذة الرئيسية ولو لم تنطق الواجهة.
+const SPLASH_WATCHDOG_MS: u64 = 12_000;
+
+fn reveal_main(app: &tauri::AppHandle) {
+    if REVEALED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    if let Some(splash) = app.get_webview_window("splash") {
+        let _ = splash.close();
+    }
+}
+
+/// تُناديها الواجهة حين تنتهي من الإقلاع — بنجاحه أو بفشله.
+#[tauri::command]
+fn tg_ready(app: tauri::AppHandle) {
+    let elapsed = STARTED.get().map(|t| t.elapsed().as_millis()).unwrap_or(u128::MAX);
+    let rest = MIN_SPLASH_MS.saturating_sub(elapsed) as u64;
+    if rest == 0 {
+        return reveal_main(&app);
+    }
+    // لا يُحجب الخيط: الانتظار في خيط جانبي والنافذة تُكشف بعده
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(rest));
+        reveal_main(&app);
+    });
 }
 
 /// واجهة طباعة ويندوز الحقيقية.
@@ -253,13 +416,27 @@ fn tg_print(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    STARTED.get_or_init(Instant::now);
     tauri::Builder::default()
+        .setup(|app| {
+            // حارس نافذة البدء: يعمل حتى لو لم تُقلع الواجهة أصلاً
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(SPLASH_WATCHDOG_MS));
+                reveal_main(&handle);
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             tg_env,
             tg_save,
+            tg_list_files,
             tg_list_backups,
             tg_read_backup,
             tg_prune_backups,
+            tg_open_file,
+            tg_open_folder,
+            tg_ready,
             tg_print
         ])
         .run(tauri::generate_context!())

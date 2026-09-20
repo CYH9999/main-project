@@ -9,7 +9,8 @@
     "icons": "node scripts/make-icons.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "desktop:build:windows": "tauri build --bundles nsis"
+    "desktop:build:windows": "tauri build --bundles nsis",
+    "test:paths": "node scripts/check-paths-rs.mjs"
   },
   "devDependencies": {
     "playwright": "1.55.0",

@@ -2685,6 +2685,9 @@ group('أثر الصلاحيات على الأداء', async (browser, url) => {
    انظري tests/desktop.js — فيها شرح ما الذي يختلف فعلاً عن المتصفح. */
 require('./desktop.js')({ group, record, chromium, CHROME, TESTS_JS });
 require('./desktop-io.js')({ group, record, TESTS_JS });
+/* المرحلة 4.2: تجربة سطح المكتب — الإقلاع، ونافذة البدء، وصندوق الشعار،
+   وملف الموظفة، ومركز الملفات، ورسائل الحفظ، وطريق الطباعة الوحيد. */
+require('./desktop-ux.js')({ group, record, TESTS_JS });
 
 
 /* -------------------------------- التشغيل -------------------------------- */

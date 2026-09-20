@@ -100,7 +100,12 @@ td.num,th.num{display:table-cell;text-align:end}
 .gsearch-res button:hover{background:var(--rose-50)}
 .gsearch-res .g-t{font-size:11px;color:var(--muted)}
 .content{padding:22px;flex:1}
+/* انتقال الشاشات: تلاشٍ قصير وإزاحة أربعة بكسلات — «فتحتُ قسماً آخر من
+   تطبيق» لا «حمّلتُ صفحة ثانية». والعنوان يتبع محتواه فيُقرأ التغيّر كحركة
+   واحدة لا حركتين. والزمن قصير عمداً: ما يتجاوز خُمس الثانية يُحَسّ انتظاراً.
+   وقاعدة تقليل الحركة أدناه تُلغيهما معاً. */
 .view{animation:fade .18s ease-out}
+.head-in .page-title,.head-in .page-sub{animation:fade .18s ease-out}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
 
@@ -192,6 +197,11 @@ table.tbl tbody tr.archived-row{opacity:.6}
 table.tbl td.ta-l{text-align:left}
 .t-actions{display:flex;gap:4px;justify-content:flex-start}
 .t-name{font-weight:600}
+/* اسمٌ في جدول يفتح ملفه: زرّ حقيقي لا نصّ عليه مستمع — يصله لوح المفاتيح
+   ويقرؤه قارئ الشاشة زرّاً، ويبدو كنصّ الجدول لا كزرّ ثالث في الصفّ. */
+.link-name{background:none;border:0;padding:0;margin:0;font:inherit;font-weight:600;color:inherit;
+  cursor:pointer;text-align:start}
+.link-name:hover,.link-name:focus-visible{color:var(--rose-700);text-decoration:underline}
 .t-sub{font-size:11.5px;color:var(--muted)}
 .pager{display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--line-2);font-size:12.5px;color:var(--muted)}
 .pager .sp{flex:1}
@@ -218,8 +228,13 @@ textarea.inp{min-height:74px;resize:vertical}
 .switch input[type=checkbox]{width:16px;height:16px;accent-color:var(--rose-600);flex:0 0 16px}
 
 /* ============================ Modal ============================ */
+/* توسيط النوافذ: قصيرُها في وسط الشاشة، وطويلُها من أعلاها ويُمرَّر كاملاً.
+   و`margin:auto 0` هي ما يجمع الأمرين: الهوامش التلقائية تبتلع الفراغ حين
+   يوجد فراغ فتتوسّط النافذة، وتصير صفراً حين لا يوجد فتبدأ من الأعلى.
+   أمّا `align-items:center` وحدها فتقصّ أعلى النافذة الطويلة قصّاً لا
+   يُمرَّر إليه — وفي ملف موظفة طويل يعني ذلك عنواناً لا يُرى. */
 .overlay{position:fixed;inset:0;background:rgba(36,24,38,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:100;overflow-y:auto}
-.modal{background:#fff;border-radius:var(--r-lg);width:min(700px,100%);box-shadow:var(--shadow-pop);animation:pop .16s ease-out}
+.modal{background:#fff;border-radius:var(--r-lg);width:min(700px,100%);box-shadow:var(--shadow-pop);animation:pop .16s ease-out;margin:auto 0}
 .modal.wide{width:min(1000px,100%)}
 .modal.narrow{width:min(460px,100%)}
 @keyframes pop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
@@ -441,7 +456,32 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    الأبعاد والقصّ والاستدارة كما كانت تماماً — object-fit:cover يفعل ما كان
    يفعله background-size:cover. */
 .brand-banner img{width:100%;height:100%;object-fit:cover;object-position:center;display:block}
-.brand-logo{border-radius:8px}
+/* ------------------------------ صندوق الشعار ------------------------------
+   الدرس: **أبعاد الملف المرفوع كانت تقرّر حجم الشعار على الشاشة.** معاينة
+   الإعدادات كانت الصورة نفسها، فترسم `max-height` سقفاً لا صندوقاً: مصدر
+   2400×600 يُرسم 405×101 ومصدر 600×2400 يُرسم 30×120 — شكلان مختلفان لنفس
+   الحقل، وأحدهما يزيح ما حوله.
+
+   فالقاعدة الآن: لكل سطح صندوق ثابت، والصورة تملؤه بـ`contain` فلا تتجاوزه
+   ولا تمطّه. ما يتغيّر بتغيّر المصدر هو الفراغ داخل الصندوق لا الصندوق. */
+.brand-logo{border-radius:8px;flex:0 0 auto;object-fit:contain}
+.brand-box{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;overflow:hidden}
+.brand-box>img,.brand-box>svg{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block}
+/* معاينة الهوية في الإعدادات: صندوق مربّع ثابت للشعار، وصندوق عريض للّافتة.
+   والصندوق `flex` لا `inline`: عنصر سطريّ لا يقبل عرضاً ولا ارتفاعاً أصلاً،
+   فيعود الحجم إلى الصورة وتعود المشكلة كما كانت. */
+.brand-prev{display:flex;align-items:center;justify-content:center;
+  width:120px;height:120px;flex:0 0 auto;overflow:hidden;
+  border-radius:var(--r-md);background:var(--surface);
+  border:1px solid var(--line);margin:0 auto 10px;padding:6px}
+/* الوزن النوعي مقصود: `.media-drop img` أدناه يضع `max-height:120px`، وهو
+   بوزن هذا المحدِّد نفسه ويأتي بعده في الملف فيغلبه. فيُرفع الوزن هنا حتى
+   يكون الصندوق هو الحاكم لا سقفٌ مكتوب لصورةٍ بلا صندوق. */
+.media-drop .brand-prev>img{max-width:100%;max-height:100%;width:auto;height:auto;
+  object-fit:contain;display:block;margin:0}
+.media-drop.wide .brand-prev{width:100%;height:90px;padding:0}
+.media-drop.wide .brand-prev>img{width:100%;height:100%;max-width:100%;max-height:100%;
+  object-fit:cover;border-radius:var(--r-sm)}
 .media-drop{
   border:1.5px dashed var(--line);border-radius:var(--r-md);padding:16px;text-align:center;background:var(--surface-2);
 }
@@ -601,6 +641,24 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    للفأرة ولا يكفي للإصبع، وخطؤه ليس ضغطة ضائعة بل ضغطة على الزر المجاور:
    «حذف» بدل «تعديل» في صفٍّ مالي. الحدّ الأدنى المريح 32 بكسل، فتُمنح
    الأزرار إيّاه بالحشو لا بتكبير الخط، فلا يتغيّر شكل الجدول على المكتب. */
+/* ------------------------- أفعال داخل رسالة الحالة -------------------------
+   «تم الحفظ» وحدها تترك المستخدمة تبحث عن الملف في مدير الملفات. فالرسالة
+   تحمل الفعل التالي معها: فتح الملف، أو فتح مجلّده. */
+.toast .t-body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.toast .t-acts{display:flex;gap:8px;flex-wrap:wrap}
+.toast .t-acts button{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);
+  color:inherit;border-radius:var(--r-sm);padding:4px 10px;font:inherit;font-size:12.5px;
+  cursor:pointer;min-height:28px}
+.toast .t-acts button:hover{background:rgba(255,255,255,.24)}
+.toast .t-where{font-size:11.5px;opacity:.82}
+
+/* ------------------------------ مركز الملفات ------------------------------
+   ليس مستكشف ملفات: قائمةُ ما أنتجه النظام، وفعلان لكل صفّ. */
+.fc-where{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.fc-where strong{color:var(--ink);font-weight:600}
+.fc-missing{opacity:.62}
+.fc-missing .t-name{text-decoration:line-through}
+
 @media (pointer: coarse){
   .btn{min-height:40px}
   .btn-sm{min-height:34px;padding:7px 12px}
@@ -7168,12 +7226,40 @@ const Desktop = {
     if (!this._env) this._env = await this.call('tg_env');
     return this._env;
   },
-  /* المجلّد كما يُقرأ لا كما يُكتب في المسارات: «المستندات ‹ تبارك جيم ‹ …» */
+  /* المجلّد كما تقرؤه المستخدمة لا كما يُكتب في نظام الملفات:
+     «المستندات ‹ تبارك جيم ‹ التقارير ‹ Excel».
+
+     ولماذا تُترجم الأسماء؟ لأن المجلّدات على القرص إنجليزية عن قصد — اسم
+     إنجليزيّ لا يتكسّر في أدوات ويندوز ولا في أسماء المسارات الطويلة —
+     بينما المستخدمة تقرأ عربيّاً. فالقرص يبقى كما هو والشاشة تقول ما يعنيه.
+     وما لا نعرف له اسماً يُعرض كما هو، فلا يُخفى مجلّد باسم مخترَع. */
+  FOLDER_AR: { 'Exports':'التقارير', 'Backups':'النسخ الاحتياطية',
+               'manual':'يدوية', 'automatic':'تلقائية' },
   pretty(path){
     const p = String(path || '');
     const i = p.replace(/\\/g, '/').lastIndexOf('/' + FOLDERS.root + '/');
-    if (i < 0) return p;
-    return (FOLDERS.root + p.slice(i + FOLDERS.root.length + 1)).replace(/[\\/]/g, ' ‹ ');
+    const tail = i < 0 ? null : p.slice(i + FOLDERS.root.length + 1);
+    if (tail === null) return p;
+    const parts = ['المستندات', FOLDERS.root, ...tail.split(/[\\/]/)].filter(Boolean);
+    return parts.map(x => this.FOLDER_AR[x] || x).join(' ‹ ');
+  },
+  /* جاهزية الواجهة: تُغلق نافذة البدء وتُظهر النافذة الرئيسية. تُنادى عند
+     نجاح الإقلاع وعند فشله معاً — فنافذة بدءٍ عالقة أسوأ من رسالة خطأ.
+     ولا تُرمى أبداً: لا شيء في النظام يتوقّف على نجاحها. */
+  async ready(){
+    if (!this.on()) return false;
+    try { await this.call('tg_ready'); return true; }
+    catch(e){ Log.warn('تعذّر إعلان جاهزية الواجهة', e); return false; }
+  },
+  /* فتح ملفٍّ أو مجلّد. الواجهة ترسل فئةً واسماً — ولا ترسل مساراً أبداً،
+     فطرف الصدأ هو من يبنيه ويتحقّق منه. */
+  async openFile(category, name){
+    await this.call('tg_open_file', { category, name });
+    return true;
+  },
+  async openFolder(category){
+    await this.call('tg_open_folder', { category: category || 'root' });
+    return true;
   },
 };
 
@@ -7227,14 +7313,47 @@ const DesktopFiles = {
 };
 
 const UI = {
-  /* ------------------------------- Toast ------------------------------- */
-  toast(msg, kind='ok', ms=3400){
+  /* ------------------------------- Toast -------------------------------
+     الرسالة تحمل الفعل التالي معها حين يكون له معنى: «تم حفظ ملف Excel»
+     وتحتها «فتح الملف» و«فتح المجلد». بدونها تبقى المستخدمة تبحث عن ناتج
+     ضغطتها في مدير الملفات — وهذا أوّل ما اشتكت منه.
+
+     الوسيطان الرابع والخامس اختياريان تماماً، فكل نداء قديم يعمل كما كان.
+     ورسالةٌ فيها أفعال تبقى أطول: لا يُنتزع الزر من تحت الإصبع. */
+  toast(msg, kind='ok', ms=3400, opts=null){
     const root = document.getElementById('toastRoot');
     const el = document.createElement('div');
     el.className = 'toast ' + kind;
-    el.innerHTML = `${svg(kind==='err'?ICON.trash:kind==='warn'?ICON.clock:ICON.check,16,2.2)}<span>${U.esc(msg)}</span>`;
+    const acts = (opts && opts.actions || []).filter(a => a && a.label && a.onClick);
+    el.innerHTML = `${svg(kind==='err'?ICON.trash:kind==='warn'?ICON.clock:ICON.check,16,2.2)}
+      <span class="t-body"><span>${U.esc(msg)}</span>
+        ${opts && opts.where ? `<span class="t-where">${U.esc(opts.where)}</span>` : ''}
+        ${acts.length ? `<span class="t-acts">${acts.map((a,i) =>
+          `<button type="button" data-act="${i}">${U.esc(a.label)}</button>`).join('')}</span>` : ''}
+      </span>`;
     root.appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; el.style.transition='opacity .25s'; setTimeout(()=>el.remove(), 260); }, ms);
+    let gone = false;
+    const drop = () => { if (gone) return; gone = true;
+      el.style.opacity = '0'; el.style.transition='opacity .25s'; setTimeout(()=>el.remove(), 260); };
+    el.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      const a = acts[Number(b.dataset.act)];
+      b.disabled = true;
+      try { await a.onClick(); drop(); }
+      catch(e){ b.disabled = false; Log.error('تعذّر تنفيذ الإجراء', e);
+                UI.toast((e && e.message) || 'تعذّر تنفيذ الإجراء', 'err', 7000); }
+    });
+    setTimeout(drop, acts.length ? Math.max(ms, 9000) : ms);
+    return { el, close: drop };
+  },
+  /* أفعال «افتحي ما حُفظ» — تُبنى مرة واحدة فتتشابه في كل نقطة حفظ.
+     وتُبنى من نتيجة الحفظ نفسها (فئة واسم)، لا من مسار تكتبه الشاشة. */
+  savedActions(result, category){
+    if (!Desktop.on() || !result || !result.name) return [];
+    const cat = DesktopFiles.categoryOf(result.name, category);
+    return [
+      { label:'فتح الملف',  onClick:() => Desktop.openFile(cat, result.name) },
+      { label:'فتح المجلد', onClick:() => Desktop.openFolder(cat) },
+    ];
   },
   /* ------------------------------- Modal ------------------------------- */
   stack: [],
@@ -7444,9 +7563,13 @@ const UI = {
   },
   async saveNative(blob, filename, category){
     try {
+      const cat = DesktopFiles.categoryOf(filename, category);
       const r = await DesktopFiles.save(blob, filename, category);
-      const kind = { csv:'CSV', excel:'Excel', word:'Word' }[DesktopFiles.categoryOf(filename, category)];
-      UI.toast(`${kind ? 'تم حفظ ملف ' + kind : 'تم حفظ الملف'} — ${U.esc(Desktop.pretty(r.folder))}`, 'ok', 7000);
+      const kind = { csv:'CSV', excel:'Excel', word:'Word' }[cat];
+      /* الرسالة تقول أي نوع حُفظ، وأين، وتُعطي طريقاً إليه — لا «تم الحفظ»
+         ثم ابحثي عنه. */
+      UI.toast(kind ? `تم حفظ ملف ${kind}` : 'تم حفظ الملف', 'ok', 9000,
+        { where: `${r.name} — ${Desktop.pretty(r.folder)}`, actions: UI.savedActions(r, cat) });
       return r;
     } catch(e){
       Log.error('تعذّر حفظ الملف', e);
@@ -7743,12 +7866,22 @@ const Brand = {
              animated:Svc.media.isAnimated(m), hasPoster:!!m.posterUrl };
   },
 
-  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور. */
+  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور.
+
+     الحجم هنا **صندوق لا اقتراح**: عرضٌ وارتفاعٌ مقفلان بحدٍّ أعلى كذلك،
+     و`object-fit:contain` داخله، و`flex:0 0 auto` حتى لا يمطّه صفٌّ مرن من
+     حوله. فملفٌ 2400×2400 وملفٌ 128×128 يُرسمان في الصندوق نفسه بالبكسل
+     نفسه؛ ما يتغيّر هو الفراغ داخله لا مكانه على الشاشة.
+
+     وأبعاد الطباعة لم تُمسّ: الأرقام المارّة من `printHeader` (54) ومن
+     الوصل (44/56) كما كانت، والحدّ الأعلى المضاف يساوي العرض نفسه فلا يغيّر
+     شيئاً مرسوماً. */
   logoHtml(size=40, forPrint=false){
     /* الطباعة تأخذ الإطار الثابت دائماً: الورقة لا تتحرّك ولا تنتظر إطاراً */
     const url = this.renderUrl('logo', forPrint);
-    if (url) return `<img class="brand-logo" src="${U.esc(url)}" alt="${U.esc(this.name())}"
-      style="width:${size}px;height:${size}px;object-fit:contain;display:block">`;
+    const box = `width:${size}px;height:${size}px;max-width:${size}px;max-height:${size}px;`
+              + 'object-fit:contain;display:block;flex:0 0 auto';
+    if (url) return `<img class="brand-logo" src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${box}">`;
     return `<svg class="brand-mark" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
       <circle cx="20" cy="20" r="19" fill="${forPrint ? '#432C4C' : '#C43E6B'}"/>
       <rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/>
@@ -8359,6 +8492,9 @@ const NAV = [
   { k:'inventory',  t:'المشتريات',      i:ICON.card,  p:{ tab:'purchases' }, id:'inv-pur' },
   { k:'inventory',  t:'الموردون',       i:ICON.staff, p:{ tab:'suppliers' }, id:'inv-sup' },
   { g:'النظام' },
+  /* مركز الملفات في تطبيق سطح المكتب وحده: في المتصفح لا مجلّدات يملكها
+     النظام، فمدخلٌ إلى شاشة فارغة ليس ميزة. */
+  { k:'files',      t:'ملفات تبارك جيم', i:ICON.box, desktopOnly:true },
   { k:'settings',   t:'الإعدادات',      i:ICON.gear },
   { k:'settings',   t:'النسخ الاحتياطي', i:ICON.down, p:{ sec:'backup' }, id:'set-backup' },
   { k:'settings',   t:'سلامة البيانات', i:ICON.check, p:{ sec:'data' },   id:'set-data' }
@@ -8369,7 +8505,8 @@ function buildNav(){
   const nav = $('nav');
   /* التنقّل يمرّ بنقطة الصلاحيات، وهي تسمح بكل شيء ما دامت الميزة معطّلة.
      مجموعة تفرغ من عناصرها لا يبقى عنوانها معلّقاً. */
-  const items = NAV.filter(n => n.g || Auth.can(`${n.k}.view`));
+  const items = NAV.filter(n => n.g
+    || ((!n.desktopOnly || Desktop.on()) && Auth.can(`${(Views[n.k] && Views[n.k].perm) || n.k}.view`)));
   const visible = items.filter((n, i) => !n.g || (items[i+1] && !items[i+1].g));
   nav.innerHTML = visible.map(n => n.g
     ? `<div class="nav-group">${U.esc(n.g)}</div>`
@@ -8445,6 +8582,28 @@ function renderRoute(){
   applyPerms(root);
   navBadges();
   root.scrollIntoView({ block:'start' });
+
+  /* ------------------------ أين يذهب التركيز بعد الانتقال ------------------------
+     في تطبيق مكتبي ينتقل التركيز إلى المحتوى الجديد: من تعمل بلوحة المفاتيح
+     تتابع من حيث انتقلت لا من أول الصفحة، وقارئ الشاشة يقرأ الشاشة الجديدة
+     بدل أن يبقى على زرّ في قائمة لم تعد هي السياق.
+
+     وشرطان يمنعان أن يصير هذا إزعاجاً:
+       · لا يُنقل التركيز إلا حين تتغيّر الشاشة فعلاً. كثير من الأفعال تُعيد
+         الرسم على الشاشة نفسها (حفظ، تصفية، تبويب) — ونزعُ التركيز هناك
+         يقطع على المستخدمة ما هي فيه.
+       · ولا يُنقل وفوقه نافذة مفتوحة: التركيز فيها لا تحتها. */
+  const key = route + '|' + new URLSearchParams(params || {}).toString();
+  if (key !== renderRoute._at){
+    renderRoute._at = key;
+    /* العنوان نصٌّ يُستبدَل لا عنصرٌ يُعاد بناؤه، فحركته لا تُعاد بنفسها.
+       تُعاد هنا صراحةً عند تغيّر الشاشة وحدها حتى يُقرأ العنوان والمحتوى
+       حركةً واحدة. (نزع الصنف ثم إعادته بعد قياسٍ يُجبر المتصفّح على
+       إعادة الحساب — وإلا ابتلع دفعةَ التغييرين معاً ولم يتحرّك شيء.) */
+    const head = $('pageTitle').parentElement;
+    if (head){ head.classList.remove('head-in'); void head.offsetWidth; head.classList.add('head-in'); }
+    if (!UI.stack.length) { try { root.focus({ preventScroll:true }); } catch(e){ root.focus(); } }
+  }
 }
 
 /* ------------------------------- Shared bits ------------------------------ */
@@ -10334,8 +10493,11 @@ Views.staff = {
       if (q) rows = rows.filter(s => U.normAr(s.name).includes(q) || U.normAr(s.role).includes(q));
       rows = f.sortFn ? U.sortBy(rows, f.sortFn, f.sortDir) : U.sortBy(rows, s=>s.name);
       const cols = [
+        /* الاسم نفسه يفتح الملف: القراءة هي الفعل الأكثر تكراراً، فلا تُخبّأ
+           خلف أيقونة بين ثلاث أيقونات. و«تعديل» يبقى زرّه المستقل. */
         { h:'الاسم', sort:s=>s.name, render:s=>`<div class="row" style="gap:10px;flex-wrap:nowrap">${UI.avatar(s.name)}
-            <div><div class="t-name">${U.esc(s.name)}</div><div class="t-sub">${U.esc(s.phone||'')}</div></div></div>` },
+            <div><button type="button" class="link-name" data-view="${s.id}">${U.esc(s.name)}</button>
+              <div class="t-sub">${U.esc(s.phone||'')}</div></div></div>` },
         { h:'الوظيفة', sort:s=>s.role, render:s=>U.esc(s.role) },
         { h:'الراتب الأساسي', sort:s=>s.baseSalary, render:s=>UI.money(s.baseSalary) },
         { h:'التعيين', sort:s=>s.hireDate||'', render:s=>`<span class="num">${s.hireDate?D.fmt(s.hireDate):'—'}</span>` },
@@ -10365,6 +10527,165 @@ Views.staff = {
     draw();
     $('stQ').oninput = U.debounce(e => { f.q = e.target.value; draw(); }, 200);
     $('stAdd').onclick = () => Forms.staff();
+  }
+};
+
+
+/* ===== src/app/views/52-files.js ===================================================== */
+/* ============================ ملفات تبارك جيم ============================
+   ليس مستكشف ملفات، ولا يُراد له أن يكون. سؤال واحد يجيب عنه: **أين ذهب ما
+   صدّرته؟** فتُعرض النسخ الاحتياطية والتقارير التي أنتجها النظام، ويُفتح
+   منها ملفٌّ أو مجلّد بضغطة.
+
+   وثلاث قواعد بُني عليها:
+
+     · لا جدول ثانياً. ما يُعرض يُقرأ من المجلّد نفسه لا من سجلّ يوازيه.
+       سجلٌّ كهذا يكذب أول مرّة يُحذف فيها ملف من خارج التطبيق، ويصير علينا
+       أن نصون حقيقتين عن الشيء الواحد.
+     · لا مسار يُبنى هنا. الصفّ يحمل فئةً واسماً، وهما ما يُرسل إلى طرف
+       الصدأ. وما تراه المستخدمة عبارةٌ للقراءة لا مسار يُنفَّذ.
+     · لا مسح كامل. لكل فئة حدٌّ من الأحدث؛ مجلّدٌ فيه ألف تصدير لا يجمّد
+       الشاشة، وما يُبحث عنه هو ملف اليوم لا أرشيف السنة.
+
+   وهي شاشة سطح مكتب وحدها: في المتصفح لا مجلّدات يملكها النظام أصلاً —
+   التنزيل يذهب إلى حيث يقرّر المتصفح، فلا شيء يُعرض ولا شيء يُفتح. */
+const FileCentre = {
+  /* كم صفّاً تُقرأ من كل مجلّد. الحدّ في طرف الصدأ كذلك — هذا حدّ العرض. */
+  PER_CATEGORY: 60,
+  KIND_AR: { 'backup-manual':'نسخة يدوية', 'backup-auto':'نسخة تلقائية',
+             csv:'CSV', excel:'Excel', word:'Word' },
+  /* أين يقع كل شيء، بعبارة تُقرأ. تُبنى من أسماء ثابتة في الشيفرة لا من
+     مسار عائد من النظام، فلا يتسرّب «%LOCALAPPDATA%» إلى شاشة. */
+  WHERE: { 'backup-manual':'المستندات ‹ تبارك جيم ‹ النسخ الاحتياطية ‹ يدوية',
+           'backup-auto':'المستندات ‹ تبارك جيم ‹ النسخ الاحتياطية ‹ تلقائية',
+           csv:'المستندات ‹ تبارك جيم ‹ التقارير ‹ CSV',
+           excel:'المستندات ‹ تبارك جيم ‹ التقارير ‹ Excel',
+           word:'المستندات ‹ تبارك جيم ‹ التقارير ‹ Word' },
+  isBackup(cat){ return cat === 'backup-manual' || cat === 'backup-auto'; },
+  size(bytes){
+    const b = Number(bytes) || 0;
+    if (b >= 1048576) return `${U.round2(b / 1048576)} م.ب`;
+    if (b >= 1024) return `${Math.round(b / 1024)} ك.ب`;
+    return `${b} بايت`;
+  },
+  async list(){
+    if (!Desktop.on()) return [];
+    try { return await Desktop.call('tg_list_files', { perCategory:this.PER_CATEGORY }) || []; }
+    catch(e){ Log.error('تعذّرت قراءة مجلّدات النظام', e); throw e; }
+  },
+};
+
+Views.files = {
+  title:'ملفات تبارك جيم',
+  perm:'settings',
+  sub(){ return 'ما حفظه النظام على هذا الجهاز'; },
+  render(root){
+    if (!Desktop.on()){
+      root.innerHTML = `<div class="card"><div class="card-body">${UI.empty('هذه الشاشة لتطبيق سطح المكتب',
+        'في المتصفح تذهب الملفات إلى مجلّد التنزيلات الذي يحدّده المتصفح نفسه، فلا مجلّدات يملكها النظام ليعرضها.')}</div></div>`;
+      return;
+    }
+    root.innerHTML = `<div class="card"><div class="card-head"><h3>أين تُحفظ ملفاتك</h3>
+        <div class="sp"></div>
+        <button class="btn btn-sm" id="fcOpenRoot">فتح المجلد</button>
+        <button class="btn btn-sm" id="fcRefresh">تحديث</button></div>
+      <div class="card-body">
+        <p class="t-sub" style="margin-top:0">كل ما ينتجه النظام يُكتب داخل مجلّد واحد تحت «المستندات».
+          هذه الملفات تبقى بعد إغلاق التطبيق وبعد إلغاء تثبيته.</p>
+        <div class="fc-where" id="fcWhere"></div>
+      </div></div>
+      <div id="fcBackups" style="margin-top:14px"></div>
+      <div id="fcExports" style="margin-top:14px"></div>`;
+
+    const where = $('fcWhere');
+    where.innerHTML = `<span>النسخ الاحتياطية: <strong>المستندات ‹ تبارك جيم ‹ النسخ الاحتياطية</strong></span>
+      <span>·</span><span>التقارير: <strong>المستندات ‹ تبارك جيم ‹ التقارير</strong></span>`;
+    /* المسار التقني متاح لمن تحتاجه (لدعم فنّي مثلاً) ولا يُفرض على أحد */
+    Desktop.env().then(env => {
+      if (!env || !$('fcWhere')) return;
+      const b = document.createElement('button');
+      b.className = 'btn btn-sm'; b.textContent = 'نسخ المسار';
+      b.onclick = async () => {
+        try { await navigator.clipboard.writeText(env.root); UI.toast('نُسخ المسار'); }
+        catch(e){ UI.toast(env.root, 'warn', 12000); }
+      };
+      $('fcWhere').appendChild(b);
+    }).catch(e => Log.warn('تعذّرت قراءة مواضع الحفظ', e));
+
+    const section = (el, title, cats, rows) => {
+      const mine = rows.filter(r => cats.includes(r.category));
+      const body = !mine.length
+        ? '<p class="t-sub" style="margin:0">لا ملفات بعد.</p>'
+        : `<table class="tbl"><thead><tr><th>الملف</th><th>النوع</th><th>التاريخ</th>
+             <th>الحجم</th><th></th></tr></thead><tbody>
+           ${mine.map(r => `<tr data-row="${U.esc(r.category)}|${U.esc(r.name)}">
+             <td><span class="t-name">${U.esc(r.name)}</span>
+               <div class="t-sub">${U.esc(FileCentre.WHERE[r.category] || '')}</div></td>
+             <td>${U.esc(FileCentre.KIND_AR[r.category] || r.category)}</td>
+             <td class="num">${U.esc(D.fmt(D.fromDate(new Date(r.modified))))}</td>
+             <td class="num">${U.esc(FileCentre.size(r.bytes))}</td>
+             <td class="ta-l"><div class="t-actions">
+               ${FileCentre.isBackup(r.category)
+                 ? `<button class="btn btn-sm" data-perm="settings.danger"
+                      data-restore="${U.esc(r.name)}" data-kind="${r.category === 'backup-auto' ? 'automatic' : 'manual'}">استعادة</button>`
+                 : `<button class="btn btn-sm" data-open="${U.esc(r.name)}" data-cat="${U.esc(r.category)}">فتح الملف</button>`}
+               <button class="btn btn-sm" data-folder="${U.esc(r.category)}">فتح المجلد</button>
+             </div></td></tr>`).join('')}
+           </tbody></table>`;
+      el.innerHTML = `<div class="card"><div class="card-head"><h3>${U.esc(title)}</h3>
+          <div class="sp"></div><span class="t-sub">${mine.length ? `${mine.length} ملفاً` : ''}</span></div>
+        <div class="card-body">${body}</div></div>`;
+      applyPerms(el);
+    };
+
+    const wire = el => {
+      el.querySelectorAll('[data-open]').forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try { await Desktop.openFile(b.dataset.cat, b.dataset.open); }
+        catch(e){
+          /* ملفٌّ حُذف من خارج التطبيق: يُقال ذلك ويُعلَّم الصفّ — ولا تُخترع
+             له بيانات ولا يُحذف سجلّ لم يكن موجوداً أصلاً. */
+          const gone = /لم يعد موجود|غير موجود/.test((e && e.message) || '');
+          const tr = b.closest('tr');
+          if (gone && tr){ tr.classList.add('fc-missing'); b.textContent = 'غير موجود'; }
+          UI.toast((e && e.message) || 'تعذّر فتح الملف', 'err', 7000);
+          if (!gone) b.disabled = false;
+          return;
+        }
+        b.disabled = false;
+      });
+      el.querySelectorAll('[data-folder]').forEach(b => b.onclick = async () => {
+        try { await Desktop.openFolder(b.dataset.folder); }
+        catch(e){ UI.toast((e && e.message) || 'تعذّر فتح المجلد', 'err', 7000); }
+      });
+      el.querySelectorAll('[data-restore]').forEach(b => b.onclick = () =>
+        Actions.restoreFromDisk(b.dataset.kind, b.dataset.restore));
+    };
+
+    const draw = async () => {
+      const bk = $('fcBackups'), ex = $('fcExports');
+      if (!bk || !ex) return;
+      bk.innerHTML = ex.innerHTML = '<div class="card"><div class="card-body t-sub">جارٍ القراءة…</div></div>';
+      let rows = [];
+      try { rows = await FileCentre.list(); }
+      catch(e){
+        bk.innerHTML = `<div class="card"><div class="card-body">${UI.empty('تعذّرت قراءة المجلّدات',
+          (e && e.message) || '')}</div></div>`;
+        ex.innerHTML = '';
+        return;
+      }
+      if (!$('fcBackups')) return;                  /* غادرت الشاشة أثناء القراءة */
+      section($('fcBackups'), 'النسخ الاحتياطية', ['backup-manual','backup-auto'], rows);
+      section($('fcExports'), 'التقارير المصدّرة', ['csv','excel','word'], rows);
+      wire($('fcBackups')); wire($('fcExports'));
+    };
+
+    $('fcRefresh').onclick = draw;
+    $('fcOpenRoot').onclick = async () => {
+      try { await Desktop.openFolder('root'); }
+      catch(e){ UI.toast((e && e.message) || 'تعذّر فتح المجلد', 'err', 7000); }
+    };
+    draw();
   }
 };
 
@@ -12120,22 +12441,26 @@ Views.settings = {
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">الشعار</h4>
               <div class="media-drop">
-                ${logo ? `<img src="${U.esc(Brand.renderUrl('logo'))}" alt="" data-brand-prev="logo">` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
+                ${logo ? `<span class="brand-prev"><img src="${U.esc(Brand.renderUrl('logo'))}" alt="" data-brand-prev="logo"></span>` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
                 <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
                 ${logo ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
               </div>
               ${mediaInfo('logo')}
-              <div class="t-sub" style="margin-top:6px">يُفضَّل مربّع الشكل وبخلفية شفافة.</div>
+              <div class="t-sub" style="margin-top:6px">المقاس المقترح: <strong class="num">512 × 512</strong> بكسل، مربّع الشكل،
+                ويُفضَّل PNG أو WebP بخلفية شفافة. وهذا اقتراح لا شرط — أي مقاس مقبول،
+                والشعار يُعرض في صندوق ثابت مهما كان حجم الملف.</div>
             </div>
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">اللافتة العريضة</h4>
               <div class="media-drop wide">
-                ${banner ? `<img src="${U.esc(Brand.renderUrl('banner'))}" alt="" data-brand-prev="banner">` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
+                ${banner ? `<span class="brand-prev"><img src="${U.esc(Brand.renderUrl('banner'))}" alt="" data-brand-prev="banner"></span>` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
                 <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
                 ${banner ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
               </div>
               ${mediaInfo('banner')}
-              <div class="t-sub" style="margin-top:6px">صورة عريضة (نحو 4:1). تُقصّ ولا تُمطّ، وتظهر أعلى شاشة الاستقبال.</div>
+              <div class="t-sub" style="margin-top:6px">المقاس المقترح: <strong class="num">1600 × 400</strong> بكسل، أي نحو
+                <span class="num">4:1</span>. تُقصّ ولا تُمطّ، وتظهر أعلى شاشة الاستقبال.
+                ونسبةٌ مختلفة تُقبل كما هي — يُقصّ منها ما يخرج عن الإطار.</div>
             </div>
           </div>
           <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
@@ -15232,19 +15557,61 @@ Screens.viewMedia = function(mediaId){
 };
 
 /* ملف الموظفة: بياناتها وحصصها وسجلّها المالي في مكان واحد */
-Screens.staffProfile = function(id){ /*v4*/
+/* ============================== ملف الموظفة ==============================
+   القاعدة التي كانت مكسورة: **القراءة لا تمرّ بالتعديل.** كانت المستخدمة
+   تفتح نموذج «تعديل» لتقرأ بريد موظفة أو تاريخ ميلادها، فتجد نفسها في شاشة
+   إدخال — والخطأ فيها ليس خطأ قراءة بل تغييرُ بيانات بلا قصد.
+
+   فصار الملف يعرض كل ما هو مسجَّل أصلاً، مقروءاً، مقسَّماً كما يفكّر فيه
+   الناس: الأساسي، التواصل، التوظيف، الوثيقة، حقول النادي، الملاحظات،
+   الحساب، النشاط. و«تعديل» يبقى زرّاً في الأسفل لمن تريد التعديل فعلاً.
+
+   ولا حقل مخترَع: كل ما يُعرض هنا موجود في `Forms.staff` وفي سجلّ الموظفة.
+   ما لا يُسجَّل لا يُعرض له مكان فارغ يوحي بأنه ناقص.
+
+   والصلاحيات لا تُضعَف: الراتب وكشوفه لمن تملك `payroll.view`، ووثيقة
+   التعريف لمن تملك `staff.edit`، والحساب والدور لمن تدير المستخدمات،
+   والنشاط لمن ترى الإعدادات. فتحُ الملف لا يفتح ما وراءه. */
+Screens.staffProfile = function(id){ /*v5*/
   const st = Repos.staff.get(id);
   if (!st) return UI.toast('الموظفة غير موجودة','err');
-  const sheets = Svc.payroll.ofStaff(id);
+
+  const canMoney  = Auth.can('payroll.view');
+  const canIdDoc  = Auth.can('staff.edit');
+  const canUsers  = Auth.can('settings.users');
+  const canAudit  = Auth.can('settings.view');
+
+  const sheets = canMoney ? Svc.payroll.ofStaff(id) : [];
   const paid = sheets.filter(p => p.status === 'paid');
   const totalPaid = U.round2(U.sum(paid, p => p.net));
   const dueSheets = sheets.filter(p => p.status !== 'paid');
   const photo = st.photoMediaId ? Repos.media.get(st.photoMediaId) : null;
+  const idPhoto = canIdDoc && st.idMediaId ? Repos.media.get(st.idMediaId) : null;
   const sessions = Svc.classes.between(D.addDays(D.today(), -30), D.addDays(D.today(), 30))
     .filter(x => x.coachId === id);
   const myMembers = Repos.members.list().filter(m => m.preferredCoachId === id);
   const em = st.emergency || {};
   const STATUS_AR = { active:'على رأس العمل', leave:'إجازة', left:'انتهت الخدمة' };
+
+  /* حساب التطبيق المرتبط: لا حقل ربط في نموذج الموظفة، فالمطابقة بالاسم
+     المعروض وحده — ويُقال ذلك صراحةً بدل الإيحاء برابط لا وجود له. */
+  const account = canUsers
+    ? (Svc.users.list() || []).find(u => U.normAr(u.name) === U.normAr(st.name)) || null
+    : null;
+  const activity = canAudit ? Audit.recent(400).filter(a => a.entityId === id).slice(0, 8) : [];
+  const custom = Fields.for('staff');
+
+  /* صفّ «مفتاح ⇐ قيمة» لا يُرسم إن لم تكن له قيمة: الفراغات تُشعر بالنقص
+     حيث لا نقص، وتُطيل الشاشة بلا فائدة. */
+  const kv = pairs => {
+    const rows = pairs.filter(p => p && p[1] != null && String(p[1]) !== '' && String(p[1]) !== '—');
+    if (!rows.length) return '<div class="t-sub">لا بيانات مسجّلة في هذا القسم.</div>';
+    return `<dl class="kv" style="margin-top:0;grid-template-columns:auto 1fr">
+      ${rows.map(([k, v, cls]) => `<dt>${U.esc(k)}</dt><dd${cls ? ` class="${cls}"` : ''}>${v}</dd>`).join('')}</dl>`;
+  };
+  const txt = v => U.esc(v == null ? '' : String(v));
+  const sect = (title, html) => `<div style="margin-bottom:16px">
+    <h4 style="font-size:13.5px;margin:0 0 7px">${U.esc(title)}</h4>${html}</div>`;
 
   UI.modal({ title:`ملف ${st.name}`, size:'wide',
     body:`<div class="row" style="gap:14px;align-items:flex-start;margin-bottom:16px">
@@ -15260,41 +15627,76 @@ Screens.staffProfile = function(id){ /*v4*/
         </div>
       </div>
       <div class="stat-row">
-        <div class="stat"><b>${Money.fmt(st.baseSalary)}</b><span>الراتب الأساسي</span></div>
+        ${canMoney ? `<div class="stat"><b>${Money.fmt(st.baseSalary)}</b><span>الراتب الأساسي</span></div>
         <div class="stat pos"><b>${Money.fmt(totalPaid)}</b><span>مجموع ما صُرف — ${paid.length} كشف</span></div>
-        <div class="stat ${dueSheets.length ? 'neg' : ''}"><b>${dueSheets.length}</b><span>كشف غير مدفوع</span></div>
+        <div class="stat ${dueSheets.length ? 'neg' : ''}"><b>${dueSheets.length}</b><span>كشف غير مدفوع</span></div>` : ''}
         <div class="stat"><b>${sessions.length}</b><span>حصة (±30 يوماً)</span></div>
         <div class="stat"><b>${myMembers.length}</b><span>مشتركة تفضّلها</span></div>
       </div>
       <div class="grid g-2">
-        <div><h4 style="font-size:14px;margin-bottom:8px">سجل الرواتب</h4>
-          ${sheets.length ? `<table class="mini-tbl"><thead><tr><th>الشهر</th><th>الأساسي</th><th>الصافي</th><th>الحالة</th></tr></thead><tbody>
-            ${sheets.slice(0, 14).map(p => `<tr><td>${U.esc(D.monthName(p.period))}</td>
-              <td class="num">${Money.fmt(p.baseSalary)}</td><td class="num"><strong>${Money.fmt(p.net)}</strong></td>
-              <td>${p.status === 'paid' ? `<span class="pill ok">صُرف ${D.fmt(p.paidDate)}</span>` : '<span class="pill warn">غير مدفوع</span>'}</td></tr>`).join('')}
-            </tbody></table>` : '<div class="t-sub">لا كشوف رواتب بعد.</div>'}
+        <div>
+          ${sect('المعلومات الأساسية', kv([
+            ['الاسم', txt(st.name)],
+            ['الهاتف', txt(st.phone), 'num'],
+            ['تاريخ الميلاد', st.birthDate ? D.fmt(st.birthDate) : '', 'num'],
+            ['الحالة الوظيفية', txt(STATUS_AR[st.status] || st.status)],
+            ['تاريخ التعيين', st.hireDate ? D.fmt(st.hireDate) : '', 'num'],
+            ['انتهاء الخدمة', st.leftDate ? D.fmt(st.leftDate) : '', 'num'],
+          ]))}
+          ${sect('التواصل', kv([
+            ['البريد الإلكتروني', st.email ? `<span style="direction:ltr;display:inline-block">${txt(st.email)}</span>` : ''],
+            ['العنوان', txt(st.address)],
+            ['جهة الطوارئ', txt(em.name)],
+            ['صلة القرابة', txt(em.relation)],
+            ['هاتف الطوارئ', txt(em.phone), 'num'],
+          ]))}
+          ${sect('بيانات التوظيف', kv([
+            ['الوظيفة', txt(st.role)],
+            ['التخصّص', txt(st.specialty)],
+            ['الرقم الوظيفي', txt(st.code), 'num'],
+            ['نوع العقد', txt(st.contractType)],
+            ['الدوام', txt(st.schedule)],
+            ...(canMoney ? [['صرف الراتب', txt(st.payMethod ? PayMethods.label(st.payMethod) : '')]] : []),
+          ]))}
         </div>
-        <div><h4 style="font-size:14px;margin-bottom:8px">البيانات</h4>
-          <dl class="kv" style="margin-top:0;grid-template-columns:auto 1fr">
-            <dt>الهاتف</dt><dd class="num">${U.esc(st.phone || '—')}</dd>
-            <dt>البريد</dt><dd style="direction:ltr;text-align:start">${U.esc(st.email || '—')}</dd>
-            <dt>التعيين</dt><dd class="num">${st.hireDate ? D.fmt(st.hireDate) : '—'}</dd>
-            ${st.leftDate ? `<dt>انتهاء الخدمة</dt><dd class="num">${D.fmt(st.leftDate)}</dd>` : ''}
-            <dt>الدوام</dt><dd>${U.esc(st.schedule || '—')}</dd>
-            <dt>صرف الراتب</dt><dd>${U.esc(st.payMethod ? PayMethods.label(st.payMethod) : '—')}</dd>
-            <dt>العنوان</dt><dd>${U.esc(st.address || '—')}</dd>
-          </dl>
-          ${em.name || em.phone ? `<h4 style="font-size:13px;margin:14px 0 6px">جهة الطوارئ</h4>
-            <dl class="kv" style="margin-top:0;grid-template-columns:auto 1fr">
-              <dt>الاسم</dt><dd>${U.esc(em.name || '—')}</dd>
-              <dt>الصلة</dt><dd>${U.esc(em.relation || '—')}</dd>
-              <dt>الهاتف</dt><dd class="num">${U.esc(em.phone || '—')}</dd></dl>` : ''}
-          ${st.idNumber ? `<h4 style="font-size:13px;margin:14px 0 6px">وثيقة التعريف</h4>
-            <div class="sens">${U.esc(st.idType || 'وثيقة')} — ${U.esc(st.idNumber)}
-              ${st.idExpiry ? ` — تنتهي ${D.fmt(st.idExpiry)}` : ''}</div>` : ''}
-          ${st.notes ? `<h4 style="font-size:13px;margin:14px 0 6px">ملاحظات</h4><p style="margin:0">${U.esc(st.notes)}</p>` : ''}
+        <div>
+          ${canIdDoc ? sect('وثيقة التعريف', st.idNumber || idPhoto
+            ? `<div class="sens">${kv([
+                ['نوع الوثيقة', txt(st.idType || 'وثيقة')],
+                ['رقم الوثيقة', txt(st.idNumber), 'num'],
+                ['تنتهي في', st.idExpiry ? D.fmt(st.idExpiry) : '', 'num'],
+              ])}
+              ${idPhoto ? `<img src="${U.esc(idPhoto.dataUrl)}" alt="صورة الوثيقة"
+                   style="max-width:100%;max-height:170px;object-fit:contain;display:block;margin-top:10px;border-radius:6px">` : ''}
+              </div>`
+            : '<div class="t-sub">لا وثيقة مسجّلة.</div>') : ''}
+          ${custom.length ? sect('حقول النادي', kv(custom.map(fd =>
+            [fd.label, Fields.display(fd, (st.custom || {})[fd.key])]))) : ''}
+          ${sect('ملاحظات', st.notes
+            ? `<p style="margin:0;white-space:pre-wrap">${U.esc(st.notes)}</p>`
+            : '<div class="t-sub">لا ملاحظات.</div>')}
+          ${canUsers ? sect('حساب النظام', account
+            ? kv([
+                ['اسم الدخول', `<span style="direction:ltr;display:inline-block">${txt(account.username)}</span>`],
+                ['الدور', txt(Auth.roleName(account.roleKey))],
+                ['حالة الحساب', account.disabled ? 'موقوف' : 'فعّال'],
+                ['آخر دخول', account.lastLoginAt ? D.fmt(D.fromDate(new Date(account.lastLoginAt))) : 'لم تدخل بعد', 'num'],
+              ]) + '<div class="t-sub" style="margin-top:6px">الرابط بالاسم المعروض — لا يوجد ربط مباشر بين سجلّ الموظفة وحساب الدخول.</div>'
+            : '<div class="t-sub">لا حساب دخول باسمها.</div>') : ''}
+          ${canAudit ? sect('النشاط الأخير', activity.length
+            ? `<table class="mini-tbl"><tbody>${activity.map(a => `<tr>
+                 <td class="num" style="white-space:nowrap">${U.esc(D.fmt(D.fromDate(new Date(a.ts))))}</td>
+                 <td>${U.esc(a.summary)}</td>
+                 <td class="t-sub">${U.esc(a.actor || '')}</td></tr>`).join('')}</tbody></table>`
+            : '<div class="t-sub">لا أحداث مسجّلة على هذا السجلّ.</div>') : ''}
         </div>
       </div>
+      ${canMoney ? `<h4 style="font-size:14px;margin:16px 0 8px">سجل الرواتب</h4>
+        ${sheets.length ? `<table class="mini-tbl"><thead><tr><th>الشهر</th><th>الأساسي</th><th>الصافي</th><th>الحالة</th></tr></thead><tbody>
+          ${sheets.slice(0, 14).map(p => `<tr><td>${U.esc(D.monthName(p.period))}</td>
+            <td class="num">${Money.fmt(p.baseSalary)}</td><td class="num"><strong>${Money.fmt(p.net)}</strong></td>
+            <td>${p.status === 'paid' ? `<span class="pill ok">صُرف ${D.fmt(p.paidDate)}</span>` : '<span class="pill warn">غير مدفوع</span>'}</td></tr>`).join('')}
+          </tbody></table>` : '<div class="t-sub">لا كشوف رواتب بعد.</div>'}` : ''}
       ${sessions.length ? `<h4 style="font-size:14px;margin:16px 0 8px">حصصها</h4>
         <table class="mini-tbl"><thead><tr><th>التاريخ</th><th>الحصة</th><th>الوقت</th><th>حضرن</th></tr></thead><tbody>
         ${sessions.slice(0, 12).map(cs => { const bk = Svc.classes.bookingsOf(cs.id);
@@ -15302,9 +15704,12 @@ Screens.staffProfile = function(id){ /*v4*/
             <td class="num">${U.esc(cs.startTime)}</td>
             <td class="num">${bk.filter(b => b.status === 'attended').length} / ${bk.filter(b => b.status !== 'cancelled').length}</td></tr>`;
         }).join('')}</tbody></table>` : ''}`,
-    footer:`<button class="btn btn-primary" id="spEdit">تعديل البيانات</button>
+    footer:`<button class="btn btn-primary" data-perm="staff.edit" id="spEdit">تعديل البيانات</button>
             <button class="btn" data-close>إغلاق</button><div class="sp"></div>`,
-    onMount(ov){ ov.querySelector('#spEdit').onclick = () => { UI.stack[UI.stack.length - 1].close(); Forms.staff(id); }; }
+    onMount(ov){
+      const b = ov.querySelector('#spEdit');
+      if (b) b.onclick = () => { UI.stack[UI.stack.length - 1].close(); Forms.staff(id); };
+    }
   });
 };
 
@@ -15398,7 +15803,9 @@ Object.assign(Actions, {
         const r = await DesktopFiles.save(blob, name, 'backup');
         await Backup.markExported();
         await Audit.log('system','backup',`نسخة احتياطية يدوية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل) — ${r.name}`);
-        UI.toast(`تم حفظ النسخة الاحتياطية — ${U.esc(Desktop.pretty(r.folder))}`, 'ok', 8000);
+        UI.toast('تم حفظ النسخة الاحتياطية', 'ok', 9000,
+          { where: `${r.name} — ${Desktop.pretty(r.folder)}`,
+            actions: [{ label:'فتح المجلد', onClick:() => Desktop.openFolder('backup') }] });
       } else {
         UI.download(blob, name);
         await Backup.markExported();
@@ -16793,6 +17200,29 @@ async function boot(){
       e.preventDefault(); $('globalSearch').focus();
     }
   });
+
+  /* ----------------------- Ctrl+P في تطبيق سطح المكتب -----------------------
+     هذا هو الطريق الأخير الذي كان يوصل إلى معاينة متصفّح WebView2 — تلك التي
+     تردّ بعبارة إنجليزية تقول إن التطبيق لا يدعم المعاينة. فزرّ «طباعة» في
+     الشاشات يمرّ على `ShowPrintUI` منذ المرحلة السابقة، أمّا اختصار لوحة
+     المفاتيح فكان يذهب إلى المحرّك مباشرة بلا أن يمرّ بنا.
+
+     فيُلتقط هنا ويُمنع من الوصول إلى المحرّك، ثم يُترجم إلى فعل النظام
+     نفسه: زرّ الطباعة الظاهر في الشاشة أو في النافذة المفتوحة. وإن لم يكن
+     في الشاشة ما يُطبع قيل ذلك بالعربية بدل صمتٍ أو رسالةٍ إنجليزية.
+
+     وفي المتصفح لا يُلمس الاختصار: طباعة المتصفح تبقى كما هي (المرحلة 30). */
+  if (Desktop.on()) document.addEventListener('keydown', e => {
+    const key = (e.key || '').toLowerCase();
+    if (key !== 'p' || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault(); e.stopPropagation();
+    /* أقرب زرّ طباعة: ما في النافذة المفتوحة أوّلاً ثم ما في الشاشة */
+    const scope = UI.stack.length ? UI.stack[UI.stack.length - 1].el : document;
+    const btn = [...scope.querySelectorAll('button')].find(b =>
+      !b.disabled && b.offsetParent !== null && /طباعة|طباعه|اطبع/.test(b.textContent || ''));
+    if (btn) btn.click();
+    else UI.toast('لا يوجد مستند للطباعة في هذه الشاشة — افتحي الوصل أو التقرير ثم اطبعي.','warn', 6000);
+  }, true);
   window.addEventListener('hashchange', renderRoute);
   window.addEventListener('error', ev => { Log.error('خطأ غير متوقع', ev.message); });
   window.addEventListener('unhandledrejection', ev => {
@@ -16824,9 +17254,17 @@ async function boot(){
   return { adapter:adapter.kind, migration:mig };
 }
 
-/* الإقلاع لا يُترك بلا شبكة أمان: شاشة الهيكل العظمي إلى الأبد أسوأ من رسالة خطأ. */
+/* الإقلاع لا يُترك بلا شبكة أمان: شاشة الهيكل العظمي إلى الأبد أسوأ من رسالة خطأ.
+
+   وفي تطبيق سطح المكتب تُضاف شبكة ثانية: النافذة الرئيسية مخفيّة خلف نافذة
+   البدء حتى ينتهي هذا، فيجب أن تُكشف في الحالتين — بنجاح الإقلاع وبفشله.
+   وإلا بقيت المستخدمة أمام شعارٍ لا ينتهي ولا تعرف أن شيئاً فشل.
+
+   والنداء بعد الرسم لا قبله: ما يُكشف يجب أن يكون مرسوماً. وفشل النداء
+   نفسه لا يوقف شيئاً — `Desktop.ready` تبتلعه وتسجّله، ومن ورائه حارسٌ
+   زمنيّ في طرف الصدأ يكشف النافذة مهما حدث. */
 async function bootSafely(){
-  try { const info = await boot(); _readyResolve(info); }
+  try { const info = await boot(); Desktop.ready(); _readyResolve(info); }
   catch(e){
     Log.error('فشل إقلاع النظام', e);
     const root = $('viewRoot');
@@ -16836,6 +17274,7 @@ async function bootSafely(){
       <p class="t-sub">جرّبي إغلاق النوافذ الأخرى التي تفتح النظام ثم إعادة تحميل الصفحة.
          إذا تكرّر الخطأ فافتحي الملف من متصفح عادي خارج وضع التصفّح الخاص.</p>
       <button class="btn btn-primary" onclick="location.reload()">إعادة المحاولة</button></div></div>`;
+    Desktop.ready();
     _readyReject(e);
   }
 }
@@ -16845,7 +17284,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
-              Desktop, DesktopFiles, FOLDERS,
+              Desktop, DesktopFiles, FOLDERS, FileCentre,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, renderRoute, go, State, buildNav, currentRoute, navBadges,
               ready:AppReady };

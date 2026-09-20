@@ -32,7 +32,26 @@ function installBridge(opts) {
     backup: 'Backups\\manual', 'backup-manual': 'Backups\\manual',
     'backup-auto': 'Backups\\automatic', 'backup-automatic': 'Backups\\automatic',
   };
-  const FS = { files: [], calls: [], fail: Object.assign({}, opts && opts.fail) };
+  /* المفتاح القانوني للفئة — كما يُعيده `Category::key()` في طرف الصدأ */
+  const CANON = {
+    csv: 'csv', excel: 'excel', word: 'word',
+    backup: 'backup-manual', 'backup-manual': 'backup-manual',
+    'backup-auto': 'backup-auto', 'backup-automatic': 'backup-auto',
+  };
+  const CAT_FOLDER = {
+    'backup-manual': 'Backups\\manual', 'backup-auto': 'Backups\\automatic',
+    csv: 'Exports\\CSV', excel: 'Exports\\Excel', word: 'Exports\\Word',
+  };
+  const CAT_EXT = { csv: ['csv'], excel: ['xlsx', 'xls'], word: ['docx', 'doc'],
+                    'backup-manual': ['json'], 'backup-auto': ['json'] };
+  const extOk = (name, cat) => {
+    const i = String(name).lastIndexOf('.');
+    if (i < 0) return false;
+    const e = String(name).slice(i + 1).toLowerCase();
+    return (CAT_EXT[cat] || []).includes(e);
+  };
+  const FS = { files: [], calls: [], opened: [], openedFolders: [], revealed: false,
+               fail: Object.assign({}, opts && opts.fail) };
   window.__TG_FS__ = FS;
 
   /* تعقيم مطابق لقواعد طرف الصدأ */
@@ -99,6 +118,48 @@ function installBridge(opts) {
       return doomed.map(f => f.name);
     },
     tg_print: () => { if (FS.fail.print) throw FS.fail.print; return null; },
+
+    /* ---- جاهزية الواجهة: تُغلق نافذة البدء وتُظهر الرئيسية ---- */
+    tg_ready: () => { if (FS.fail.ready) throw FS.fail.ready; FS.revealed = true; return null; },
+
+    /* ---- مركز الملفات: يقرأ المجلّدات لا جدولاً ثانياً ----
+       يحاكي قواعد طرف الصدأ: الفئة تُعطي المفتاح القانوني، واللاحقة تُصفّي
+       ما ليس من إنتاج النظام، ولكلّ فئة حدٌّ من الأحدث. */
+    tg_list_files: (a) => {
+      if (FS.fail.list) throw FS.fail.list;
+      const per = Math.min(300, Math.max(1, Number(a.perCategory) || 60));
+      const out = [];
+      Object.keys(CAT_FOLDER).forEach(cat => {
+        const rows = FS.files
+          .filter(f => CANON[f.category] === cat && extOk(f.name, cat))
+          .sort((x, y) => y.modified - x.modified)
+          .slice(0, per)
+          .map(f => ({ category: cat,
+                       kind: cat === 'backup-auto' ? 'automatic' : cat === 'backup-manual' ? 'manual' : cat,
+                       name: f.name, bytes: f.bytes, modified: f.modified }));
+        out.push(...rows);
+      });
+      return out.sort((x, y) => y.modified - x.modified);
+    },
+    tg_open_file: (a) => {
+      if (FS.fail.open) throw FS.fail.open;
+      const cat = CANON[a.category];
+      if (!cat) throw 'فئة غير معروفة';
+      const name = clean(String(a.name || ''));                  /* يُعقَّم كما عند الكتابة */
+      if (!extOk(name, cat)) throw 'نوع الملف لا يخصّ هذا المجلّد';
+      const hit = FS.files.find(f => CANON[f.category] === cat && f.name === name);
+      if (!hit) throw 'الملف لم يعد موجوداً';
+      FS.opened.push({ category: cat, name });
+      return null;
+    },
+    tg_open_folder: (a) => {
+      if (FS.fail.open) throw FS.fail.open;
+      const c = a.category == null || a.category === '' ? 'root' : a.category;
+      const cat = c === 'root' ? 'root' : CANON[c];
+      if (!cat) throw 'فئة غير معروفة';
+      FS.openedFolders.push(cat);
+      return null;
+    },
   };
 
   window.__TAURI_INTERNALS__ = {
@@ -113,6 +174,8 @@ function installBridge(opts) {
   };
 }
 
+/* يُصدَّر ليُعاد استعماله في `tests/desktop-ux.js`: جسرٌ مزيّف واحد لا
+   اثنان، فلا تتفرّق قواعد المحاكاة عن قواعد طرف الصدأ في ملفين. */
 module.exports = function register({ group, record, TESTS_JS }) {
   const conf = () => JSON.parse(fs.readFileSync(CONF, 'utf8'));
 
@@ -639,3 +702,5 @@ module.exports = function register({ group, record, TESTS_JS }) {
     record('جسر سطح المكتب — المتصفح كما كان', rows, []);
   });
 };
+
+module.exports.installBridge = installBridge;

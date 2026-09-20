@@ -28,9 +28,27 @@
         "closable": true,
         "decorations": true,
         "fullscreen": false,
-        "visible": true,
+        "visible": false,
         "dragDropEnabled": false,
         "zoomHotkeysEnabled": true
+      },
+      {
+        "label": "splash",
+        "url": "splash.html",
+        "title": "تبارك جيم",
+        "width": 380,
+        "height": 300,
+        "center": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "visible": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

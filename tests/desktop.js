@@ -129,9 +129,46 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     c.bundle.icon.forEach(rel =>
       ok(`أصل الأيقونة موجود: ${rel}`, fs.existsSync(path.join(ROOT, 'src-tauri', rel))));
 
-    /* ----- النافذة ----- */
-    const w = c.app.windows[0];
-    ok('نافذة واحدة فقط', c.app.windows.length === 1, c.app.windows.length);
+    /* ----- النوافذ -----
+       كانت القاعدة «نافذة واحدة فقط» وهي تقيس العدد لا المعنى. والمعنى أدقّ:
+       **مساحة عمل واحدة**. فنافذة البدء لا تحمل واجهة ولا حالة ولا منطق عمل،
+       وتُغلق قبل أن تُفتح الرئيسية. فيُقاس ذلك مباشرةً بدل عدّ النوافذ:
+       واحدة للعمل، وأخرى فارغة تموت عند الجاهزية، ولا ثالثة. */
+    const w = c.app.windows.find(x => x.label === 'main');
+    const sp = c.app.windows.find(x => x.label === 'splash');
+    ok('مساحة عمل واحدة: نافذة رئيسية واحدة لا أكثر',
+       c.app.windows.filter(x => x.label === 'main').length === 1,
+       c.app.windows.map(x => x.label).join('، '));
+    ok('ولا نافذة ثالثة غير البدء', c.app.windows.length <= 2, c.app.windows.length);
+    ok('النافذة الرئيسية مخفيّة حتى تجهز الواجهة', w.visible === false, String(w.visible));
+    ok('نافذة البدء ظاهرة عند الإقلاع', !!sp && sp.visible === true);
+    ok('نافذة البدء بلا حدود ولا شريط مهام — ليست نافذة تطبيق',
+       !!sp && sp.decorations === false && sp.skipTaskbar === true);
+    ok('نافذة البدء لا تُغلَق بيد المستخدمة — يُغلقها النظام',
+       !!sp && sp.closable === false);
+    /* نافذة البدء ليست تطبيقاً ثانياً: لا سكربت فيها أصلاً، فلا منطق عمل
+       يُصان في مكانين ولا نسخة ثانية من أي شاشة. */
+    const splashSrc = fs.readFileSync(path.join(ROOT, 'desktop', 'splash.html'), 'utf8');
+    ok('نافذة البدء بلا سكربت واحد', !/<script/i.test(splashSrc));
+    ok('ولا تلمس قاعدة البيانات ولا الجسر الأصليّ',
+       !/indexedDB|__TAURI|invoke\(|localStorage/i.test(splashSrc));
+    ok('ولا تحمل مفردة عمل واحدة',
+       !/(member|subscription|payment|revenue|مشترك|اشتراك|دفعة|إيراد)/i.test(splashSrc));
+    ok('وتحترم تقليل الحركة', /prefers-reduced-motion/.test(splashSrc));
+    ok('وفيها علامة النظام واسمه', /viewBox="0 0 512 512"/.test(splashSrc) && /تبارك جيم/.test(splashSrc));
+    ok('نافذة البدء تُنسخ إلى مجلّد البناء',
+       fs.existsSync(path.join(ROOT, 'app', 'splash.html'))
+       && fs.readFileSync(path.join(ROOT, 'app', 'splash.html'), 'utf8') === splashSrc);
+    /* الحارس: نافذة بدء عالقة أسوأ من غيابها. فمن يكشف الرئيسية ثلاثة:
+       نجاح الإقلاع، وفشله، وحارسٌ زمنيّ في الصدأ لا يتعلّق بالواجهة. */
+    const mainRsEarly = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
+    ok('للنافذة الرئيسية حارس زمنيّ يكشفها مهما حدث',
+       /SPLASH_WATCHDOG_MS/.test(mainRsEarly) && /reveal_main\(&handle\)/.test(mainRsEarly));
+    ok('والكشف يقع مرة واحدة لا مرّتين', /REVEALED\.swap\(true/.test(mainRsEarly));
+    const appHtml = fs.readFileSync(SOURCE, 'utf8');
+    ok('الواجهة تعلن جاهزيتها عند النجاح وعند الفشل معاً',
+       (appHtml.match(/Desktop\.ready\(\)/g) || []).length >= 2,
+       (appHtml.match(/Desktop\.ready\(\)/g) || []).length);
     ok('حدّ أدنى للحجم مضبوط', w.minWidth >= 1024 && w.minHeight >= 600, `${w.minWidth}×${w.minHeight}`);
     ok('الحجم الافتراضي يسع شاشة 1366×768', w.width <= 1366 && w.height <= 768 + 32, `${w.width}×${w.height}`);
     ok('النافذة قابلة للتحجيم والتكبير والتصغير',
@@ -162,22 +199,53 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
        جسر ملفات وطباعة لم يعد العدد يقول شيئاً — فيُقاس المعنى نفسه:
        لا مفردة عمل واحدة في الصدأ، ولا مسار يأتي من الواجهة، ولا صدفة
        ولا شبكة، وقائمة الأوامر مغلقة معروفة. */
-    const rustSrc = fs.readdirSync(path.join(ROOT, 'src-tauri', 'src'))
-      .map(f => fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', f), 'utf8')).join('\n');
+    const rustFiles = fs.readdirSync(path.join(ROOT, 'src-tauri', 'src'))
+      .map(f => fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', f), 'utf8'));
+    const rustSrc = rustFiles.join('\n');
+    /* ما يُشحَن فعلاً — بلا وحدات الاختبار. وإلا قاس الفحصُ نصَّ اختبارٍ
+       يُثبت أن «cmd.exe» **مرفوض** فيحسبه استعمالاً له. */
+    const rustShipped = rustFiles.map(t => { const i = t.indexOf('#[cfg(test)]');
+      return i < 0 ? t : t.slice(0, i); }).join('\n');
     const business = ['member', 'subscription', 'payment', 'revenue', 'expense', 'receipt',
                       'invoice', 'inventory', 'supplier', 'salary', 'attendance'];
     const leaked = business.filter(w => new RegExp(`\\b${w}`, 'i').test(rustSrc));
     ok('لا مفردة من مفردات العمل في طرف الصدأ', leaked.length === 0, leaked.join('، '));
-    ok('لا تنفيذ أوامر نظام', !/std::process|Command::new/.test(rustSrc));
+    /* «لا تنفيذ أوامر نظام» كانت تمنع فتح ملفٍّ ببرنامجه المعتاد — وهو ما
+       تحتاجه المستخدمة ولا يستطيعه محرّك العرض. فالقاعدة تُقاس الآن بما
+       تعنيه فعلاً: لا صدفة تفسّر نصّاً، ولا وسيط يأتي من الواجهة.
+       نداءٌ واحد إلى مستكشف ويندوز، ووسيطه مسارٌ بناه الصدأ. */
+    const spawns = rustSrc.match(/Command::new\(([^)]*)\)/g) || [];
+    ok('لا يُنفَّذ إلا مستكشف ويندوز',
+       spawns.every(x => /"explorer\.exe"/.test(x)), spawns.join('، ') || 'لا شيء');
+    ok('ولا صدفة تفسّر نصّاً (cmd/powershell/sh)',
+       !/(cmd\.exe|powershell|\/bin\/sh|\bsh -c\b|shell_execute)/i.test(rustShipped));
+    /* والمقابل يُقاس أيضاً: اختبارات الصدأ تُثبت أن مساراً كهذا مرفوض */
+    ok('واختبار الصدأ يُثبت رفض مسار نظام مطلق',
+       /resolve_existing\(&tmp, Category::Csv, "C:/.test(rustSrc));
+    ok('ولا وسيط يُبنى بدمج نصوص', !/\.arg\(\s*format!/.test(rustSrc));
+    ok('والوسيط الوحيد مسارٌ من نوع Path بناه الصدأ',
+       /fn open_with_shell\(target: &Path\)/.test(rustSrc) && /\.arg\(target\)/.test(rustSrc));
+    /* وما يصل إلى `open_with_shell` يمرّ على تحقّق واحد لا مفرّ منه */
+    ok('ولا يُفتح شيء إلا بعد التحقّق من فئته واسمه ووجوده',
+       /fn resolve_existing/.test(rustSrc)
+       && /resolve_existing\(&documents\(&app\)\?, cat, &name\)/.test(rustSrc));
     ok('لا شبكة', !/reqwest|TcpStream|hyper::|ureq/.test(rustSrc));
     const cmds = (rustSrc.match(/#\[tauri::command\]\s*(?:pub\s+)?fn\s+(\w+)/g) || [])
       .map(m => m.split(/\s+/).pop());
-    const allowed = ['tg_env', 'tg_save', 'tg_list_backups', 'tg_read_backup', 'tg_prune_backups', 'tg_print'];
+    const allowed = ['tg_env', 'tg_save', 'tg_list_files', 'tg_list_backups', 'tg_read_backup',
+                     'tg_prune_backups', 'tg_open_file', 'tg_open_folder', 'tg_ready', 'tg_print'];
     ok('الأوامر المكشوفة هي المعروفة وحدها',
        cmds.length === allowed.length && cmds.every(c => allowed.includes(c)), cmds.join('، '));
     /* أهمّ قيد: لا أمر يقبل مساراً. الفئة تقرّر المجلّد في الصدأ. */
     const takesPath = /fn tg_\w+\([^)]*\b(path|dir|folder|full_path)\s*:\s*(String|PathBuf|&str)/.test(rustSrc);
     ok('ولا أمر يقبل مساراً من الواجهة', !takesPath);
+    /* أوامر الفتح خصوصاً: فئة من قائمة مغلقة واسم ملف، لا شيء غيرهما */
+    ok('أمر فتح الملف يقبل فئةً واسماً فقط',
+       /fn tg_open_file\(app: tauri::AppHandle, category: String, name: String\)/.test(rustSrc));
+    ok('وأمر فتح المجلّد يقبل فئةً فقط',
+       /fn tg_open_folder\(app: tauri::AppHandle, category: Option<String>\)/.test(rustSrc));
+    ok('والفئة تُترجم إلى مجلّد في الصدأ لا في الواجهة',
+       /Category::parse\(&category\)\.ok_or\("فئة غير معروفة"\)/.test(rustSrc));
 
     /* ----- CSP ----- */
     const csp = c.app.security.csp || '';
