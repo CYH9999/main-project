@@ -7499,6 +7499,18 @@ const UI = {
   #tgPrintRoot .card{box-shadow:none}
 }`;
   },
+  /* ينتظر اكتمال صور المستند — أو المهلة، أيّهما أسبق */
+  printAwaitMedia(root, ms){
+    const imgs = [...root.querySelectorAll('img')].filter(i => !i.complete);
+    if (!imgs.length) return Promise.resolve();
+    return Promise.race([
+      Promise.all(imgs.map(i => new Promise(res => {
+        i.addEventListener('load', res, { once:true });
+        i.addEventListener('error', res, { once:true });   /* صورة مكسورة لا تُعلّق الطباعة */
+      }))),
+      new Promise(res => setTimeout(res, ms)),
+    ]);
+  },
   /* يُعيد true إن فُتحت واجهة الطباعة، وnull إن لم تُفتح — والرسالة تُقال
      بلغة المستخدمة لا بلغة المتصفّح. */
   async printNative(bodyHtml, opts){
@@ -7516,6 +7528,13 @@ const UI = {
     root.innerHTML = bodyHtml;
     document.body.appendChild(style);
     document.body.appendChild(root);
+
+    /* الصور تُحمَّل بعد إدراج الـHTML لا معه. وواجهة الطباعة تصوّر ما هو
+       مرسوم **الآن** — فنداءٌ فوريّ يطبع ترويسةً بلا شعار. في المتصفح كان
+       سطر `window.onload` في المستند يتكفّل بهذا؛ وهنا لا مستند مستقلّ
+       فيُنتظر اكتمال الصور صراحةً، بحدٍّ أعلى حتى لا تتعلّق الطباعة على
+       صورة لا تكتمل. */
+    await UI.printAwaitMedia(root, 2000);
 
     let closed = false;
     const undo = () => {

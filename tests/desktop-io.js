@@ -347,6 +347,31 @@ module.exports = function register({ group, record, TESTS_JS }) {
         ok(`${name}: لا يبقى أثر بعدها`, !document.getElementById('tgPrintRoot'));
       }
 
+      /* --- الترويسة لا تُطبع بلا شعار --- */
+      const B64GIF = 'R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
+                   + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=';
+      const bin = atob(B64GIF); const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      await window.TG.Brand.setMedia('logo', new File([arr], 'شعار.gif', { type: 'image/gif' }));
+      /* تُلتقط حالة الصور في اللحظة التي يُنادى فيها أمر الطباعة */
+      let stateAtPrint = null;
+      const realInvoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = function (cmd, args) {
+        if (cmd === 'tg_print') {
+          const imgs = [...document.querySelectorAll('#tgPrintRoot img')];
+          stateAtPrint = { total: imgs.length, ready: imgs.filter(i => i.complete && i.naturalWidth > 0).length };
+        }
+        return realInvoke.call(this, cmd, args);
+      };
+      await Print.open('و', Print.receiptHtml(rc, { format: 'a4' }), {});
+      window.__TAURI_INTERNALS__.invoke = realInvoke;
+      ok('ترويسة الوصل تحمل صورة الهوية', !!stateAtPrint && stateAtPrint.total > 0,
+         JSON.stringify(stateAtPrint));
+      /* الصور تُحمَّل بعد إدراج الـHTML. فنداءٌ فوريّ يطبع ترويسةً فارغة. */
+      ok('ولا تُنادى الطباعة قبل اكتمال صورها',
+         !!stateAtPrint && stateAtPrint.ready === stateAtPrint.total, JSON.stringify(stateAtPrint));
+      await settle();
+
       /* --- ضغطتان متتاليتان --- */
       const n1 = printCalls();
       Print.open('و', Print.receiptHtml(rc, { format: 'a4' }), {});

@@ -92,7 +92,10 @@ fn tg_save(
 
     // يُكتب إلى ملف مؤقّت ثم يُنقل: انقطاع في المنتصف لا يترك ملفاً ناقصاً
     // يبدو سليماً. والنقل داخل المجلّد نفسه ذرّيّ عملياً على ويندوز.
-    let tmp = target.with_extension("tg-part");
+    let tmp = target.with_file_name(format!(
+        "{}.tg-part",
+        target.file_name().and_then(|s| s.to_str()).unwrap_or(&name)
+    ));
     std::fs::write(&tmp, &bytes).map_err(|e| format!("تعذّرت الكتابة: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, &target) {
         let _ = std::fs::remove_file(&tmp);
