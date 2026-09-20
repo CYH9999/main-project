@@ -26,6 +26,10 @@ export const SPLASH = path.join(ROOT, 'desktop', 'splash.html');
 export const DIST   = path.join(ROOT, 'app');
 export const TARGET = path.join(DIST, 'index.html');
 export const SPLASH_TARGET = path.join(DIST, 'splash.html');
+/* بصمة الواجهة المولَّدة، تُكتب لتُخبز في الملف التنفيذي (انظري build.rs).
+   بها يصير في الملف التنفيذي دليلٌ على **أي واجهة** يحملها، فلا يبقى
+   «بُني بعد التهيئة» استنتاجاً من ترتيب الخطوات بل حقيقةً مقروءة منه. */
+export const STAMP = path.join(DIST, 'frontend-sha256.txt');
 
 export function prepare(){
   if (!fs.existsSync(SOURCE)) throw new Error(`مصدر الواجهة غير موجود: ${SOURCE}`);
@@ -40,8 +44,10 @@ export function prepare(){
   if (!fs.existsSync(SPLASH_TARGET) || !fs.readFileSync(SPLASH_TARGET).equals(splash))
     fs.writeFileSync(SPLASH_TARGET, splash);
 
-  return { bytes: bytes.length, splashBytes: splash.length,
-           sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  fs.writeFileSync(STAMP, sha256);
+
+  return { bytes: bytes.length, splashBytes: splash.length, sha256 };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)){

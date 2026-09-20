@@ -60,6 +60,14 @@ struct Env {
     backups: String,
     can_print: bool,
     can_open: bool,
+    // هويّة البناء — مخبوزة وقت الترجمة في `build.rs`، لا تُحسب هنا ولا
+    // تُكتب في الواجهة. فما تعرضه الشاشة هو ما في الملف التنفيذي فعلاً.
+    version: String,
+    git_sha: String,
+    git_short: String,
+    build_at: u64,
+    build_id: String,
+    frontend_sha: String,
 }
 
 fn documents(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -80,6 +88,12 @@ fn tg_env(app: tauri::AppHandle) -> Result<Env, String> {
         backups: root.join("Backups").display().to_string(),
         can_print: cfg!(windows),
         can_open: cfg!(windows),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        git_sha: env!("TG_GIT_SHA").to_string(),
+        git_short: env!("TG_GIT_SHORT").to_string(),
+        build_at: env!("TG_BUILD_AT").parse().unwrap_or(0),
+        build_id: env!("TG_BUILD_ID").to_string(),
+        frontend_sha: env!("TG_FRONTEND_SHA").to_string(),
     })
 }
 

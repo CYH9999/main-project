@@ -82,7 +82,11 @@ function installBridge(opts) {
   const handlers = {
     tg_env: () => ({
       platform: 'windows', root: R,
-      exports: R + '\\Exports', backups: R + '\\Backups', can_print: true,
+      exports: R + '\\Exports', backups: R + '\\Backups', can_print: true, can_open: true,
+      /* هويّة البناء كما يخبزها `build.rs` — الواجهة تقرؤها ولا تخترعها */
+      version: '7.6.1', git_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+      git_short: 'a1b2c3d', build_at: 1789900000, build_id: 'a1b2c3d-ci42',
+      frontend_sha: 'deadbeef',
     }),
     tg_save: (a) => {
       if (FS.fail.save) throw FS.fail.save;

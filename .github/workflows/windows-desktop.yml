@@ -1,9 +1,14 @@
 # ============================================================================
 # بناء تطبيق تبارك جيم لويندوز.
 #
-# لماذا في CI؟ لأن مثبّت ويندوز لا يُبنى إلا على ويندوز: NSIS وWiX وأيقونة
-# الملف التنفيذي كلها أدوات ويندوز. فهذا الملف هو الطريق المُعاد إنتاجه من
-# المستودع إلى ملف تثبيت حقيقي، بلا جهاز مطوّر في الوسط.
+# لماذا في CI؟ لأن مثبّت ويندوز لا يُبنى إلا على ويندوز: NSIS وأيقونة الملف
+# التنفيذي أدوات ويندوز. فهذا الملف هو الطريق المُعاد إنتاجه من المستودع إلى
+# ملف تثبيت حقيقي، بلا جهاز مطوّر في الوسط.
+#
+# ولماذا كل هذه البوّابات؟ لأن بناءً «ناجحاً» سلّم المستخدمة مثبّتاً يحمل
+# الرقم 7.6.0 نفسه الذي تحمله نسخة أقدم، فاختبرت القديم ظنّاً أنه الجديد.
+# النجاح ليس دليلاً والرقم ليس هويّة: فلا يُرفع مثبّت الآن حتى يُثبَت أنه
+# مبنيٌّ من هذه الشيفرة، وأنه يحمل ميزاتها، وأن المثبَّت منه يحمل بصمتها.
 #
 # المخرَج غير موقَّع رقميّاً — لا شهادة توقيع في هذا المستودع ولا يجوز أن
 # تكون. انظري docs/DESKTOP-BUILD.md.
@@ -18,9 +23,11 @@ on:
     branches: ['claude/**']
     paths:
       - 'tabarak-gym 3.0.html'
+      - 'desktop/**'
       - 'src-tauri/**'
       - 'scripts/**'
       - 'package.json'
+      - '.gitattributes'
       - '.github/workflows/windows-desktop.yml'
 
 permissions:
@@ -39,6 +46,12 @@ jobs:
           node-version: '22'
       - name: تثبيت الاعتماديات
         run: npm install
+
+      # البوّابة الأولى وأرخصها: هل في الشيفرة المسحوبة تطبيقُ كل ميزة؟
+      # تسقط هنا قبل أن يُبنى شيء، لا بعد أربعين دقيقة من البناء.
+      - name: بوّابة المصدر — الميزات موجودة والأرقام متّفقة
+        run: node scripts/verify-build.mjs source
+
       - name: تنزيل متصفّح الاختبار
         run: npx playwright install --with-deps chromium
       - name: تشغيل المجموعة كاملة
@@ -48,10 +61,6 @@ jobs:
       # كصندوق مستقلّ فتُقاس على لينكس كذلك، وتُعاد كاملةً على ويندوز أدناه.
       - name: قواعد المسارات في طرف الصدأ (وحدها، بلا شجرة النوافذ)
         run: node scripts/check-paths-rs.mjs
-
-      # اختبارات طرف الصدأ تُشغَّل في وظيفة ويندوز أدناه — هناك يُشحن الكود.
-      # وبناؤه على لينكس يتطلّب حزمة GTK/WebKit كاملة لا يحتاجها فحص قواعد
-      # المسارات في شيء، فلا يُنصب ذلك كلّه لإشارة مكرَّرة.
 
   # ------------------------------------------------------------------ المثبِّت
   installer:
@@ -68,60 +77,111 @@ jobs:
       - name: تحديث سلسلة أدوات الصدأ
         run: rustup update stable && rustup default stable
 
-      - name: ذاكرة مؤقتة لبناء الصدأ
+      # ------------------------------------------------------------------
+      # الذاكرة المؤقّتة: **الاعتماديات وحدها**.
+      #
+      # كان `src-tauri/target` كلّه مخزَّناً، وفيه `target/release` — أي
+      # الملفّ التنفيذي ومخرجات التغليف. فكان بناءٌ يعود بمثبّت بناءٍ سابق
+      # (خرجت حزمة فيها مثبّت 7.5.0 مع 7.6.0 لهذا السبب بالضبط). ولا يُصلح
+      # ذلك مسحُ المجلّد بعد استعادته: ما يُستعاد يجب ألّا يكون هناك أصلاً.
+      #
+      # فالمخزَّن الآن سجلّ الحزم وحده — يوفّر التنزيل ولا يحمل ناتج بناء.
+      # والترجمة تقع كاملةً في كل مرّة: دقائق ثمنها إثباتُ أن ما يخرج جديد.
+      # ------------------------------------------------------------------
+      - name: ذاكرة مؤقتة لاعتماديات الصدأ (بلا مخرجات بناء)
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-deps-
 
       - name: تثبيت الاعتماديات
         run: npm install
 
+      # حارس: لو بقي ناتج بناء من أي مصدر، يُمسح قبل أن يُبنى شيء.
+      - name: لا ناتج بناء سابق في مساحة العمل
+        shell: pwsh
+        run: |
+          foreach ($p in @("src-tauri/target/release", "app")) {
+            if (Test-Path $p) { Write-Host "مسح $p"; Remove-Item -Recurse -Force $p }
+          }
+          Write-Host "مساحة العمل نظيفة."
+
+      - name: بوّابة المصدر — الميزات موجودة والأرقام متّفقة
+        run: node scripts/verify-build.mjs source
+
       - name: تهيئة الواجهة (المصدر الواحد ⇐ مجلّد البناء)
         run: npm run prepare:frontend
+
+      # البوّابة الثانية: المولَّد = المصدر بايتاً ببايت (ولهذا وُجد
+      # `.gitattributes`: بدونه يحوّل ويندوز كل LF إلى CRLF فلا تتطابق بصمة
+      # أبداً)، وفيه العلامات نفسها.
+      - name: بوّابة الواجهة المولَّدة — بصمة مطابقة وعلامات موجودة
+        run: node scripts/verify-build.mjs frontend
 
       - name: اختبارات طرف الصدأ على ويندوز
         run: cargo test --manifest-path src-tauri/Cargo.toml --bins
 
-      # الذاكرة المؤقّتة تُعيد `src-tauri/target` كما كان، وفيه مثبّتات
-      # الإصدارات السابقة. فتُرفع مع الجديد ويُنزّل أحدُها بالخطأ. تُمسح
-      # مخرجات التغليف قبل البناء حتى لا تحوي الحزمة إلا بناء اليوم.
-      - name: مسح مخرجات تغليف سابقة
-        shell: pwsh
-        run: |
-          $b = "src-tauri/target/release/bundle"
-          if (Test-Path $b) { Remove-Item -Recurse -Force $b }
-
       - name: بناء مثبّت NSIS
         run: npx tauri build --bundles nsis
 
-      - name: بناء حزمة MSI (اختياري — لا يُسقط البناء إن تعذّر)
-        continue-on-error: true
-        run: npx tauri build --bundles msi
+      # البوّابة الثالثة: الملفّ التنفيذي المبنيّ يحمل بصمة هذه الواجهة
+      # وبصمة هذا الالتزام — مخبوزتين وقت الترجمة في build.rs.
+      - name: بوّابة الملف التنفيذي — يحمل هويّة هذا البناء
+        shell: pwsh
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          $exe = Get-ChildItem "src-tauri/target/release" -Filter *.exe | Select-Object -First 1
+          node scripts/verify-build.mjs binary $exe.FullName
 
-      - name: قياس المخرجات
+      - name: بوّابة المثبّت — ملفّ واحد باسمٍ يحمل النسخة
+        run: node scripts/verify-build.mjs installer src-tauri/target/release/bundle/nsis
+
+      # البوّابة الرابعة وأصدقها: يُثبَّت المثبّت فعلاً في CI، ويُقرأ
+      # الملفّ التنفيذي **المثبَّت** — لا المبنيّ. فما يصل إلى المستخدمة هو
+      # ما فُحص، لا شيء يشبهه.
+      - name: تثبيت المثبّت فعلاً وفحص ما ثُبّت
+        shell: pwsh
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          $setup = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter *.exe | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP "tg-verify"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          Write-Host "تثبيت صامت: $($setup.Name) ⟵ $dest"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S","/D=$dest" -Wait -PassThru
+          Write-Host "رمز الخروج: $($p.ExitCode)"
+          if (-not (Test-Path $dest)) { throw "التثبيت الصامت لم يُنشئ مجلّد التثبيت" }
+          Get-ChildItem $dest -Recurse -Filter *.exe | ForEach-Object { Write-Host "  مثبَّت: $($_.Name)  $($_.Length) bytes" }
+          $installed = Get-ChildItem $dest -Filter *.exe | Select-Object -First 1
+          if (-not $installed) { throw "لا ملف تنفيذي في مجلّد التثبيت" }
+          node scripts/verify-build.mjs binary $installed.FullName
+
+      - name: قياس المخرجات وبصماتها
         shell: pwsh
         run: |
           $bundle = "src-tauri/target/release/bundle"
-          Write-Host "=== الملف التنفيذي ==="
-          Get-ChildItem "src-tauri/target/release" -Filter *.exe |
-            ForEach-Object { "{0,-40} {1,10:N0} bytes" -f $_.Name, $_.Length }
-          Write-Host "=== المثبّتات ==="
-          Get-ChildItem $bundle -Recurse -Include *.exe,*.msi -ErrorAction SilentlyContinue |
+          Write-Host "=== هويّة البناء ==="
+          Write-Host ("الالتزام : {0}" -f "${{ github.sha }}")
+          Write-Host ("الفرع    : {0}" -f "${{ github.ref_name }}")
+          Write-Host ("النسخة   : {0}" -f (node -p "require('./package.json').version"))
+          Write-Host ("الواجهة  : {0}" -f (Get-Content app/frontend-sha256.txt))
+          Write-Host "=== المثبّت ==="
+          Get-ChildItem $bundle -Recurse -Include *.exe |
             ForEach-Object { "{0,-60} {1,12:N0} bytes ({2:N1} MB)" -f $_.Name, $_.Length, ($_.Length/1MB) }
           Write-Host "=== بصمات SHA-256 ==="
-          Get-ChildItem $bundle -Recurse -Include *.exe,*.msi -ErrorAction SilentlyContinue |
+          Get-ChildItem $bundle -Recurse -Include *.exe |
             ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.Name }
 
+      # اسم الحزمة يحمل النسخة وبصمة الالتزام: لا يلتبس مثبّتان بعد اليوم،
+      # ولا يُنزَّل «آخر بناء» فيكون بناءً قبله.
       - name: رفع المثبّت
         uses: actions/upload-artifact@v4
         with:
-          name: tabarak-gym-windows-installer
+          name: tabarak-gym-windows-setup-run${{ github.run_number }}-${{ github.sha }}
           if-no-files-found: error
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          path: src-tauri/target/release/bundle/nsis/*.exe

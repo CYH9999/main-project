@@ -744,7 +744,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.6.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.6.1', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -7266,6 +7266,36 @@ const Desktop = {
 /* أسماء المجلّدات كما يبنيها طرف الصدأ — للعرض وحده، لا لبناء مسار. */
 const FOLDERS = { root:'تبارك جيم', exports:'Exports', backups:'Backups' };
 
+/* ============================== هويّة البناء ==============================
+   نسختان من التطبيق تحملان «7.6.0» نفسه لا يفرّق بينهما شيء يراه أحد —
+   فلا المستخدمة تعرف أيّهما ثبّتت، ولا نحن نستطيع إثبات أن ما اختُبر هو ما
+   بُني. جولةُ اختبار كاملة ضاعت على هذا.
+
+   فهذه الهويّة **تُقرأ ولا تُكتب هنا**: `build.rs` يخبزها في الملف التنفيذي
+   وقت الترجمة، و`tg_env` يعيدها، وهذه الشاشة تعرضها. لا سطر واحد في الواجهة
+   يخترع بصمةً ولا تاريخاً — وما لا يأتي من الجسر لا يُعرض أصلاً. */
+const Build = {
+  info: null,
+  async load(){
+    if (!Desktop.on()) return null;
+    try { this.info = await Desktop.env(); }
+    catch(e){ Log.warn('تعذّرت قراءة هويّة البناء', e); this.info = null; }
+    return this.info;
+  },
+  /* «Build a1b2c3d» — أو لا شيء إن لم يصل من الجسر. لا بديل مخترَع. */
+  label(){
+    const b = this.info;
+    return b && b.build_id ? `Build ${b.build_id}` : '';
+  },
+  /* سطر تشخيصيّ كامل لمن يحتاجه — يُعرض في الإعدادات لا في كل شاشة */
+  details(){
+    const b = this.info;
+    if (!b || !b.build_id) return '';
+    const at = Number(b.build_at) ? D.fmt(D.fromDate(new Date(Number(b.build_at) * 1000))) : '—';
+    return `Build ${b.build_id} · ${String(b.git_short || '')} · ${at}`;
+  },
+};
+
 /* ============================== حفظ الملفات ==============================
    مخرج واحد لكل ما ينتج عن النظام من ملفات. في المتصفح يبقى التنزيل كما
    كان؛ وفي سطح المكتب يُكتب الملف في مجلّده تحت «المستندات» بلا حوار حفظ
@@ -12398,6 +12428,9 @@ Views.settings = {
         <button class="btn btn-primary" id="gSave">حفظ</button>
         <div class="t-sub" style="margin-top:12px">الإصدار ${U.esc(APP.version)} — مخطط البيانات ${APP.schema} —
           التخزين: ${U.esc(DB.adapter ? DB.adapter.kind : '—')} — ${STORE_NAMES.reduce((a, x) => a + DB.count(x), 0)} سجلاً محفوظاً.</div>
+        ${Build.details() ? `<div class="t-sub" id="gBuild" style="margin-top:4px;direction:ltr;text-align:start;
+          font-family:ui-monospace,Menlo,Consolas,monospace">${U.esc(Build.details())}</div>
+          <div class="t-sub" style="margin-top:2px">هذا معرّف النسخة المثبَّتة — اذكريه عند الإبلاغ عن أي خلل.</div>` : ''}
       </div></div>`;
       box.querySelector('#gSave').onclick = async () => {
         const d = UI.read(box.querySelector('#gForm'));
@@ -17171,6 +17204,12 @@ async function boot(){
 
   Brand.applyToShell();                              // الشعار والاسم والوصف من الإعدادات
   $('verLabel').textContent = `الإصدار ${APP.version}`;
+  /* هويّة البناء تُلحَق بالإصدار حين يجيب الجسر. لا تُنتظر: الإقلاع لا
+     يتوقّف على سطر تشخيصيّ، والمتصفح لا جسر له فيبقى السطر كما هو. */
+  Build.load().then(() => {
+    const el = $('verLabel'), tag = Build.label();
+    if (el && tag) el.textContent = `الإصدار ${APP.version} · ${tag}`;
+  }).catch(() => {});
   buildNav();
   paintWhoAmI();
 
@@ -17284,7 +17323,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
-              Desktop, DesktopFiles, FOLDERS, FileCentre,
+              Desktop, DesktopFiles, FOLDERS, FileCentre, Build,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, renderRoute, go, State, buildNav, currentRoute, navBadges,
               ready:AppReady };

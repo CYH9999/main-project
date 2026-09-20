@@ -368,6 +368,153 @@ module.exports = function register({ group, record, TESTS_JS }) {
   });
 
   /* ===================================================================== *
+   * 2ج) هويّة البناء وسلسلة الإثبات                                        *
+   * ===================================================================== */
+  group('البناء — هويّة يُفرَّق بها بين نسختين', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/`;
+    let errors = [];
+    try {
+      /* ---------- في التطبيق: الهويّة تُقرأ من الجسر وتُعرض ---------- */
+      const a = await openDesktop(browser, url);
+      errors = a.errors;
+      const shown = await a.page.evaluate(async () => {
+        await window.TG.Build.load();
+        window.TG.go('settings'); window.TG.renderRoute();
+        await new Promise(r => setTimeout(r, 300));
+        return { ver: document.getElementById('verLabel').textContent,
+                 label: window.TG.Build.label(),
+                 details: window.TG.Build.details(),
+                 settings: document.getElementById('viewRoot').innerText,
+                 info: window.TG.Build.info };
+      });
+      ok('الشريط الجانبي يعرض النسخة ومعرّف البناء',
+         /الإصدار 7\.6\.1/.test(shown.ver) && /Build a1b2c3d-ci42/.test(shown.ver), shown.ver);
+      ok('والمعرّف هو الذي جاء من الجسر بالحرف',
+         shown.label === 'Build a1b2c3d-ci42', shown.label);
+      ok('والتفصيل يحمل البصمة المختصرة وتاريخ البناء',
+         /a1b2c3d-ci42/.test(shown.details) && /a1b2c3d/.test(shown.details), shown.details);
+      ok('والإعدادات تعرضه ليُذكر عند الإبلاغ',
+         /a1b2c3d-ci42/.test(shown.settings) && /معرّف النسخة المثبَّتة/.test(shown.settings));
+      ok('والبصمة الكاملة متاحة لا مقطوعة',
+         shown.info.git_sha === 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', shown.info.git_sha);
+      ok('ومعها بصمة الواجهة التي يحملها هذا البناء',
+         shown.info.frontend_sha === 'deadbeef', shown.info.frontend_sha);
+
+      /* الواجهة لا تخترع شيئاً: بلا جسر لا هويّة */
+      const invented = await a.page.evaluate(() => {
+        const src = document.documentElement.outerHTML;
+        /* لا بصمة مكتوبة في الواجهة، ولا تاريخ بناء محسوب فيها */
+        return { hardSha: /git_sha\s*[:=]\s*['"][0-9a-f]{40}['"]/.test(src),
+                 selfDate: /build_at\s*[:=]\s*(Date\.now|new Date)/.test(src) };
+      });
+      ok('لا بصمة مكتوبة في شيفرة الواجهة', !invented.hardSha);
+      ok('ولا تاريخ بناء تحسبه الواجهة لنفسها', !invented.selfDate);
+      await a.ctx.close();
+
+      /* ---------- في المتصفّح: لا هويّة، ولا قيمة بديلة مخترَعة ---------- */
+      const b = await openBrowser(browser, url);
+      const bare = await b.page.evaluate(async () => {
+        await window.TG.Build.load();
+        return { info: window.TG.Build.info, label: window.TG.Build.label(),
+                 details: window.TG.Build.details(),
+                 ver: document.getElementById('verLabel').textContent };
+      });
+      ok('المتصفح بلا هويّة بناء — ولا بديل مخترَع',
+         bare.info === null && bare.label === '' && bare.details === '',
+         JSON.stringify(bare.label));
+      ok('ويكتفي برقم النسخة', /^الإصدار 7\.6\.1$/.test(bare.ver.trim()), bare.ver);
+      await b.ctx.close();
+
+      /* ---------- سلسلة الإثبات في المستودع نفسه ---------- */
+      const conf = JSON.parse(fs.readFileSync(CONF, 'utf8'));
+      const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+      const cargo = fs.readFileSync(path.join(ROOT, 'src-tauri', 'Cargo.toml'), 'utf8');
+      const appHtml = fs.readFileSync(path.join(ROOT, 'tabarak-gym 3.0.html'), 'utf8');
+      const appVer = (appHtml.match(/const APP = \{[^}]*version:'([^']+)'/) || [])[1];
+      ok('النسخة 7.6.1 — لا تلتبس بما سبق', conf.version === '7.6.1', conf.version);
+      ok('ومتّفقة في المواضع الأربعة',
+         pkg.version === conf.version && /^version = "7\.6\.1"/m.test(cargo) && appVer === conf.version,
+         `pkg=${pkg.version} cargo=${(cargo.match(/^version = "([^"]+)"/m)||[])[1]} app=${appVer}`);
+      ok('والمخطّط ما زال 8', /schema:8/.test(appHtml));
+
+      const buildRs = fs.readFileSync(path.join(ROOT, 'src-tauri', 'build.rs'), 'utf8');
+      ok('هويّة البناء تُخبز وقت الترجمة لا وقت التشغيل',
+         /rustc-env=TG_GIT_SHA/.test(buildRs) && /rustc-env=TG_BUILD_ID/.test(buildRs)
+         && /rustc-env=TG_FRONTEND_SHA/.test(buildRs));
+      ok('وتُقرأ من بيئة CI أولاً ثم من git', /GITHUB_SHA/.test(buildRs) && /rev-parse/.test(buildRs));
+      ok('وتُعاد قراءتها حين يتغيّر الالتزام',
+         /rerun-if-env-changed=GITHUB_SHA/.test(buildRs) && /rerun-if-changed=\.\.\/\.git\/HEAD/.test(buildRs));
+
+      /* نهايات الأسطر: بلا سياسة، يخرج المسحوب على ويندوز ببصمة أخرى */
+      const attrs = fs.existsSync(path.join(ROOT, '.gitattributes'))
+        ? fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8') : '';
+      ok('سياسة نهايات الأسطر مكتوبة — LF في كل نظام',
+         /^\* text=auto eol=lf$/m.test(attrs));
+      ok('والملف الواحد بلا CRLF أصلاً', !/\r\n/.test(appHtml));
+      await srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('البناء — هويّة يُفرَّق بها بين نسختين', rows, errors);
+  });
+
+  /* ===================================================================== *
+   * 2د) خطّ البناء: لا مخرَج قديم يعود، ولا مثبّت بلا إثبات                *
+   * ===================================================================== */
+  group('خطّ البناء — بوّابات قبل المثبّت', async () => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'windows-desktop.yml'), 'utf8');
+    const job = wf.slice(wf.indexOf('installer:'));
+
+    /* الذاكرة المؤقّتة: اعتماديات نعم، ناتج بناء لا — هذا مصدر المثبّت القديم */
+    const cachePaths = (job.match(/path:\s*\|([\s\S]*?)key:/) || [])[1] || '';
+    ok('الذاكرة المؤقّتة لا تحمل مجلّد البناء',
+       !/src-tauri\/target\s*$/m.test(cachePaths) && !/target\/release/.test(cachePaths),
+       cachePaths.trim().replace(/\s+/g, ' '));
+    ok('بل سجلّ الحزم وحده',
+       /cargo\/registry/.test(cachePaths) && /cargo\/git/.test(cachePaths));
+    ok('ومساحة العمل تُنظَّف من أي ناتج بناء قبل البدء',
+       /Remove-Item -Recurse -Force \$p/.test(job) && /src-tauri\/target\/release/.test(job));
+
+    /* البوّابات الأربع، بالترتيب، وكلّها قبل الرفع */
+    const at = needle => job.indexOf(needle);
+    const gSource = at('verify-build.mjs source');
+    const gFront = at('verify-build.mjs frontend');
+    const gBin = at('verify-build.mjs binary');
+    const gInst = at('verify-build.mjs installer');
+    const build = at('tauri build --bundles nsis');
+    const upload = at('upload-artifact');
+    ok('بوّابة المصدر موجودة وقبل البناء', gSource > 0 && gSource < build, `${gSource} < ${build}`);
+    ok('وبوّابة الواجهة المولَّدة قبل البناء', gFront > 0 && gFront < build);
+    ok('وبوّابة الملف التنفيذي بعد البناء', gBin > build);
+    ok('وبوّابة المثبّت كذلك', gInst > build);
+    ok('وكلّها قبل رفع الحزمة',
+       Math.max(gSource, gFront, gBin, gInst) < upload,
+       `آخر بوّابة=${Math.max(gSource, gFront, gBin, gInst)} رفع=${upload}`);
+
+    /* أصدق بوّابة: يُثبَّت المثبّت ويُقرأ ما ثُبّت */
+    ok('المثبّت يُثبَّت فعلاً في CI ويُفحص ما ثُبّت',
+       /Start-Process .*\/S.*\/D=/.test(job) && /binary \$installed\.FullName/.test(job));
+    ok('وفشل التثبيت يُسقط البناء لا يُتجاوز',
+       /throw "التثبيت الصامت/.test(job));
+
+    /* اسم الحزمة يفرّق بين بناء وبناء */
+    ok('اسم الحزمة يحمل رقم التشغيل وبصمة الالتزام',
+       /name: tabarak-gym-windows-setup-run\$\{\{ github\.run_number \}\}-\$\{\{ github\.sha \}\}/.test(job));
+    ok('ولا تُرفع حزمة فارغة', /if-no-files-found: error/.test(job));
+    /* حزمة واحدة لا اثنتان: مثبّتان في ملفّ واحد هو أصل الالتباس */
+    ok('المرفوع مثبّت NSIS وحده — لا MSI يلتبس به',
+       /path: src-tauri\/target\/release\/bundle\/nsis\/\*\.exe/.test(job) && !/bundles msi/.test(job));
+
+    /* الفرع: بناءٌ لا يقع أصلاً لا يُنتج شيئاً يُختبر */
+    ok('كل فرع عمل يبني', /branches: \['claude\/\*\*'\]/.test(wf));
+
+    record('خطّ البناء — بوّابات قبل المثبّت', rows, []);
+  });
+
+  /* ===================================================================== *
    * 3) الشعار: صندوق ثابت مهما كان المصدر                                 *
    * ===================================================================== */
   group('الهوية — صندوق الشعار ثابت', async (browser) => {
