@@ -15742,7 +15742,10 @@ const Print = {
 Actions.printReceipt = async function(receiptId, format){
   const r = Repos.receipts.get(receiptId);
   if (!r){ UI.toast('الوصل غير موجود','err'); return null; }
-  const w = Print.open(`وصل ${r.no}`, Print.receiptHtml(r, { format }), { slip:(format || r.format) === 'slip' });
+  /* يُنتظر الناتج: في المتصفح نافذة أو إطار، وفي سطح المكتب وعدٌ يقول
+     أفُتحت واجهة الطباعة أم لا. وبغير الانتظار يكون الوعد «صادقاً» دائماً
+     فيزيد عدّاد إعادة الطباعة على وصلٍ لم يُطبع. */
+  const w = await Print.open(`وصل ${r.no}`, Print.receiptHtml(r, { format }), { slip:(format || r.format) === 'slip' });
   if (!w) return null;
   /* العدّاد يزيد بعد فتح نافذة الطباعة فعلاً — لا قبلها */
   await Svc.receipts.markPrinted(receiptId).catch(e => Log.warn('تعذّر تسجيل الطباعة', e));
@@ -15846,7 +15849,7 @@ Actions.printDayReceipts = async function(date){
   const fmt = Settings.get('receiptFormat') || 'a4';
   const html = receipts.map((r, i) =>
     `<div class="${i < receipts.length - 1 ? 'page-break' : ''}">${Print.receiptHtml(r, { format:fmt })}</div>`).join('');
-  const w = Print.open(`وصولات ${D.fmt(date)}`, html, { slip:fmt === 'slip' });
+  const w = await Print.open(`وصولات ${D.fmt(date)}`, html, { slip:fmt === 'slip' });
   if (!w){
     UI.toast(`صدرت ${receipts.length} وصولات — لم تُفتح نافذة الطباعة، وتعيدينها من سجل اليوم`,'warn', 9000);
     return;

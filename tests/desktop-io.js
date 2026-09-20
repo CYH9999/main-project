@@ -385,11 +385,11 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = await page.evaluate(async () => {
       const out = [];
       const ok = (n, p, d) => out.push({ name: n, pass: !!p, detail: d == null ? '' : String(d) });
-      const { Print, Svc, D } = window.TG;
+      const { Print } = window.TG;
       const toasts = [];
       const realToast = window.TG.UI.toast;
       window.TG.UI.toast = (msg, kind, ms) => { toasts.push({ msg: String(msg), kind }); return realToast.call(window.TG.UI, msg, kind, ms); };
-      const m = await Svc.members.create({ name: 'مشتركة' });
+      const m = await window.TG.Svc.members.create({ name: 'مشتركة' });
       const r = await Print.open('ك', Print.statementHtml((m.rec || m).id), {});
       await new Promise(x => setTimeout(x, 300));
       ok('الفشل يُعاد لا يُبتلع', r === null);
@@ -399,6 +399,27 @@ module.exports = function register({ group, record, TESTS_JS }) {
          !toasts.some(t => /منبثقة|المتصفح منع|iframe|window\.open/i.test(t.msg)),
          toasts.map(t => t.msg).join(' | '));
       ok('والصفحة تعود كما كانت', !document.getElementById('tgPrintRoot') && !document.getElementById('tgPrintStyle'));
+
+      /* أهمّ أثر للفشل: العدّاد. «أُعيدت طباعته» سجلّ عمل لا زينة، فلا
+         يزيد على وصلٍ لم يخرج من الطابعة. وهذا كان يقع فعلاً: في سطح
+         المكتب تُعيد `Print.open` وعداً، والوعد صادقٌ دائماً في `if (!w)`،
+         فكان العدّاد يزيد ولو لم تُفتح واجهة الطباعة. */
+      const { Svc, Repos, Actions, D } = window.TG;
+      const mem = await Svc.members.create({ name: 'صاحبة الوصل' });
+      const sub = await Svc.subs.create({ memberId: (mem.rec || mem).id, startDate: D.today(),
+        planName: 'شهر', customDuration: { value: 1, unit: 'month' }, price: 90000,
+        paidAmount: 90000, paymentMethod: 'cash' });
+      const pm = Actions.lastPaymentOf('subscription', (sub.rec || sub).id);
+      const rc = await Svc.receipts.ensure(pm.id);
+      const before = Repos.receipts.get(rc.id).reprints || 0;
+      toasts.length = 0;
+      const res = await Actions.printReceipt(rc.id, 'a4');
+      await new Promise(x => setTimeout(x, 400));
+      ok('طباعة فاشلة لا تُعيد وصلاً', res === null, String(res));
+      ok('ولا تزيد عدّاد إعادة الطباعة',
+         (Repos.receipts.get(rc.id).reprints || 0) === before,
+         `${before} → ${Repos.receipts.get(rc.id).reprints || 0}`);
+      ok('ولا تقول إنها طُبعت', !toasts.some(t => /طُبع/.test(t.msg)), toasts.map(t => t.msg).join(' | '));
       window.TG.UI.toast = realToast;
       return out;
     });
