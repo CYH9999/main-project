@@ -152,8 +152,15 @@ function verifyBinary(exePath) {
   ok('يحمل بصمة الواجهة المولَّدة الآن', hay.includes(frontend), frontend.slice(0, 16) + '…');
   if (sha) ok('ويحمل بصمة هذا الالتزام', hay.includes(sha), sha.slice(0, 12) + '…');
   else console.log('  · GITHUB_SHA غير مضبوط — فحص بصمة الالتزام يُترك لـCI');
+  /* رقم النسخة يقع في الملف التنفيذي بترميزين: نصّاً عاديّاً في بيانات
+     البرنامج، و**UTF-16LE** في مورد النسخة الذي يعرضه ويندوز في خصائص
+     الملف. فيُبحث عن الاثنين — والبحث عن ASCII وحده كان يسقط على ملفّ
+     سليم لأن مورد PE لا يخزّن ASCII أصلاً. */
   const ver = JSON.parse(read(CONF)).version;
-  ok('ويحمل رقم النسخة', hay.includes(ver), ver);
+  const utf16 = Buffer.from(ver, 'utf16le').toString('latin1');
+  const asAscii = hay.includes(ver), asUtf16 = hay.includes(utf16);
+  ok('ويحمل رقم النسخة', asAscii || asUtf16,
+     `${ver} (${[asAscii && 'نصّ', asUtf16 && 'مورد ويندوز'].filter(Boolean).join(' + ') || 'غير موجود'})`);
 }
 
 function verifyInstaller(dir, version) {
