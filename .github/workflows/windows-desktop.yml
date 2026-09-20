@@ -135,7 +135,11 @@ jobs:
         env:
           GITHUB_SHA: ${{ github.sha }}
         run: |
-          $exe = Get-ChildItem "src-tauri/target/release" -Filter *.exe | Select-Object -First 1
+          # مجلّد البناء قد يحوي ملفّات تنفيذية أخرى؛ المقصود تطبيقنا وحده
+          $exe = Get-ChildItem "src-tauri/target/release" -Filter *.exe |
+            Where-Object { $_.Name -notlike 'uninstall*' } |
+            Sort-Object Length -Descending | Select-Object -First 1
+          Write-Host "المفحوص: $($exe.Name)"
           node scripts/verify-build.mjs binary $exe.FullName
 
       - name: بوّابة المثبّت — ملفّ واحد باسمٍ يحمل النسخة
@@ -157,8 +161,13 @@ jobs:
           Write-Host "رمز الخروج: $($p.ExitCode)"
           if (-not (Test-Path $dest)) { throw "التثبيت الصامت لم يُنشئ مجلّد التثبيت" }
           Get-ChildItem $dest -Recurse -Filter *.exe | ForEach-Object { Write-Host "  مثبَّت: $($_.Name)  $($_.Length) bytes" }
-          $installed = Get-ChildItem $dest -Filter *.exe | Select-Object -First 1
+          # مجلّد التثبيت فيه «uninstall.exe» أيضاً، وهو يسبق الاسم العربي في
+          # الترتيب — فأخذُ «الأول» يفحص المُزيل بدل التطبيق. يُستبعد صراحةً.
+          $installed = Get-ChildItem $dest -Filter *.exe |
+            Where-Object { $_.Name -notlike 'uninstall*' } |
+            Sort-Object Length -Descending | Select-Object -First 1
           if (-not $installed) { throw "لا ملف تنفيذي في مجلّد التثبيت" }
+          Write-Host "المفحوص: $($installed.Name)"
           node scripts/verify-build.mjs binary $installed.FullName
 
       - name: قياس المخرجات وبصماتها
