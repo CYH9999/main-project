@@ -2023,6 +2023,14 @@ window.TGTests = (() => {
       { t:'حذف توزيع أرباح', key:'finance.money',
         arrange:freshDist, run:id => Svc.distributions.remove(id),
         check:(r, id) => !Repos.distributions.get(id) },
+      /* صورة الموظفة صارت تُبدَّل من ملفها مباشرة (القلم على الصورة). وهي
+         عملية تكتب في جدولين — الوسائط والفريق — فتُقاس كغيرها. */
+      { t:'تبديل صورة موظفة من ملفها', key:'staff.edit',
+        arrange:async () => (await Repos.staff.create({ name:'موظفة الصلاحيات ' + uniq(),
+          role:'مدرّبة', baseSalary:100, hireDate:D.today(), status:'active' })).id,
+        run:id => Svc.media.replaceOn({ repo:Repos.staff, store:'staff', id,
+          field:'photoMediaId', perm:'staff.edit', file:pngFile('perm-staff.png') }),
+        check:(r, id) => !!Repos.staff.get(id).photoMediaId },
       { t:'رفع شعار الهوية', key:'settings.edit',
         run:() => Brand.setMedia('logo', pngFile('perm-logo.png')), check:() => Brand.has('logo') },
       { t:'إزالة شعار الهوية', key:'settings.edit',

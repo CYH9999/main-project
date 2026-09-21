@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "تبارك جيم",
   "mainBinaryName": "تبارك جيم",
-  "version": "7.7.0",
+  "version": "7.8.0",
   "identifier": "com.tabarak.gym",
 
   "build": {
@@ -22,6 +22,7 @@
         "minWidth": 1024,
         "minHeight": 600,
         "center": true,
+        "maximized": true,
         "resizable": true,
         "maximizable": true,
         "minimizable": true,
@@ -29,26 +30,9 @@
         "decorations": true,
         "fullscreen": false,
         "visible": false,
+        "backgroundColor": "#241826",
         "dragDropEnabled": false,
         "zoomHotkeysEnabled": true
-      },
-      {
-        "label": "splash",
-        "url": "splash.html",
-        "title": "تبارك جيم",
-        "width": 420,
-        "height": 320,
-        "center": true,
-        "resizable": false,
-        "maximizable": false,
-        "minimizable": false,
-        "closable": false,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "shadow": true,
-        "visible": true,
-        "dragDropEnabled": false
       }
     ],
     "security": {

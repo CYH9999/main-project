@@ -23,7 +23,7 @@ on:
     branches: ['claude/**']
     paths:
       - 'tabarak-gym 3.0.html'
-      - 'desktop/**'
+      - 'intro/**'
       - 'src-tauri/**'
       - 'scripts/**'
       - 'package.json'

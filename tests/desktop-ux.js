@@ -38,18 +38,28 @@ module.exports = function register({ group, record, TESTS_JS }) {
   function serveDesktop() {
     const csp = conf().app.security.csp;
     return new Promise(res => {
+      /* الترميز يُعلن صحيحاً: محرّك العرض يرفض تشغيل فيديو يصله بنوع
+         text/html مهما كان محتواه سليماً — وهذا يُخفي عيباً حقيقياً أو
+         يخترع واحداً غير موجود. */
+      const TYPES = { '.js':'text/javascript; charset=utf-8', '.html':'text/html; charset=utf-8',
+                      '.webm':'video/webm', '.mp4':'video/mp4', '.jpg':'image/jpeg',
+                      '.png':'image/png', '.txt':'text/plain; charset=utf-8' };
       const srv = http.createServer((req, r) => {
         const u = decodeURIComponent(req.url.split('?')[0]);
-        /* يُقدَّم مجلّد البناء كما يقدّمه Tauri: الصفحة ونافذة البدء بجانبها */
+        /* يُقدَّم مجلّد البناء كما يقدّمه Tauri: الصفحة وأصول المقدّمة بجانبها */
         const file = u === '/' ? DIST
-          : u === '/splash.html' ? path.join(ROOT, 'app', 'splash.html')
+          : u.startsWith('/intro/') ? path.join(ROOT, 'app', u.replace(/^\//, ''))
           : path.join(ROOT, u.replace(/^\//, ''));
         if (!fs.existsSync(file)) { r.writeHead(404); return r.end('nf'); }
+        const ext = path.extname(file).toLowerCase();
+        const body = fs.readFileSync(file);
         r.writeHead(200, {
-          'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
+          'Content-Type': TYPES[ext] || 'application/octet-stream',
+          'Content-Length': body.length,
+          'Accept-Ranges': 'bytes',
           'Content-Security-Policy': csp,
         });
-        r.end(fs.readFileSync(file));
+        r.end(body);
       });
       srv.listen(0, '127.0.0.1', () => res(srv));
     });
@@ -101,7 +111,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('سطح المكتب — الإقلاع ونافذة البدء', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     let errors = [];
@@ -172,128 +182,189 @@ module.exports = function register({ group, record, TESTS_JS }) {
   });
 
   /* ===================================================================== *
-   * 2) نافذة البدء وتقليل الحركة                                          *
+   * 2) المقدّمة الافتتاحية وتقليل الحركة                                  *
    * ===================================================================== */
-  group('سطح المكتب — نافذة البدء وتقليل الحركة', async (browser) => {
+  group('سطح المكتب — المقدّمة الافتتاحية', async (browser) => {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/splash.html`;
+    const port = srv.address().port;
+    const open = async (opts, query) => {
+      const ctx = await browser.newContext(opts || {});
+      const page = await ctx.newPage();
+      await page.goto(`http://127.0.0.1:${port}/${query == null ? '' : query}`,
+                      { waitUntil: 'domcontentloaded' });
+      return { ctx, page };
+    };
     try {
-      /* المقدّمة المتدرّجة: علامة ⟵ اسم ⟵ وصف ⟵ خيط. تُقاس بحالة كل عنصر
-         لا بوصفها، ومعها **ترتيبها**: تأخيرُ الاسم بعد العلامة وتأخيرُ
-         الوصف بعده. وهذا هو ما كانت المستخدمة لا تراه: المقدّمة كانت
-         تُقتل في منتصفها لأن الكشف يقع بعد 350ms. */
-      for (const reduce of [false, true]) {
-        const ctx = await browser.newContext({ reducedMotion: reduce ? 'reduce' : 'no-preference' });
-        const page = await ctx.newPage();
-        await page.goto(url, { waitUntil: 'load' });
-        const state = await page.evaluate(() => {
-          const q = sel => document.querySelector(sel);
-          const cs = el => el ? getComputedStyle(el) : null;
-          const st = sel => { const c = cs(q(sel)); return c
-            ? { anim: c.animationName, delay: c.animationDelay, dur: c.animationDuration,
-                opacity: Number(c.opacity), display: c.display }
-            : null; };
-          const introMs = Number((getComputedStyle(document.documentElement)
-            .getPropertyValue('--intro') || '').replace(/[^\d]/g, ''));
-          return { introMs, mark: st('.mark'), name: st('.name'), sub: st('.sub'),
-                   rule: st('.rule'), wait: st('.wait'),
-                   waitText: (q('.wait') || {}).textContent || '',
-                   /* القياس من التخطيط لا من الإطار المرسوم:
-                      `getBoundingClientRect` يضمّ تحويل الحركة الجارية، فصندوقٌ
-                      ثابت يُقاس 90 في منتصف `scale(.94)` وهو 96. و`offsetWidth`
-                      غير موجود على عناصر SVG أصلاً. فالمقيس هو العرض المحسوب. */
-                   markBox: (() => { const e = q('.mark'); if (!e) return null;
-                     const c = getComputedStyle(e);
-                     return { w: Math.round(parseFloat(c.width)), h: Math.round(parseFloat(c.height)) }; })(),
-                   names: [...document.body.innerText.matchAll(/تبارك جيم|نظام إدارة النادي/g)].map(m => m[0]) };
+      /* ---------- 1) الشكل: تملأ النافذة، لا مربّع في وسطها ---------- */
+      {
+        const { ctx, page } = await open({ viewport: { width: 1280, height: 800 } });
+        /* تُقاس **قبل** أن تنتهي: هذا هو ما تراه المستخدمة أول ثانية */
+        await page.waitForSelector('#introRoot.intro video', { timeout: 15000 });
+        const box = await page.evaluate(() => {
+          const el = document.getElementById('introRoot');
+          const v = el.querySelector('video');
+          const r = el.getBoundingClientRect();
+          const c = getComputedStyle(el), cv = getComputedStyle(v);
+          return { w: Math.round(r.width), h: Math.round(r.height),
+                   vw: window.innerWidth, vh: window.innerHeight,
+                   pos: c.position, z: Number(c.zIndex), fit: cv.objectFit,
+                   muted: v.muted, autoplayAttr: v.hasAttribute('controls'),
+                   sources: [...v.querySelectorAll('source')].map(x => x.getAttribute('src')) };
         });
-        const ms = v => Number(String(v || '0s').replace('s', '')) * 1000;
+        ok('المقدّمة تملأ النافذة كلّها — لا مربّع صغير',
+           box.w === box.vw && box.h === box.vh, `${box.w}×${box.h} من ${box.vw}×${box.vh}`);
+        ok('وهي فوق كل شيء', box.pos === 'fixed' && box.z >= 1000, `${box.pos} z=${box.z}`);
+        ok('والفيديو يملأ الإطار بلا تمطيط', box.fit === 'cover', box.fit);
+        ok('وهو مكتوم — شرط التشغيل التلقائي', box.muted === true);
+        ok('ولا أزرار متصفّح عليه', box.autoplayAttr === false);
+        ok('ومصادره WebM أولاً ثم MP4',
+           box.sources[0] === 'intro/intro.webm' && box.sources[1] === 'intro/intro.mp4',
+           box.sources.join(' · '));
 
-        ok(`${reduce ? 'مع' : 'بلا'} تقليل الحركة: العلامة مرسومة في صندوقها الثابت`,
-           state.markBox && state.markBox.w === 96 && state.markBox.h === 96,
-           JSON.stringify(state.markBox));
-        ok(`${reduce ? 'مع' : 'بلا'} تقليل الحركة: الاسم والوصف مكتوبان`,
-           state.names.includes('تبارك جيم') && state.names.includes('نظام إدارة النادي'),
-           state.names.join('، '));
-
-        if (reduce) {
-          ok('تقليل الحركة: لا حركة على العلامة', state.mark.anim === 'none', state.mark.anim);
-          ok('ولا على الاسم ولا الوصف',
-             state.name.anim === 'none' && state.sub.anim === 'none',
-             `${state.name.anim} / ${state.sub.anim}`);
-          ok('ولا خيط يُرسم', state.rule.anim === 'none', state.rule.anim);
-          ok('ومع ذلك الصورة النهائية كاملة — لا عنصر شفّاف عالق',
-             state.mark.opacity === 1 && state.name.opacity === 1 && state.sub.opacity === 1,
-             `${state.mark.opacity}/${state.name.opacity}/${state.sub.opacity}`);
-        } else {
-          ok('بلا تقليل الحركة: العلامة تظهر بحركة', state.mark.anim !== 'none', state.mark.anim);
-          ok('ثم الاسم بعدها', state.name.anim !== 'none' && ms(state.name.delay) > ms(state.mark.delay),
-             `${state.name.delay} بعد ${state.mark.delay}`);
-          ok('ثم الوصف بعده', ms(state.sub.delay) > ms(state.name.delay),
-             `${state.sub.delay} بعد ${state.name.delay}`);
-          ok('ثم الخيط آخراً', ms(state.rule.delay) > ms(state.sub.delay),
-             `${state.rule.delay} بعد ${state.sub.delay}`);
-          /* القاعدة التي سقطت سابقاً: المقدّمة تكتمل قبل أن يكشف الغلاف
-             النافذة الرئيسية. آخر ما ينتهي = تأخيره + مدّته. */
-          const last = Math.max(ms(state.mark.delay) + ms(state.mark.dur),
-                                ms(state.name.delay) + ms(state.name.dur),
-                                ms(state.sub.delay) + ms(state.sub.dur),
-                                ms(state.rule.delay) + ms(state.rule.dur));
-          ok('والمقدّمة كلّها تنتهي داخل --intro — فلا تُقتل في منتصفها',
-             last <= state.introMs + 1, `${Math.round(last)}ms ضمن ${state.introMs}ms`);
-          ok('و--intro في المدى المقصود (0.8–1.5 ثانية)',
-             state.introMs >= 800 && state.introMs <= 1500, `${state.introMs}ms`);
-          /* كلمة الانتظار لا تظهر على جهاز سريع: تأخيرها أطول من المقدّمة */
-          ok('ولا كلمة انتظار تظهر لمن لا ينتظر', ms(state.wait.delay) > state.introMs,
-             `${state.wait.delay} > ${state.introMs}ms`);
-          ok('وإن طال الإقلاع قيلت الكلمة بالعربية',
-             /جارٍ|جار/.test(state.waitText), state.waitText);
-        }
+        /* لا لوحة تحكّم ولا شاشة دخول تُرى تحتها */
+        const behind = await page.evaluate(() => {
+          const gate = document.querySelector('.gate');
+          const el = document.getElementById('introRoot');
+          const mid = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+          return { gateVisible: !!gate && getComputedStyle(gate).display !== 'none',
+                   topmost: !!el && (mid === el || el.contains(mid)),
+                   bg: getComputedStyle(el).backgroundColor };
+        });
+        ok('ولا شيء يُرى تحتها — هي ما يقع تحت المؤشّر في وسط الشاشة', behind.topmost);
+        ok('وخلفيتها داكنة لا بيضاء',
+           /rgb\(36, 24, 38\)|rgb\(36,24,38\)/.test(behind.bg), behind.bg);
         await ctx.close();
       }
 
-      /* الرقم واحد في ثلاثة مواضع: الصفحة، وطرف الصدأ، والبوّابة التي تفحصهما.
-         تفرّقُها هو العيب نفسه الذي أُصلح — فيُقاس هنا كذلك لا في CI وحدها. */
-      const rustMain = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
-      const spSrc = fs.readFileSync(path.join(ROOT, 'desktop', 'splash.html'), 'utf8');
-      const cssIntro = Number((spSrc.match(/--intro:\s*(\d+)ms/) || [])[1]);
-      const rsIntro = Number((rustMain.match(/SPLASH_INTRO_MS: u128 = (\d+)/) || [])[1]);
-      ok('طول المقدّمة رقم واحد في الصفحة وفي الغلاف', !!cssIntro && cssIntro === rsIntro,
-         `css=${cssIntro} rust=${rsIntro}`);
-      ok('والحارس الزمني يأتي بعد المقدّمة لا قبلها',
-         Number((rustMain.match(/SPLASH_WATCHDOG_MS: u64 = ([\d_]+)/) || [])[1].replace(/_/g, '')) > rsIntro);
-      ok('وتقليل الحركة لا ينتظر مقدّمةً لا تعمل',
-         /SPLASH_STILL_MS: u128 = (\d+)/.test(rustMain) &&
-         Number(rustMain.match(/SPLASH_STILL_MS: u128 = (\d+)/)[1]) < rsIntro);
-      ok('والواجهة هي من تُبلّغ بتفضيل الحركة',
-         /reducedMotion:this\.reducedMotion\(\)/.test(fs.readFileSync(DIST, 'utf8')));
-      /* شاشة التطبيق نفسها: سياسة الحركة العامّة لم تُمسّ */
-      const appUrl = `http://127.0.0.1:${srv.address().port}/`;
-      const ctx2 = await browser.newContext({ reducedMotion: 'reduce' });
-      const p = await ctx2.newPage();
-      await p.goto(appUrl, { waitUntil: 'domcontentloaded' });
-      await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
-      await p.evaluate(() => window.TG.ready);
-      const viewAnim = await p.evaluate(() => {
-        const v = document.querySelector('.view');
-        return v ? getComputedStyle(v).animationName : 'missing';
-      });
-      ok('تقليل الحركة يُوقف انتقال الشاشات كما كان', viewAnim === 'none', viewAnim);
-      const headAnim = await p.evaluate(async () => {
-        window.TG.go('members'); window.TG.renderRoute();
-        await new Promise(r => setTimeout(r, 120));
-        const h = document.getElementById('pageTitle');
-        return { anim: getComputedStyle(h).animationName,
-                 marked: h.parentElement.classList.contains('head-in') };
-      });
-      ok('وعنوان الصفحة كذلك لا يتحرّك', headAnim.anim === 'none', headAnim.anim);
-      ok('ومع ذلك يُعلَّم تغيّر الشاشة (الحركة وحدها هي المعطّلة)', headAnim.marked);
-      await ctx2.close();
+      /* ---------- 2) الفيديو يعمل فعلاً في محرّك العرض ---------- */
+      {
+        const { ctx, page } = await open();
+        const played = await page.evaluate(async () => {
+          const v = document.querySelector('#introRoot video');
+          if (!v) return { ok: false, why: 'لا فيديو' };
+          await new Promise(r => {
+            if (v.readyState >= 2) return r();
+            v.addEventListener('loadeddata', r, { once: true });
+            setTimeout(r, 12000);
+          });
+          const t0 = v.currentTime;
+          await new Promise(r => setTimeout(r, 700));
+          return { ok: true, w: v.videoWidth, h: v.videoHeight,
+                   dur: Math.round(v.duration * 100) / 100,
+                   advanced: v.currentTime > t0, src: v.currentSrc.split('/').pop(),
+                   err: v.error ? v.error.code : null };
+        });
+        ok('الفيديو يُفكّ ترميزه ويُعرض', played.ok && !played.err && played.w > 0,
+           `${played.w}×${played.h} خطأ=${played.err}`);
+        ok('وهو 2K كما سُلّم (2560×1440)', played.w === 2560 && played.h === 1440,
+           `${played.w}×${played.h}`);
+        ok('ويعمل فعلاً — الزمن يتقدّم', played.advanced === true);
+        ok('والمشغَّل هو WebM', played.src === 'intro.webm', played.src);
+        await ctx.close();
+      }
+
+      /* ---------- 3) تنتهي إلى شاشة الدخول ولا تعلق ---------- */
+      {
+        const { ctx, page } = await open();
+        /* التخطّي يُضغط **قبل** أن تنتهي المقدّمة وحدها — وإلا لما قِيس
+           شيء: انتظارُ `TG.ready` أوّلاً ينتظر المقدّمة كلّها، فتكون قد
+           انتهت قبل الضغطة ويمرّ الاختبار بلا أن يجرّب ما يدّعي تجربته. */
+        await page.waitForSelector('#introSkip', { timeout: 15000 });
+        const t0 = Date.now();
+        await page.evaluate(() => document.getElementById('introSkip').click());
+        await page.waitForFunction(() => !document.getElementById('introRoot'), null, { timeout: 8000 })
+          .catch(() => {});
+        const skipMs = Date.now() - t0;
+        ok('التخطّي يُنهيها قبل نهايتها الطبيعية (5 ثوانٍ)', skipMs < 3000, `${skipMs}ms`);
+        await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+        await page.evaluate(() => window.TG.ready);
+        const after = await page.evaluate(() => ({
+          gone: !document.getElementById('introRoot'),
+          gate: !!document.querySelector('.gate') || !document.body.classList.contains('locked')
+        }));
+        ok('والمقدّمة مرفوعة من الصفحة بعدها', after.gone);
+        ok('وما بعدها شاشة يمكن استعمالها', after.gate);
+        await ctx.close();
+      }
+
+      /* ---------- 4) تقليل الحركة: إطار ثابت لا فيديو ---------- */
+      {
+        const { ctx, page } = await open({ reducedMotion: 'reduce' });
+        const still = await page.evaluate(() => {
+          const el = document.getElementById('introRoot');
+          if (!el) return { absent: true };
+          return { absent: false, video: !!el.querySelector('video'),
+                   still: !!el.querySelector('.intro-still') };
+        });
+        ok('تقليل الحركة: لا فيديو يُحمَّل', still.absent || !still.video,
+           JSON.stringify(still));
+        await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+        await page.evaluate(() => window.TG.ready);
+        await page.waitForFunction(() => !document.getElementById('introRoot'), null, { timeout: 8000 })
+          .catch(() => {});
+        ok('ولا تبقى على الشاشة',
+           await page.evaluate(() => !document.getElementById('introRoot')));
+        await ctx.close();
+      }
+
+      /* ---------- 5) `?intro=0` يُطفئها — وهو ما تستعمله المجموعة ---------- */
+      {
+        const { ctx, page } = await open({}, '?intro=0');
+        await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+        await page.evaluate(() => window.TG.ready);
+        ok('`?intro=0` يُطفئ المقدّمة تماماً',
+           await page.evaluate(() => !document.getElementById('introRoot')));
+        await ctx.close();
+      }
+
+      /* ---------- 6) القواعد المكتوبة: النافذة مكبّرة ومخفيّة ---------- */
+      {
+        const conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+        const wins = conf.app.windows;
+        ok('نافذة واحدة لا اثنتان — لا نافذة بدء صغيرة', wins.length === 1, wins.length);
+        const w = wins[0];
+        ok('وتُنشأ مكبّرة', w.maximized === true);
+        ok('ومخفيّة حتى تصير المقدّمة على الشاشة', w.visible === false);
+        ok('وبخلفية داكنة فلا ومضة بيضاء', w.backgroundColor === '#241826', w.backgroundColor);
+        const rustMain = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
+        ok('والغلاف يُكبّرها قبل إظهارها', /let _ = main\.maximize\(\);[\s\S]{0,120}let _ = main\.show\(\);/
+           .test(rustMain));
+        ok('ولا أثر لنافذة البدء القديمة',
+           !/splash/i.test(rustMain) && !fs.existsSync(path.join(ROOT, 'desktop', 'splash.html')));
+        ok('والحارس الزمني باقٍ — لا نافذة تبقى مخفيّة',
+           /REVEAL_WATCHDOG_MS/.test(rustMain));
+        ok('والواجهة هي من تُبلّغ بتفضيل الحركة',
+           /reducedMotion:this\.reducedMotion\(\)/.test(fs.readFileSync(DIST, 'utf8')));
+      }
+
+      /* ---------- 7) سياسة الحركة العامّة في التطبيق لم تُمسّ ---------- */
+      {
+        const ctx2 = await browser.newContext({ reducedMotion: 'reduce' });
+        const p = await ctx2.newPage();
+        await p.goto(`http://127.0.0.1:${port}/?intro=0`, { waitUntil: 'domcontentloaded' });
+        await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+        await p.evaluate(() => window.TG.ready);
+        const viewAnim = await p.evaluate(() => {
+          const v = document.querySelector('.view');
+          return v ? getComputedStyle(v).animationName : 'missing';
+        });
+        ok('تقليل الحركة يُوقف انتقال الشاشات كما كان', viewAnim === 'none', viewAnim);
+        const headAnim = await p.evaluate(async () => {
+          window.TG.go('members'); window.TG.renderRoute();
+          await new Promise(r => setTimeout(r, 120));
+          const h = document.getElementById('pageTitle');
+          return { anim: getComputedStyle(h).animationName,
+                   marked: h.parentElement.classList.contains('head-in') };
+        });
+        ok('وعنوان الصفحة كذلك لا يتحرّك', headAnim.anim === 'none', headAnim.anim);
+        ok('ومع ذلك يُعلَّم تغيّر الشاشة (الحركة وحدها هي المعطّلة)', headAnim.marked);
+        await ctx2.close();
+      }
       srv.close();
     } catch (e) { srv.close(); throw e; }
-    record('سطح المكتب — نافذة البدء وتقليل الحركة', rows, []);
+    record('سطح المكتب — المقدّمة الافتتاحية', rows, []);
   });
 
   /* ===================================================================== *
@@ -303,7 +374,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       const a = await openDesktop(browser, url);
@@ -436,7 +507,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       /* ---------- في التطبيق: الهويّة تُقرأ من الجسر وتُعرض ---------- */
@@ -589,7 +660,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       const a = await openBrowser(browser, url, { context: { viewport: { width: 1440, height: 900 } } });
@@ -770,11 +841,130 @@ module.exports = function register({ group, record, TESTS_JS }) {
    *   · **ما مرّ**: مراقبٌ يُركَّب قبل أوّل سطر من الواجهة ويسجّل كل لحظة
    *     ظهرت فيها مساحة العمل. فالومضة تُلتقط ولو دامت إطاراً واحداً.
    * ===================================================================== */
+  /* ===================================================================== *
+   * الدخول — حالة تحقّق تُرى، بلا حشو وبلا كذب                             *
+   * ===================================================================== */
+  group('الدخول — حالة التحقّق ومدّتها', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    let errors = [];
+    const CRED = { name: 'أم تبارك', username: 'omtabarak', password: 'كلمة-مرور-طويلة' };
+    try {
+      const a = await openDesktop(browser, url);
+      errors = a.errors;
+      const p = a.page;
+      await p.evaluate(async (cred) => {
+        const { Settings, Auth } = window.TG;
+        await Settings.set({ authEnabled: true });
+        await Auth.setupFirstAdmin(cred);
+        await Auth.logout();
+      }, CRED);
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+      await p.evaluate(() => window.TG.ready);
+      await p.waitForSelector('.gate #gGo', { timeout: 10000 });
+
+      /* ---- 1) الحدّ الأدنى ليس تأخيراً يُضاف: الخطأ لا ينتظره ---- */
+      const bad = await p.evaluate(async (cred) => {
+        const t0 = Date.now();
+        document.getElementById('gUser').value = cred.username;
+        document.getElementById('gPass').value = 'كلمة-خاطئة-تماماً';
+        document.getElementById('gGo').click();
+        await new Promise(res => {
+          const iv = setInterval(() => {
+            const e = document.querySelector('#gErr');
+            if (e && e.style.display === 'block') { clearInterval(iv); res(); }
+          }, 15);
+          setTimeout(() => { clearInterval(iv); res(); }, 9000);
+        });
+        return { ms: Date.now() - t0,
+                 msg: (document.querySelector('#gErr') || {}).textContent || '',
+                 stillWorking: !!document.querySelector('.gate-load'),
+                 gate: !!document.querySelector('.gate'),
+                 app: getComputedStyle(document.querySelector('.app')).display,
+                 btn: document.getElementById('gGo').disabled,
+                 pwCleared: document.getElementById('gPass').value === '' };
+      }, CRED);
+      ok('بيانات خاطئة: لا انتظار — الخطأ فوراً', bad.ms < 1200, `${bad.ms}ms`);
+      ok('وطبقة التحقّق تُرفع في اللحظة نفسها', bad.stillWorking === false);
+      ok('ولا يُفرَّق بين اسم غير موجود وكلمة خاطئة',
+         /اسم المستخدمة أو كلمة المرور/.test(bad.msg), bad.msg);
+      ok('ولا لوحة تحكّم', bad.gate === true && bad.app === 'none', bad.app);
+      ok('والزرّ يعود قابلاً للضغط', bad.btn === false);
+      ok('وكلمة المرور تُمسح بعد الفشل', bad.pwCleared);
+
+      /* ---- 2) النجاح: الطبقة تُرى، وبالهوية، ثم لوحة التحكّم ---- */
+      const good = await p.evaluate(async (cred) => {
+        const t0 = Date.now();
+        document.getElementById('gUser').value = cred.username;
+        document.getElementById('gPass').value = cred.password;
+        document.getElementById('gGo').click();
+        /* أوّل لقطة: هل ظهرت الطبقة أصلاً، وماذا فيها؟ */
+        await new Promise(r => setTimeout(r, 120));
+        const el = document.querySelector('.gate-load');
+        const seen = el ? {
+          text: (el.querySelector('p') || {}).textContent || '',
+          spin: !!el.querySelector('.gate-spin'),
+          role: el.getAttribute('role'),
+          live: el.getAttribute('aria-live'),
+          /* داخل البطاقة لا بملء الشاشة: الترويسة فوقها لا تتحرّك */
+          insideCard: !!el.closest('.gate-card'),
+          coversForm: (() => {
+            const c = el.closest('.gate-card').getBoundingClientRect();
+            const r = el.getBoundingClientRect();
+            return Math.round(r.width) === Math.round(c.width);
+          })(),
+          headerStill: !!document.querySelector('.gate-head .brand-box')
+        } : null;
+        const btnLabel = (document.getElementById('gGo') || {}).textContent || '';
+        const btnDisabled = (document.getElementById('gGo') || {}).disabled;
+        await new Promise(res => {
+          const iv = setInterval(() => {
+            if (!document.querySelector('.gate')) { clearInterval(iv); res(); }
+          }, 20);
+          setTimeout(() => { clearInterval(iv); res(); }, 20000);
+        });
+        return { seen, btnLabel, btnDisabled, total: Date.now() - t0,
+                 app: getComputedStyle(document.querySelector('.app')).display,
+                 gate: !!document.querySelector('.gate'),
+                 load: !!document.querySelector('.gate-load'),
+                 locked: document.body.classList.contains('locked'),
+                 who: (document.getElementById('whoami') || {}).textContent || '',
+                 min: window.TG.Gate.MIN_VISUAL_MS };
+      }, CRED);
+      ok('الضغط يُظهر حالة تحقّق', !!good.seen);
+      ok('وفيها عبارة عربية تقول ما يجري',
+         !!good.seen && /جارٍ التحقّق|جاري التحقق/.test(good.seen.text), good.seen && good.seen.text);
+      ok('ومؤشّر انتظار', !!good.seen && good.seen.spin);
+      ok('وتُنطق لقارئ الشاشة',
+         !!good.seen && good.seen.role === 'status' && good.seen.live === 'polite');
+      /* الطبقة داخل البطاقة: الشعار في الترويسة لا يقفز مكانه */
+      ok('وهي داخل البطاقة — الترويسة والشعار لا يتحرّكان',
+         !!good.seen && good.seen.insideCard && good.seen.headerStill);
+      ok('وتغطّي النموذج كلّه فلا تُقرأ فوقه', !!good.seen && good.seen.coversForm);
+      ok('والزرّ نفسه يقول إنه يعمل ولا يُضغط ثانية',
+         /جارٍ|جار/.test(good.btnLabel) && good.btnDisabled === true, good.btnLabel);
+      /* المدّة: لا أقلّ من الحدّ البصريّ، ولا خمس ثوانٍ ثابتة */
+      ok('المدّة لا تقلّ عن الحدّ البصريّ', good.total >= good.min - 120,
+         `${good.total}ms ≥ ${good.min}ms`);
+      ok('ولا تُطال بلا سبب (دون ضعف الحدّ)', good.total < good.min * 2.4,
+         `${good.total}ms < ${Math.round(good.min * 2.4)}ms`);
+      ok('ثم لوحة التحكّم', good.app !== 'none' && !good.gate && !good.locked, good.app);
+      ok('ولا بقايا طبقة على الشاشة', good.load === false);
+      ok('والجلسة مفتوحة باسم الداخلة', /أم تبارك/.test(good.who), good.who);
+      await a.ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('الدخول — حالة التحقّق ومدّتها', rows, errors);
+  });
+
   group('البوّابة — لا مساحة عمل قبل الدخول', async (browser) => {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     const CRED = { name: 'أم تبارك', username: 'owner', password: 'tabarak-2026' };
     try {
@@ -1052,7 +1242,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       const a = await openBrowser(browser, url);
@@ -1160,11 +1350,201 @@ module.exports = function register({ group, record, TESTS_JS }) {
   /* ===================================================================== *
    * 5) مركز الملفات: يجد، ويقول أين، ويفتح                                *
    * ===================================================================== */
+  /* ===================================================================== *
+   * محرّر الصورة — إطار واحد لثلاثة أسطح                                   *
+   * ===================================================================== */
+  group('محرّر الصورة — ما يُرى هو ما يُحفظ', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    let errors = [];
+    try {
+      const a = await openBrowser(browser, url);
+      errors = a.errors;
+      const out = await a.page.evaluate(async () => {
+        const IE = window.TG.ImageEditor;
+        const settle = ms => new Promise(r => setTimeout(r, ms));
+        /* صورة اختبار نصفها أحمر ونصفها أزرق: يُعرف من لون المُخرَج أيُّ
+           جزء من الأصل حُفظ فعلاً — لا يكفي أن نقيس المقاس. */
+        const src = (w, h) => new Promise(res => {
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const x = c.getContext('2d');
+          x.fillStyle = '#ff0000'; x.fillRect(0, 0, w / 2, h);
+          x.fillStyle = '#0000ff'; x.fillRect(w / 2, 0, w / 2, h);
+          c.toBlob(b => res(new File([b], 'أصل.png', { type: 'image/png' })), 'image/png');
+        });
+        const read = file => new Promise(res => {
+          const img = new Image(), u = URL.createObjectURL(file);
+          img.onload = () => {
+            const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+            const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+            const at = (fx, fy) => [...x.getImageData(Math.round(fx * img.width), Math.round(fy * img.height), 1, 1).data].slice(0, 3);
+            URL.revokeObjectURL(u);
+            res({ w: img.width, h: img.height, type: file.type, name: file.name,
+                  left: at(.15, .5), right: at(.85, .5) });
+          };
+          img.src = u;
+        });
+        const red = p => p[0] > 200 && p[2] < 60;
+        const blue = p => p[2] > 200 && p[0] < 60;
+        const r = {};
+        const big = await src(3000, 1200);
+
+        /* 1) إلغاء = لا شيء */
+        let pr = IE.open(big, 'photo'); await settle(260);
+        document.querySelector('#imCancel').click();
+        r.cancelled = await pr;
+
+        /* 2) الإغلاق بالـ✕ إلغاء كذلك — لا يُحفظ بالخطأ */
+        pr = IE.open(big, 'photo'); await settle(260);
+        document.querySelector('.overlay [data-close]').click();
+        r.closedIsCancel = await pr;
+
+        /* 3) كل سطح ومقاسه — المُخرَج من الإعداد لا من الملف */
+        for (const [k, preset] of [['logo', 'logo'], ['banner', 'banner'], ['photo', 'photo']]) {
+          pr = IE.open(big, preset); await settle(300);
+          document.querySelector('#imApply').click();
+          r[k] = await read(await pr);
+        }
+
+        /* 4) التحريك يغيّر ما يُحفظ فعلاً */
+        pr = IE.open(big, 'photo'); await settle(300);
+        const st = document.querySelector('#imStage'), box = st.getBoundingClientRect();
+        const ev = (t, dx) => st.dispatchEvent(new PointerEvent(t, {
+          clientX: box.left + box.width / 2 + dx, clientY: box.top + box.height / 2,
+          bubbles: true, pointerId: 1 }));
+        ev('pointerdown', 0); ev('pointermove', 4000); ev('pointerup', 4000);
+        await settle(90);
+        document.querySelector('#imApply').click();
+        r.panned = await read(await pr);
+
+        /* 5) التكبير يُصغّر منطقة القص — والرقم معروض للمستخدمة */
+        pr = IE.open(big, 'photo'); await settle(300);
+        const before = document.querySelector('#imCrop').textContent;
+        const z = document.querySelector('#imZoom');
+        z.value = '650'; z.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle(60);
+        const zoomed = document.querySelector('#imCrop').textContent;
+        document.querySelector('#imReset').click(); await settle(60);
+        const reset = document.querySelector('#imCrop').textContent;
+        document.querySelector('#imCancel').click(); await pr;
+        r.crop = { before, zoomed, reset };
+
+        /* 6) المتحرّك والمتّجه يمرّان بلا محرّر — وإلا جُمّد المتحرّك بالقصّ */
+        r.pass = { gif: IE.passthrough({ type: 'image/gif' }),
+                   svg: IE.passthrough({ type: 'image/svg+xml' }),
+                   png: IE.passthrough({ type: 'image/png' }),
+                   jpg: IE.passthrough({ type: 'image/jpeg' }) };
+        r.stack = window.TG.UI.stack.length;
+        r.red = { logo: red(r.logo.left), photoL: red(r.photo.left) };
+        r.judge = { pannedBothRed: red(r.panned.left) && red(r.panned.right),
+                    centredSplit: red(r.photo.left) && blue(r.photo.right) };
+        return r;
+      });
+
+      ok('الإلغاء لا يُنتج ملفاً', out.cancelled === null);
+      ok('والإغلاق بالـ✕ إلغاء كذلك', out.closedIsCancel === null);
+      ok('الشعار يُحفظ 512×512', out.logo.w === 512 && out.logo.h === 512, `${out.logo.w}×${out.logo.h}`);
+      ok('وبصيغة تحفظ الشفافية (PNG)', out.logo.type === 'image/png', out.logo.type);
+      ok('اللافتة تُحفظ 1600×400 — نسبة 4:1', out.banner.w === 1600 && out.banner.h === 400,
+         `${out.banner.w}×${out.banner.h}`);
+      ok('الصورة الشخصية تُحفظ 512×512 مربّعة', out.photo.w === 512 && out.photo.h === 512,
+         `${out.photo.w}×${out.photo.h}`);
+      /* الأهمّ: **مقاس المُخرَج لا يتبع مقاس الملف**. هذا ما يُسقط عيب
+         «الصورة تكسر مكانها» من جذره — أصلٌ 3000×1200 يخرج بمقاس السطح. */
+      ok('ومقاس المحفوظ من السطح لا من الملف (أصل 3000×1200)',
+         out.logo.w === 512 && out.banner.w === 1600 && out.photo.w === 512);
+      ok('القصّ الافتراضي موسَّط — نصف أحمر ونصف أزرق', out.judge.centredSplit,
+         `${out.photo.left} / ${out.photo.right}`);
+      ok('والتحريك يغيّر ما يُحفظ فعلاً — طرفٌ واحد بلون واحد', out.judge.pannedBothRed,
+         `${out.panned.left} / ${out.panned.right}`);
+      ok('التكبير يُصغّر منطقة القص', out.crop.before !== out.crop.zoomed,
+         `${out.crop.before} ⟵ ${out.crop.zoomed}`);
+      ok('وإعادة الضبط تُرجعها كما كانت', out.crop.reset === out.crop.before,
+         `${out.crop.reset} / ${out.crop.before}`);
+      ok('الصورة المتحرّكة لا تمرّ بالمحرّر — القصّ يجمّدها', out.pass.gif === true);
+      ok('ولا المتّجه — الترميز يُفقده تحجيمه', out.pass.svg === true);
+      ok('أمّا الثابتة فتمرّ به', out.pass.png === false && out.pass.jpg === false);
+      ok('ولا نافذة معلّقة بعد كل هذا', out.stack === 0, out.stack);
+      await a.ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('محرّر الصورة — ما يُرى هو ما يُحفظ', rows, errors);
+  });
+
+  /* ===================================================================== *
+   * صورة الموظفة تُبدَّل من ملفها                                          *
+   * ===================================================================== */
+  group('الفريق — الصورة نفسها مدخل تعديلها', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    let errors = [];
+    try {
+      const a = await openBrowser(browser, url);
+      errors = a.errors;
+      const out = await a.page.evaluate(async () => {
+        const TG = window.TG;
+        const st = await TG.Repos.staff.create({ name: 'هدى المدرّبة', role: 'مدرّبة',
+          baseSalary: 300, status: 'active', hireDate: '2024-01-01' });
+        TG.Screens.staffProfile(st.id);
+        await new Promise(r => setTimeout(r, 140));
+        const modal = document.querySelector('.overlay .modal');
+        const holder = modal.querySelector('[data-photo-edit]');
+        const btn = holder && holder.querySelector('[data-photo-btn]');
+        /* الملف وضع قراءة: لا حقل إدخال واحد فيه — ولا منتقي ملفات مخبّأ */
+        const inputs = modal.querySelectorAll('input:not([type=hidden]),select,textarea').length;
+        const fileInputs = modal.querySelectorAll('input[type=file]').length;
+        /* القلم يُخفى بالشفافية ويظهر عند المرور — فيُقاس أنه موجود ومخفيّ */
+        const hidden = btn ? Number(getComputedStyle(btn).opacity) : -1;
+        const label = btn ? btn.getAttribute('aria-label') : '';
+
+        /* المسار الفعليّ: نفس الخدمة التي يناديها القلم */
+        const png = () => new Promise(res => {
+          const c = document.createElement('canvas'); c.width = 40; c.height = 40;
+          const x = c.getContext('2d'); x.fillStyle = '#123456'; x.fillRect(0, 0, 40, 40);
+          c.toBlob(b => res(new File([b], 'هدى.png', { type: 'image/png' })), 'image/png');
+        });
+        const before = TG.Repos.media.list(true).length;
+        const rec = await TG.Svc.media.replaceOn({ repo: TG.Repos.staff, store: 'staff',
+          id: st.id, field: 'photoMediaId', perm: 'staff.edit', file: await png() });
+        const first = rec.photoMediaId;
+        /* الاستبدال ثانيةً: القديمة تُنظَّف فلا تتراكم الوسائط اليتيمة */
+        const rec2 = await TG.Svc.media.replaceOn({ repo: TG.Repos.staff, store: 'staff',
+          id: st.id, field: 'photoMediaId', perm: 'staff.edit', file: await png() });
+        const oldGone = !TG.Repos.media.get(first);
+        const after = TG.Repos.media.list(true).length;
+        /* النسخة الاحتياطية تلتقطها كأي وسائط — لا مخزن ثانٍ */
+        const backup = TG.Backup.build(true);
+        const inBackup = (backup.data.media || []).some(m => m.id === rec2.photoMediaId);
+        return { hasHolder: !!holder, hasBtn: !!btn, inputs, fileInputs, hidden, label,
+                 saved: !!rec2.photoMediaId, replaced: rec2.photoMediaId !== first,
+                 oldGone, grew: after - before, inBackup };
+      });
+
+      ok('الصورة في الملف محاطة بمدخل تعديل', out.hasHolder && out.hasBtn);
+      ok('وله وصف منطوق لقارئ الشاشة', /صورة/.test(out.label || ''), out.label);
+      ok('والقلم مخفيّ حتى المرور فوق الصورة', out.hidden === 0, out.hidden);
+      /* الثابت القديم يبقى: الملف يُقرأ ولا يُعدَّل فيه */
+      ok('والملف يبقى وضع قراءة — لا حقل إدخال', out.inputs === 0, out.inputs);
+      ok('ولا منتقي ملفات مخبّأ في صفحته', out.fileInputs === 0, out.fileInputs);
+      ok('الحفظ يربط الصورة بالموظفة', out.saved);
+      ok('والاستبدال يعطي وسائط جديدة', out.replaced);
+      ok('والقديمة تُنظَّف فلا تتراكم', out.oldGone && out.grew === 1, `+${out.grew}`);
+      ok('والنسخة الاحتياطية تلتقطها كأي وسائط', out.inBackup);
+      await a.ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('الفريق — الصورة نفسها مدخل تعديلها', rows, errors);
+  });
+
   group('مركز الملفات — يجد ما أُنتج ويفتحه', async (browser) => {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       const a = await openDesktop(browser, url);
@@ -1308,7 +1688,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       /* هذه المجموعة تحقن فشلاً عمداً، وسجلّ التطبيق `[TG]` هو **المتوقَّع**:
@@ -1391,7 +1771,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       /* تُحقن طباعةٌ فاشلة عمداً في آخر المجموعة، وسجلّ التطبيق `[TG]` هو
@@ -1620,7 +2000,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = [];
     const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     let errors = [];
     try {
       const a = await openBrowser(browser, url);

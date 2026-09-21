@@ -2694,7 +2694,7 @@ require('./desktop-ux.js')({ group, record, TESTS_JS });
 (async () => {
   (await import('../scripts/prepare-frontend.mjs')).prepare();   /* app/index.html قبل أي اختبار */
   const srv = await serve();
-  const url = `http://127.0.0.1:${srv.address().port}/`;
+  const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
   const browser = await chromium.launch(Object.assign({ args: ['--no-sandbox'] }, CHROME ? { executablePath: CHROME } : {}));
   const picked = only.length ? groups.filter(g => only.some(o => g.name.includes(o))) : groups;
   for (const g of picked){

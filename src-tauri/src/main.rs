@@ -6,7 +6,7 @@
 //   2. كتابة ملف إلى مجلّد معروف بدل «تنزيل» ينتهي في Downloads.
 //   3. قراءة مجلّدات النظام وتقليم النسخ التلقائية.
 //   4. فتح ملفٍّ أو مجلّدٍ من مجلّدات النظام ببرنامج ويندوز المعتاد.
-//   5. إظهار النافذة الرئيسية حين تجهز الواجهة، وإغلاق نافذة البدء.
+//   5. تكبير النافذة الرئيسية ثم إظهارها حين تصير المقدّمة على الشاشة.
 //
 // وما لا يفعله هذا الجسر أهمّ ممّا يفعله: لا يقبل مساراً من الواجهة أبداً.
 // الواجهة ترسل فئةً من قائمة مغلقة واسم ملف، والمسار يُبنى هنا. فلا سبيل
@@ -23,8 +23,7 @@ use paths::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::Manager;
 
 #[derive(Serialize)]
@@ -333,73 +332,61 @@ fn open_with_shell(target: &Path) -> Result<(), String> {
 }
 
 /* ============================ بدء التشغيل ============================
-   نافذة البدء ليست زينة: النافذة الرئيسية تبقى مخفيّة حتى تجهز الواجهة،
-   فلا ترى المستخدمة هيكلاً فارغاً يُملأ أمامها، ولا لوحة تحكّم قبل الدخول.
-   وأربع قواعد تحكمها:
+   ما كان هنا: نافذة بدءٍ مستقلّة 420×320 تحمل مقدّمة مرسومة بـCSS، والنافذة
+   الرئيسية مخفيّة خلفها بمقاس 1280×800 ثم تُظهَر.
 
-     · لا تبقى أبداً. الواجهة تنادي `tg_ready` عند الجاهزية **وعند فشل
-       الإقلاع أيضاً**؛ ومن فوقهما حارسٌ زمنيّ في هذا الملف يكشف النافذة
-       الرئيسية مهما حدث. فشاشةُ بدءٍ عالقة أسوأ من غياب شاشة بدء.
-     · لا تُقتل في منتصف حركتها. هذا كان العيب الذي رأته المستخدمة:
-       مقدّمة `desktop/splash.html` تستغرق 900ms لتكتمل، وكان الكشف يقع
-       بعد 350ms — فما كانت تُرى شاشةُ بدءٍ بل وميضٌ داكن. فالحدّ الأدنى
-       الآن هو **طول المقدّمة نفسها**، لا رقمٌ اختير ليبدو جميلاً: إن
-       انتهى الإقلاع قبلها انتظرت المقدّمةُ نفسَها لتكمل، وإن كان الإقلاع
-       أبطأ منها لم يُضَف إليه شيء.
-     · لا تُبطئ من لا يريدها. حين يطلب الجهاز تقليل الحركة لا مقدّمة
-       أصلاً (انظري `@media (prefers-reduced-motion)` في صفحة البدء)،
-       فانتظارُ مقدّمةٍ لا تعمل حشوٌ محض — فتُكشف النافذة فوراً تقريباً.
-       والواجهة هي من تقول ذلك، لأنها وحدها تقرأ تفضيل الجهاز.
-     · تُكشف مرّة واحدة. `REVEALED` يمنع تكرار الإظهار والإغلاق.
-*/
-static STARTED: OnceLock<Instant> = OnceLock::new();
+   والمستخدمة قالت ما يكفي: «نافذة صغيرة»، ثم يكبر التطبيق أمامها. وكانت
+   محقّة — وهذا عيبٌ لا يُصلَح بتكبير نافذة البدء: نافذتان تتبادلان الشاشة
+   تعطيان قفزةً مهما ضُبطتا، وصفحةُ البدء بلا سكربت (بحكم تصميمها) فلا
+   تستطيع أن تعرف متى انتهت مقدّمةٌ مرئية لتسلّم.
+
+   فالنموذج الآن واحد لا اثنان:
+
+     · النافذة الرئيسية تُنشأ **مكبَّرة ومخفيّة** (`maximized` و`visible:false`
+       في tauri.conf.json). فحين تُظهَر تكون بمقاسها النهائي أصلاً — لا
+       تكبيرٌ يُرى، ولا نافذة صغيرة تسبقه.
+     · الواجهة ترسم المقدّمة (`intro/intro.webm`) داخل النافذة نفسها، ثم
+       تنادي `tg_ready` في اللحظة التي تصير فيها المقدّمة على الشاشة.
+     · هنا تُظهَر النافذة. فأوّل ما تراه المستخدمة هو المقدّمة ملء الشاشة.
+
+   وثلاث ضمانات تبقى كما كانت:
+     · `tg_ready` تُنادى عند نجاح الإقلاع **وعند فشله**، فلا شاشة عالقة.
+     · حارسٌ زمنيّ هنا يُظهر النافذة مهما حدث — حتى لو لم تنطق الواجهة.
+     · `REVEALED` يمنع تكرار الإظهار.
+
+   ولا حدّ أدنى للانتظار بعد اليوم: كان يحمي مقدّمةً في نافذةٍ تُقتل بإظهار
+   غيرها. والمقدّمة الآن في النافذة التي تُظهَر — فإظهارها لا يقطعها، بل هو
+   ما يُريها. وطولها تحكمه الواجهة وحدها (انظري `Intro` في ملف الواجهة). */
 static REVEALED: AtomicBool = AtomicBool::new(false);
-/// طول مقدّمة نافذة البدء — نظيره `--intro` في `desktop/splash.html`.
-/// اختبارٌ في المجموعة يقارن الرقمين ويسقط إن تفرّقا.
-const SPLASH_INTRO_MS: u128 = 900;
-/// حين لا مقدّمة (تقليل الحركة): مهلة انتقال تمنع الوميض لا غير.
-const SPLASH_STILL_MS: u128 = 140;
-/// الحارس: بعده تُكشف النافذة الرئيسية ولو لم تنطق الواجهة.
-const SPLASH_WATCHDOG_MS: u64 = 12_000;
+/// الحارس: بعده تُظهَر النافذة الرئيسية ولو لم تنطق الواجهة.
+const REVEAL_WATCHDOG_MS: u64 = 12_000;
 
-/// كم يتبقّى من الحدّ الأدنى بعد `elapsed` من عمر العملية.
+/// تُظهر النافذة الرئيسية مرّة واحدة — مكبّرة.
 ///
-/// مفصولةٌ عن Tauri عمداً حتى تُختبر وحدها: هذه هي القاعدة التي سقطت في
-/// المرحلة السابقة، فيجب أن تكون مقيسة لا موصوفة.
-fn splash_rest_ms(elapsed: u128, reduced_motion: bool) -> u64 {
-    let floor = if reduced_motion { SPLASH_STILL_MS } else { SPLASH_INTRO_MS };
-    floor.saturating_sub(elapsed) as u64
-}
-
+/// التكبير يُطلب هنا أيضاً وإن كان في الإعدادات: بعض تعريفات العرض على
+/// ويندوز تُنشئ النافذة بمقاسها المطلوب ثم تُعيدها إلى مقاسٍ محفوظ. وطلبُه
+/// قبل الإظهار مباشرةً لا يكلّف شيئاً إن كانت مكبّرة أصلاً، ويمنع أن تُرى
+/// نافذة أصغر من الشاشة إن لم تكن.
 fn reveal_main(app: &tauri::AppHandle) {
     if REVEALED.swap(true, Ordering::SeqCst) {
         return;
     }
     if let Some(main) = app.get_webview_window("main") {
+        let _ = main.maximize();
         let _ = main.show();
         let _ = main.set_focus();
     }
-    if let Some(splash) = app.get_webview_window("splash") {
-        let _ = splash.close();
-    }
 }
 
-/// تُناديها الواجهة حين تنتهي من الإقلاع — بنجاحه أو بفشله.
+/// تُناديها الواجهة حين تصير المقدّمة على الشاشة — أو حين ينتهي الإقلاع
+/// بنجاحه أو بفشله، أيّهما أسبق.
 ///
-/// `reduced_motion` يأتي من `matchMedia` في الواجهة: لا يستطيع طرف الصدأ
-/// قراءة تفضيل الحركة، والواجهة تقرؤه أصلاً لتضبط حركاتها. فيُمرَّر معه.
+/// `reduced_motion` يبقى في التوقيع وإن لم يعد يغيّر توقيتاً: الواجهة تمرّره
+/// منذ المرحلة السابقة، وحذفُ وسيطٍ تمرّره الواجهة يجعل النداء يفشل.
 #[tauri::command]
 fn tg_ready(app: tauri::AppHandle, reduced_motion: Option<bool>) {
-    let elapsed = STARTED.get().map(|t| t.elapsed().as_millis()).unwrap_or(u128::MAX);
-    let rest = splash_rest_ms(elapsed, reduced_motion.unwrap_or(false));
-    if rest == 0 {
-        return reveal_main(&app);
-    }
-    // لا يُحجب الخيط: الانتظار في خيط جانبي والنافذة تُكشف بعده
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(rest));
-        reveal_main(&app);
-    });
+    let _ = reduced_motion;
+    reveal_main(&app);
 }
 
 /// واجهة طباعة ويندوز الحقيقية.
@@ -454,13 +441,12 @@ fn tg_print(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
-    STARTED.get_or_init(Instant::now);
     tauri::Builder::default()
         .setup(|app| {
-            // حارس نافذة البدء: يعمل حتى لو لم تُقلع الواجهة أصلاً
+            // حارس الإظهار: يعمل حتى لو لم تُقلع الواجهة أصلاً
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(SPLASH_WATCHDOG_MS));
+                std::thread::sleep(Duration::from_millis(REVEAL_WATCHDOG_MS));
                 reveal_main(&handle);
             });
             Ok(())
@@ -482,33 +468,20 @@ fn main() {
 }
 
 #[cfg(test)]
-mod splash_tests {
+mod startup_tests {
     use super::*;
 
     #[test]
-    fn intro_is_awaited_when_boot_is_faster_than_it() {
-        // إقلاع في 200ms: يبقى ما يكمل المقدّمة — لا وميض
-        assert_eq!(splash_rest_ms(200, false), (SPLASH_INTRO_MS - 200) as u64);
+    fn reveal_happens_once_only() {
+        // `REVEALED` هو ما يمنع إظهاراً ثانياً حين تنطق الواجهة والحارس معاً
+        let flag = AtomicBool::new(false);
+        assert!(!flag.swap(true, Ordering::SeqCst), "أول نداء يمرّ");
+        assert!(flag.swap(true, Ordering::SeqCst), "الثاني يُردّ");
     }
 
     #[test]
-    fn slow_boot_is_never_padded() {
-        // إقلاع أبطأ من المقدّمة: لا يُضاف إليه شيء
-        assert_eq!(splash_rest_ms(SPLASH_INTRO_MS, false), 0);
-        assert_eq!(splash_rest_ms(SPLASH_INTRO_MS + 4_000, false), 0);
-    }
-
-    #[test]
-    fn reduced_motion_waits_for_no_animation() {
-        // لا مقدّمة تعمل ⇒ لا انتظار لها، ومهلة الانتقال وحدها
-        assert_eq!(splash_rest_ms(0, true), SPLASH_STILL_MS as u64);
-        assert!(splash_rest_ms(0, true) < splash_rest_ms(0, false));
-        assert_eq!(splash_rest_ms(SPLASH_STILL_MS, true), 0);
-    }
-
-    #[test]
-    fn watchdog_outlives_the_floor() {
-        // الحارس يجب أن يأتي بعد الحدّ الأدنى دائماً، وإلا كشف قبل المقدّمة
-        assert!(SPLASH_WATCHDOG_MS as u128 > SPLASH_INTRO_MS);
+    fn watchdog_is_generous_enough_for_a_slow_boot() {
+        // الحارس شبكة أمان لا موقّت: يجب أن يترك للإقلاع البطيء وقتاً
+        assert!(REVEAL_WATCHDOG_MS >= 8_000);
     }
 }

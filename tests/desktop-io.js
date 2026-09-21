@@ -229,7 +229,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — التصدير إلى مجلّداته', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -311,7 +311,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — الفشل لا يُخفى', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url, { fail: { save: 'القرص ممتلئ' }, expectLogged: true });
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -361,7 +361,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — الطباعة الأصلية', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -477,7 +477,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — تعذّر الطباعة', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url, { fail: { print: 'لا طابعة' }, expectLogged: true });
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -530,7 +530,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — النسخ الاحتياطية', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -612,7 +612,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — نقطة الرجوع حين تتعذّر', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openBridged(browser, url, { fail: { save: 'القرص ممتلئ' }, expectLogged: true });
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -654,7 +654,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
    * ===================================================================== */
   group('جسر سطح المكتب — المتصفح كما كان', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     /* بلا جسر: هذا هو وقت تشغيل المتصفح بالضبط */
     const ctx = await browser.newContext();
     /* النوافذ المنبثقة ممنوعة: فيُختبر وعاء المتصفح البديل (الإطار) لا

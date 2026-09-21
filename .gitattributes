@@ -21,5 +21,7 @@
 *.jpg  binary
 *.jpeg binary
 *.webp binary
+*.mp4  binary
+*.webm binary
 *.exe  binary
 *.msi  binary

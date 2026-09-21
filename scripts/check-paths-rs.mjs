@@ -6,9 +6,9 @@
 
      · `src-tauri/src/paths.rs` — الخروج من المجلّد، وتعقيم الأسماء، ورفض
        اللواحق الغريبة، وتقليم النسخ.
-     · `splash_rest_ms` في `src-tauri/src/main.rs` — كم تبقى نافذة البدء.
-       هذه هي القاعدة التي كانت تقتل المقدّمة في منتصفها (350ms لمقدّمة
-       تستغرق 900ms)، فما كانت المستخدمة ترى شاشة بدء أصلاً.
+     · قواعد الإظهار في `src-tauri/src/main.rs` — مرّة واحدة لا أكثر، وحارسٌ
+       سخيّ بما يكفي لإقلاع بطيء. النافذة تُنشأ مكبّرة ومخفيّة، فكلّ ما يبقى
+       أن تُظهَر مرّة واحدة ولا تعلق مخفيّة أبداً.
 
    لكن `cargo test` على حزمة التطبيق يبني الشجرة كلّها، وهي لا تُبنى على
    لينكس بلا حزم نظام كثيرة. فالبديل أن تُبنى كل قاعدة صندوقاً مستقلّاً
@@ -29,10 +29,10 @@ const MAIN = path.join(ROOT, 'src-tauri', 'src', 'main.rs');
 
 if (!fs.existsSync(SRC)) { console.error(`لا يوجد: ${SRC}`); process.exit(1); }
 
-/* قاعدة نافذة البدء تُقتطع من `main.rs` نفسه بمطابقة نصّية على حدودها.
+/* قاعدة الإظهار تُقتطع من `main.rs` نفسه بمطابقة نصّية على حدودها.
    ولا تُنسخ يدوياً: نسخةٌ ثانية تُصان على حدة تُصبح كذبةً أوّل مرّة يتغيّر
    الأصل. وإن لم تُوجد الحدود سقط الفحص — لا يُتجاوز بصمت. */
-function splashRule(){
+function startupRule(){
   const src = fs.readFileSync(MAIN, 'utf8');
   const grab = (re, what) => {
     const m = src.match(re);
@@ -40,18 +40,18 @@ function splashRule(){
     return m[0];
   };
   return [
-    grab(/const SPLASH_INTRO_MS[\s\S]*?const SPLASH_WATCHDOG_MS: u64 = [\d_]+;/, 'ثوابت البدء'),
-    grab(/fn splash_rest_ms[\s\S]*?\n\}/, 'قاعدة الحدّ الأدنى'),
+    'use std::sync::atomic::{AtomicBool, Ordering};',
+    grab(/static REVEALED: AtomicBool[\s\S]*?const REVEAL_WATCHDOG_MS: u64 = [\d_]+;/, 'ثوابت الإظهار'),
     /* وحدة الاختبار آخر ما في الملف، فتُؤخذ إلى نهايته — أبسط من مطاردة
        الأقواس، ولا يكسرها تغيّر مسافات البادئة. */
-    grab(/#\[cfg\(test\)\]\nmod splash_tests \{[\s\S]*$/, 'اختبارات البدء'),
+    grab(/#\[cfg\(test\)\]\nmod startup_tests \{[\s\S]*$/, 'اختبارات الإظهار'),
   ].join('\n\n');
 }
 
 /* صندوق واحد لكل قاعدة: مصدر، واسم، ورسالة عند السقوط */
 const BOXES = [
   { name: 'قواعد المسارات', lib: () => fs.readFileSync(SRC, 'utf8') },
-  { name: 'حدّ نافذة البدء', lib: splashRule },
+  { name: 'قواعد إظهار النافذة', lib: startupRule },
 ];
 
 let failed = 0;

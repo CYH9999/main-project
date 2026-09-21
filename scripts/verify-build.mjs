@@ -24,9 +24,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'tabarak-gym 3.0.html');
-const SPLASH_SRC = path.join(ROOT, 'desktop', 'splash.html');
+const INTRO_DIR = path.join(ROOT, 'intro');
 const DIST = path.join(ROOT, 'app', 'index.html');
-const DIST_SPLASH = path.join(ROOT, 'app', 'splash.html');
+const DIST_INTRO = path.join(ROOT, 'app', 'intro');
 const CONF = path.join(ROOT, 'src-tauri', 'tauri.conf.json');
 const RUST_DIR = path.join(ROOT, 'src-tauri', 'src');
 /* طرف الصدأ كلّه، بلا وحدات الاختبار: نصُّ اختبارٍ يُثبت أن شيئاً **مرفوض**
@@ -50,14 +50,21 @@ const ok = (name, pass, detail) => {
    علامات الميزات: لكل ميزة ما لا تعمل بدونه — لا اسمها ولا تعليقها.
    --------------------------------------------------------------------------- */
 const FEATURES = [
-  { key: 'splash', label: 'نافذة البدء',
-    html: [/Desktop\.ready\(\)/g, /reducedMotion:this\.reducedMotion\(\)/],
-    htmlMin: { 'Desktop.ready()': 2 },          // النجاح والفشل معاً
-    rust: [/fn tg_ready/, /fn reveal_main/, /SPLASH_WATCHDOG_MS/,
-           /fn splash_rest_ms/, /SPLASH_INTRO_MS/, /SPLASH_STILL_MS/],
-    conf: c => c.app.windows.some(w => w.label === 'splash' && w.visible === true)
-            && c.app.windows.some(w => w.label === 'main' && w.visible === false),
-    confWhy: 'نافذة splash ظاهرة و main مخفيّة' },
+  { key: 'intro', label: 'المقدّمة الافتتاحية في نافذة مكبّرة',
+    html: [/Desktop\.ready\(\)/g, /reducedMotion:this\.reducedMotion\(\)/,
+           /const Intro = \{/, /Intro\.mount\(\);/, /await Intro\.settle\(\);/g,
+           /id="introRoot"/, /intro\/intro\.webm/, /intro\/intro\.mp4/,
+           /intro\/intro-poster\.jpg/],
+    htmlMin: { 'Desktop.ready()': 2, 'await Intro.settle();': 2 },  // البوّابة والشاشة معاً
+    rust: [/fn tg_ready/, /fn reveal_main/, /REVEAL_WATCHDOG_MS/, /let _ = main\.maximize\(\);/],
+    /* النافذة الوحيدة تُنشأ مكبّرة ومخفيّة — هذا هو الإصلاح كلّه في سطر:
+       ما يُظهَر يكون بمقاسه النهائي، ولا نافذة صغيرة تسبقه. */
+    conf: c => c.app.windows.length === 1
+            && c.app.windows[0].label === 'main'
+            && c.app.windows[0].visible === false
+            && c.app.windows[0].maximized === true
+            && /^#/.test(String(c.app.windows[0].backgroundColor || '')),
+    confWhy: 'نافذة واحدة: main مخفيّة ومكبّرة وبخلفية داكنة' },
 
   { key: 'gate', label: 'بوّابة الدخول قبل مساحة العمل',
     html: [/body\.locked \.app\{display:none\}/,
@@ -125,22 +132,22 @@ function verifySource() {
      `pkg=${pkg.version} conf=${conf.version} cargo=${cargoVer} app=${appVer}`);
   ok('مخطّط البيانات 8 — التغليف لا يُرقّي قاعدة', appSchema === 8, appSchema);
 
-  // نافذة البدء ليست تطبيقاً ثانياً
-  const sp = read(SPLASH_SRC);
-  ok('نافذة البدء بلا سكربت ولا قاعدة بيانات',
-     !/<script/i.test(sp) && !/indexedDB|__TAURI|localStorage/i.test(sp));
-
-  /* طول المقدّمة رقمٌ واحد في ملفّين: `--intro` في صفحة البدء
-     و`SPLASH_INTRO_MS` في طرف الصدأ. إن تفرّقا عاد العيب الذي أُصلح —
-     نافذةٌ تُغلق في منتصف حركتها. فيُقارَنان هنا قبل أن يُبنى شيء. */
-  const introCss = Number((sp.match(/--intro:\s*(\d+)ms/) || [])[1]);
-  const introRs = Number((rust.match(/SPLASH_INTRO_MS: u128 = (\d+)/) || [])[1]);
-  ok('طول مقدّمة البدء واحد في الصفحة وفي طرف الصدأ',
-     !!introCss && introCss === introRs, `css=${introCss} rust=${introRs}`);
-  ok('والمقدّمة داخل المدى المقصود (0.8–1.5 ثانية)',
-     introCss >= 800 && introCss <= 1500, `${introCss}ms`);
-  ok('ونافذة البدء تحترم تقليل الحركة',
-     /prefers-reduced-motion:reduce/.test(sp) && /animation:none/.test(sp));
+  /* أصول المقدّمة: ما لا تعمل المقدّمة بدونه. والترميز يُفحص بالبايتات لا
+     باللاحقة — ملفٌّ باسم .webm وداخله HEVC لا يشغّله محرّك العرض، وهذا
+     بالضبط ما كان عليه الملف الأصليّ قبل التحويل. */
+  const need = ['intro.webm', 'intro.mp4', 'intro-poster.jpg'];
+  for (const f of need)
+    ok(`أصل المقدّمة موجود: ${f}`, fs.existsSync(path.join(INTRO_DIR, f)));
+  const webm = path.join(INTRO_DIR, 'intro.webm');
+  if (fs.existsSync(webm)) {
+    const head = fs.readFileSync(webm).subarray(0, 4);
+    // EBML: 1A 45 DF A3 — مِلفّ Matroska/WebM حقيقي
+    ok('وintro.webm ملفّ WebM فعلاً (EBML)',
+       head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3,
+       [...head].map(b => b.toString(16)).join(' '));
+    const mb = fs.statSync(webm).size / 1048576;
+    ok('وحجمه لا يُثقل التثبيت (≤ 8 م.ب)', mb <= 8, `${mb.toFixed(2)} م.ب`);
+  }
   return conf.version;
 }
 
@@ -153,8 +160,14 @@ function verifyFrontend() {
   ok('SHA256(المصدر) = SHA256(المولَّد)', a === b, `${a.slice(0, 16)}… / ${b.slice(0, 16)}…`);
   ok('الحجم نفسه — لا تحويل نهايات أسطر', src.length === dist.length,
      `${src.length} / ${dist.length}`);
-  const sp = fs.readFileSync(SPLASH_SRC), spd = fs.existsSync(DIST_SPLASH) ? fs.readFileSync(DIST_SPLASH) : null;
-  ok('app/splash.html موجود ومطابق', !!spd && sha256(sp) === sha256(spd));
+  /* أصول المقدّمة تُنسخ إلى مجلّد البناء: Tauri لا يقدّم إلا ما فيه.
+     وتُقارن بالبصمة لا بالوجود — ملفٌّ نُسخ ناقصاً يشتغل حتى يُفتح. */
+  for (const f of ['intro.webm', 'intro.mp4', 'intro-poster.jpg']) {
+    const a = path.join(INTRO_DIR, f), b = path.join(DIST_INTRO, f);
+    const has = fs.existsSync(b);
+    ok(`app/intro/${f} موجود ومطابق`,
+       has && sha256(fs.readFileSync(a)) === sha256(fs.readFileSync(b)));
+  }
   // العلامات تُفحص في المولَّد نفسه لا في المصدر وحده
   scanFeatures(dist.toString('utf8'), null, null, 'المولَّد');
   const stamp = path.join(ROOT, 'app', 'frontend-sha256.txt');

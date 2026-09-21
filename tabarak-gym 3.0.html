@@ -434,11 +434,13 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ما دامت البوّابة مطلوبة. فما لا يُبنى لا يُرى ولا يُلتقط بصورة شاشة. */
 body.locked .app{display:none}
 body.locked{background:var(--plum-900)}
-.gate{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
-  padding:20px;overflow:auto;
-  background:
+/* خلفية البوّابة تُعرَّف مرّة: تستعملها الشاشة وطبقة التحقّق فوقها معاً.
+   ولو كُتبت مرّتين لظهر خطٌّ فاصل بينهما أوّلَ مرّة يتغيّر أحدهما. */
+:root{ --gate-bg:
     radial-gradient(90% 70% at 50% 0%, rgba(219,92,134,.22) 0%, rgba(219,92,134,0) 60%),
-    linear-gradient(160deg,var(--plum-700) 0%,var(--plum-900) 55%,#1C1220 100%)}
+    linear-gradient(160deg,var(--plum-700) 0%,var(--plum-900) 55%,#1C1220 100%) }
+.gate{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
+  padding:20px;overflow:auto;background:var(--gate-bg)}
 /* هوية فوق البطاقة لا داخلها: العلامة والاسم على الخلفية البرقوقية،
    والبطاقة تحتها للحقول وحدها. هذا ما يجعلها تبدو شاشة نظام لا نموذج ويب. */
 .gate-head{text-align:center;margin-bottom:18px;color:var(--rose-50)}
@@ -446,7 +448,7 @@ body.locked{background:var(--plum-900)}
 .gate-head h1{font-size:24px;font-weight:700;letter-spacing:.3px;margin:0;color:#fff;line-height:1.25}
 .gate-head p{margin:6px 0 0;font-size:12.5px;color:var(--rose-100);opacity:.82;letter-spacing:.2px}
 .gate-wrap{width:100%;max-width:392px}
-.gate-card{background:var(--surface);border-radius:var(--r-lg);
+.gate-card{position:relative;background:var(--surface);border-radius:var(--r-lg);
   box-shadow:0 22px 60px rgba(0,0,0,.34),0 0 0 1px rgba(255,255,255,.05);
   padding:24px 22px}
 .gate-card .brand-mark,.gate-card .brand-logo,.gate-card .brand-box{margin:0 auto 12px}
@@ -477,11 +479,36 @@ body.locked{background:var(--plum-900)}
    الثلث من الثانية. المطلوب «سَلِس» لا «مشهد سينمائي». */
 @keyframes gateIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes gateFade{from{opacity:0}to{opacity:1}}
+
+/* ---------------------- طبقة «جارٍ التحقّق» ----------------------
+   الضغط على «تسجيل الدخول» كان ينقل إلى لوحة التحكّم في اللحظة نفسها،
+   فيبدو النظام وكأنه لم يتحقّق من شيء. وهذه الطبقة تقول إنه يتحقّق.
+
+   ولماذا تغطّي **البطاقة وحدها** لا الشاشة كلّها؟ لأن طبقةً بملء الشاشة
+   جُرّبت أوّلاً فبانت رديئة: شعارُها في الوسط وشعارُ البوّابة في الأعلى،
+   فيقفز الشعار مكانه؛ وأثناء تلاشيها تُقرأ عبارتُها فوق الحقول. أمّا
+   الآن فالترويسة — الشعار والاسم — تبقى في مكانها بلا حركة، ولا يتبدّل
+   إلا ما تحتها: النموذج يصير «جارٍ التحقّق». وهذا ما يفعله التطبيق فعلاً.
+
+   ومدّتها الدنيا زمنٌ بصريّ لا حشو: إن تأخّر التحقّق الحقيقي أكثر منها
+   انتُظر هو، وإن فشل لم تبقَ لحظة واحدة (انظري معالج #gGo). */
+.gate-load{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:13px;
+  background:var(--surface);border-radius:var(--r-lg)}
+.gate-load p{margin:0;font-size:13.5px;color:var(--ink-2);letter-spacing:.2px}
+.gate-spin{width:28px;height:28px;border-radius:50%;
+  border:2.5px solid var(--rose-100);border-top-color:var(--rose-600);
+  animation:gateSpin 720ms linear infinite}
+@keyframes gateSpin{to{transform:rotate(360deg)}}
+/* الخروج إلى لوحة التحكّم: تلاشٍ هادئ بدل اختفاء مفاجئ */
+.gate.leaving{animation:none;opacity:0;transition:opacity 260ms ease-in}
 .gate .gate-wrap{animation:gateIn 280ms cubic-bezier(.22,.7,.3,1) both}
 .gate{animation:gateFade 200ms ease-out both}
 /* تقليل الحركة: لا صعود ولا تلاشٍ — الشاشة تظهر مكتملة، وتبقى مرتّبة. */
 @media (prefers-reduced-motion:reduce){
   .gate,.gate .gate-wrap{animation:none}
+  .gate-spin{animation:none;border-top-color:var(--rose-600);opacity:.9}
+  .gate.leaving{transition:none}
 }
 /* هوية المستخدمة في الشريط العلوي */
 .whoami{display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid var(--line);
@@ -619,6 +646,132 @@ body.locked{background:var(--plum-900)}
 .doc.slip .doc-total{font-size:13px;padding:6px 8px}
 .doc.slip .doc-sign{display:none}
 
+
+
+/* ===== src/styles/74-intro.css ======================================================= */
+/* ============================ المقدّمة الافتتاحية ============================
+   تملأ النافذة كلّها — لا مربّع في وسط شاشة. والنافذة نفسها تُنشأ مكبّرة
+   ومخفيّة، فأوّل ما يُرى هو هذه الصورة بملء الشاشة (انظري main.rs).
+
+   والخلفية داكنة قبل أن يصل إطار الفيديو الأول: `poster` يملأ الفراغ، ولون
+   الصندوق تحته من لون الهوية. فلا لحظة بيضاء في أي ترتيب للأحداث. */
+.intro{position:fixed;inset:0;z-index:1000;background:#241826;overflow:hidden}
+.intro video,.intro .intro-still{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;
+  border:0;background:#241826}
+.intro .intro-still{background-size:cover;background-position:center;background-repeat:no-repeat}
+/* الخروج: تلاشٍ إلى شاشة الدخول التي تحتها. آخر إطارٍ في الفيديو شاشةُ دخول
+   مرسومة، فالتلاشي يقع بين صورتين متشابهتين — يُقرأ انتقالاً لا قطعاً. */
+.intro.leaving{opacity:0;transition:opacity 420ms ease-in;pointer-events:none}
+@media (prefers-reduced-motion:reduce){
+  .intro.leaving{transition:opacity 120ms linear}
+}
+/* زرّ التخطّي: لا يظهر إلا بعد لحظة، ولا يسرق التركيز.
+   من رأى المقدّمة مرّة لا يجب أن يُجبر على رؤيتها كل صباح. */
+.intro-skip{
+  position:absolute;inset-block-end:24px;inset-inline-start:24px;z-index:2;
+  background:rgba(36,24,38,.5);color:#F7DCE6;border:1px solid rgba(247,220,230,.3);
+  border-radius:999px;padding:7px 16px;font-size:12.5px;font-family:inherit;cursor:pointer;
+  opacity:0;animation:introSkip .4s ease-out 1.2s forwards}
+.intro-skip:hover{background:rgba(36,24,38,.75);color:#fff}
+@keyframes introSkip{to{opacity:.85}}
+@media (prefers-reduced-motion:reduce){ .intro-skip{animation:none;opacity:.85} }
+
+/* ===== src/styles/75-image-editor.css ================================================ */
+/* ======================= محرّر الصورة — إطار واحد لكل سطح =======================
+   العيب الذي أوجد هذا: «اختاري ملفاً ⇐ حُفظ». لا المستخدمة ترى ما سيظهر،
+   ولا ما سيُقصّ، ولا تملك تحريكه. فترفع صورة عريضة للشعار فيُقصّ رأسها،
+   أو صورة موظفة فتخرج الوجه خارج الدائرة.
+
+   والقاعدة هنا بصريّة لا نصّية: **ما تراه داخل الإطار هو ما سيُحفظ**.
+   ما خارجه يُعتَّم بالظلّ الواسع (`box-shadow` بنصف قطر ضخم) فيُرى الأصل
+   كاملاً ويُرى ما سيسقط منه في الوقت نفسه — بلا رسم ثانٍ ولا قناع.
+
+   والإطار يأخذ شكله من السطح: مربّع للشعار، دائرة لصورة الموظفة، شريط
+   عريض للّافتة. والشكل هنا عرضٌ فقط — المحفوظ مربّع دائماً في حالة الدائرة،
+   لأن التدوير يقع في CSS (‎.prof-photo‎) لا في الملف. */
+.imed{ display:flex; flex-direction:column; gap:14px }
+/* المسرح: نافذة ثابتة القياس لا تتغيّر بأبعاد الملف المرفوع — وهي القاعدة
+   نفسها التي تحكم Brand.BOX: مصدر الصورة لا يقرّر قياس ما على الشاشة. */
+.imed-stage{
+  position:relative; overflow:hidden; border-radius:var(--r-md);
+  background:
+    linear-gradient(45deg,#EFE8EE 25%,transparent 25%,transparent 75%,#EFE8EE 75%) 0 0/16px 16px,
+    linear-gradient(45deg,#EFE8EE 25%,transparent 25%,transparent 75%,#EFE8EE 75%) 8px 8px/16px 16px,
+    #F8F4F7;
+  border:1px solid var(--line); touch-action:none; user-select:none; -webkit-user-select:none;
+  cursor:grab;
+  /* ارتفاع المسرح يتبع ارتفاع النافذة لا رقماً ثابتاً: `modal-body` سقفه
+     70vh، فمسرحٌ ثابت الطول إمّا يضيع نصف الفراغ على شاشة كبيرة أو يُخرج
+     شريط تمرير على شاشة 1024×600 (وهي أصغر مقاس يسمح به الغلاف). */
+  height:clamp(200px, 38vh, 340px);
+}
+/* اللافتة إطارها عريض قصير، فلا تحتاج طولاً — وطولٌ زائد يترك فراغاً
+   رمادياً فوقها وتحتها لا معنى له. */
+.imed-stage.banner{ height:clamp(170px, 26vh, 250px) }
+.imed-stage.dragging{ cursor:grabbing }
+.imed-stage img{
+  position:absolute; top:0; left:0; transform-origin:0 0; max-width:none; max-height:none;
+  will-change:transform; -webkit-user-drag:none; pointer-events:none;
+}
+/* الإطار: الثقب الذي يُرى منه ما سيُحفظ. الظلّ الواسع يعتّم كل ما عداه. */
+.imed-frame{
+  position:absolute; pointer-events:none; box-shadow:0 0 0 9999px rgba(36,24,38,.58);
+  border:2px solid rgba(255,255,255,.92); border-radius:2px;
+}
+.imed-frame.circle{ border-radius:50% }
+.imed-frame.banner{ border-radius:var(--r-sm) }
+/* خطوط الأثلاث: تساعد على وضع الوجه أو العلامة بلا أن تزاحم الصورة */
+.imed-frame::before,.imed-frame::after{
+  content:''; position:absolute; inset:0; opacity:.3;
+  background-repeat:no-repeat; pointer-events:none;
+}
+.imed-frame::before{ background-image:linear-gradient(to right,#fff 1px,transparent 1px),linear-gradient(to right,#fff 1px,transparent 1px);
+  background-position:33.33% 0,66.66% 0; background-size:1px 100%,1px 100% }
+.imed-frame::after{ background-image:linear-gradient(to bottom,#fff 1px,transparent 1px),linear-gradient(to bottom,#fff 1px,transparent 1px);
+  background-position:0 33.33%,0 66.66%; background-size:100% 1px,100% 1px }
+.imed-frame.circle::before,.imed-frame.circle::after{ display:none }
+
+.imed-tools{ display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+.imed-tools .zoom{ flex:1; min-width:150px; display:flex; align-items:center; gap:8px }
+.imed-tools input[type=range]{ flex:1; accent-color:var(--rose-600); min-width:90px }
+.imed-tools .zlab{ font-size:12px; color:var(--muted); min-width:44px; text-align:center }
+
+/* الأسفل: معاينة حقيقية بالحجم الذي سيظهر به فعلاً + أرقام الصورة */
+.imed-foot{ display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap }
+.imed-prevwrap{ display:flex; flex-direction:column; align-items:center; gap:6px }
+.imed-prevwrap span{ font-size:11.5px; color:var(--muted) }
+/* المعاينة تُرسم بالخلفية لا بـ<img>: التحريك والتكبير يقعان بتغيير
+   background-position/size وحدهما، بلا إعادة تحميل ولا رسم ثانٍ. */
+.imed-prev{
+  background-repeat:no-repeat; border:1px solid var(--line); background-color:#fff;
+  box-shadow:var(--shadow-soft); flex:0 0 auto;
+}
+.imed-prev.circle{ border-radius:50% }
+.imed-prev.banner{ border-radius:var(--r-sm) }
+.imed-meta{ flex:1; min-width:190px; font-size:12.5px; color:var(--ink-2) }
+.imed-meta dl{ display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:0 }
+.imed-meta dt{ color:var(--muted) }
+.imed-meta dd{ margin:0 }
+.imed-note{ font-size:12px; color:var(--muted); margin-top:8px; line-height:1.5 }
+.imed-warn{ font-size:12.5px; color:var(--gold-600); margin-top:6px }
+
+/* شاشة ضيّقة: المسرح يبقى قابلاً للاستعمال ولا يُخرج شريط تمرير أفقياً */
+@media (max-width:620px){
+  .imed-foot{ gap:10px }
+  .imed-meta{ min-width:100% }
+}
+
+/* ---- صورة الموظفة في ملفها: الصورة نفسها هي مدخل التعديل ---- */
+.photo-edit{ position:relative; display:inline-block; flex:0 0 auto; line-height:0 }
+.photo-edit > .prof-photo,.photo-edit > .avatar{ margin:0 }
+.photo-edit .photo-edit-btn{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  border:0; padding:0; border-radius:50%; cursor:pointer; color:#fff;
+  background:rgba(36,24,38,.52); opacity:0; transition:opacity .16s ease;
+}
+.photo-edit:hover .photo-edit-btn,.photo-edit .photo-edit-btn:focus-visible{ opacity:1 }
+@media (prefers-reduced-motion:reduce){ .photo-edit .photo-edit-btn{ transition:none } }
 
 /* ===== src/styles/50-print-responsive.css ============================================ */
 /* ============================ Print ============================ */
@@ -766,6 +919,15 @@ body.locked{background:var(--plum-900)}
   </div>
 </div>
 
+<!-- المقدّمة: موجودة في أول رسمة للصفحة لا تُضاف بعدها.
+
+     لماذا في الـHTML لا في السكربت؟ لأن ما يُضيفه السكربت يظهر بعد أول رسمة،
+     وبين الرسمتين إطارٌ يُرى فيه ما تحتها. ولونها مكتوب هنا صراحةً (style)
+     لا في ورقة الأنماط وحدها: حتى لو تأخّر تحليل الأنماط لا تُرى ومضة بيضاء.
+     وهي فارغة حتى ينادي السكربت `Intro.mount` — فإن لم يكن هناك ما يُعرض
+     رُفعت بلا أثر. -->
+<div id="introRoot" style="position:fixed;inset:0;z-index:1000;background:#241826"></div>
+
 <div id="modalRoot"></div>
 <div class="toasts" id="toastRoot" aria-live="polite"></div>
 <div id="notifRoot"></div>
@@ -785,7 +947,7 @@ body.locked{background:var(--plum-900)}
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.7.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.8.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -3599,6 +3761,31 @@ Svc.media = {
     try { await DB.remove('media', id); return { removed:true }; }
     catch(e){ Log.warn('تعذّر حذف الوسائط — ستبقى يتيمة وتُنظَّف لاحقاً', e); return { removed:false, reason:e.message }; }
   },
+  /* ------------------------ استبدال صورة كيان ------------------------
+     تعديل الصورة صار ممكناً من الملف نفسه لا من النموذج وحده (صورة
+     الموظفة في ملفها). فلو كُتب الترتيب هناك من جديد لصار لعملية واحدة
+     موضعان يختلفان يوم يتغيّر أحدهما. فهو هنا مرّة واحدة، بالترتيب نفسه
+     الذي تتبعه النماذج:
+
+       يُحفظ الجديد ⇐ يُحدَّث السجل ⇐ يُنظَّف القديم إن لم يعد مستعملاً
+
+     والفشل في أي خطوة لا يترك أثراً: الوسائط المرفوعة تُحذف ويُعاد الخطأ. */
+  async replaceOn({ repo, store, id, field, perm, file }){
+    /* الحارس في الخدمة لا في الشاشة: قاعدة النظام أن `Auth.require` تُنادى
+       من طبقة الأفعال، وأن كل مفتاح محروس تقيسه مصفوفة الصلاحيات. فلو بقي
+       في معالج الضغطة لما كان للمفتاح طريقٌ يُقاس. */
+    if (perm) Auth.require(perm);
+    const row = repo.get(id);
+    if (!row) throw new AppError('السجل غير موجود','NOT_FOUND');
+    const prev = row[field] || null;
+    const saved = await this.saveFile(file);
+    let rec;
+    try { rec = await repo.update(id, { [field]:saved.id }); }
+    catch(e){ await this.remove(saved.id).catch(() => {}); throw e; }
+    if (prev && prev !== rec[field]) await this.removeIfUnused(prev, { store, id });
+    return rec;
+  },
+
   /* مجموع ما تشغله الوسائط — يظهر في الإعدادات لأن المساحة المحلية محدودة */
   usage(){
     const rows = Repos.media.list(true);
@@ -7306,9 +7493,9 @@ const Desktop = {
     const parts = ['المستندات', FOLDERS.root, ...tail.split(/[\\/]/)].filter(Boolean);
     return parts.map(x => this.FOLDER_AR[x] || x).join(' ‹ ');
   },
-  /* هل يطلب الجهاز تقليل الحركة؟ تُقرأ هنا لأن طرف الصدأ لا يستطيع قراءتها،
-     وهو يحتاجها: مقدّمة نافذة البدء لا تعمل عند تقليل الحركة، فانتظارها
-     يصير حشواً محضاً (انظري `splash_rest_ms` في main.rs). */
+  /* هل يطلب الجهاز تقليل الحركة؟ تُقرأ هنا لأن طرف الصدأ لا يستطيع قراءتها.
+     تُمرَّر معه في `tg_ready` وتحكم المقدّمة الافتتاحية: من يطلب تقليل الحركة
+     يرى إطاراً ثابتاً لا فيديو (انظري `Intro`). */
   reducedMotion(){
     try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
     catch(e){ return false; }
@@ -7855,6 +8042,170 @@ const UI = {
     doc.close();
     return w;
   },
+};
+
+
+/* ===== src/app/platform/05-intro.js ================================================== */
+/* ========================== المقدّمة الافتتاحية ==========================
+   ما تطلبه المستخدمة بعبارتها: «من لحظة الضغط على البرنامج — لا نافذة صغيرة
+   ولا بيضاء، ثم المقدّمة بملء الشاشة، ثم شاشة الدخول».
+
+   وهذا يُنفَّذ على طرفين:
+     · طرف الصدأ  — النافذة تُنشأ **مكبّرة ومخفيّة**، ولا تُظهَر إلا حين
+       نقول إن المقدّمة صارت على الشاشة (`tg_ready`). فلا تُرى نافذة قبل
+       أن يكون فيها ما يُرى، ولا يُرى تكبيرٌ يقع أمام العين.
+     · هنا       — المقدّمة تُملأ وتُشغَّل، ثم تتلاشى إلى ما تحتها.
+
+   وأربع قواعد تحكمها:
+
+     · **لا تحبس أحداً.** الإقلاع يجري تحتها لا بعدها: قاعدة البيانات تُفتح
+       والترقية تعمل وشاشة الدخول تُبنى بينما هي تُعرض. فما تكلّفه المقدّمة
+       من زمن هو ما كان سيُقضى في الإقلاع أصلاً.
+     · **لا تعلق أبداً.** ملفٌّ ناقص، أو ترميز لا يفهمه المحرّك، أو جهازٌ
+       يمنع التشغيل التلقائي — كلّها تُنهيها فوراً إلى شاشة الدخول. ومن
+       فوقها حارسٌ زمنيّ. المقدّمة زينة، والدخول هو الغرض.
+     · **لا تُفرَض.** زرّ تخطٍّ بعد لحظة، وضغطة أو مفتاح ينهيانها. ومن يطلب
+       تقليل الحركة لا يرى فيديو أصلاً بل الإطار الثابت لُمَيحة.
+     · **لا تُقتل في منتصفها.** لا تُنهى لأن الإقلاع انتهى — تُترك لتكمل.
+       وهذا عكس العيب القديم في نافذة البدء، حيث كان انتهاء الإقلاع يقطع
+       مقدّمةً لم تكتمل فتُرى وميضاً.
+
+   والترميز: الملف الأصليّ الذي صُنعت به المقدّمة كان HEVC، ومحرّك العرض
+   في ويندوز (WebView2) لا يشغّله إلا بحزمة ترميز من المتجر قد لا تكون
+   مثبّتة — ولا يشغّله متصفّح الاختبار أصلاً. فالمعروض VP9/WebM (يعمل في
+   كليهما) ومعه MP4/H.264 احتياطاً. والأصل 2560×1440 و30 إطاراً كما هو. */
+const Intro = {
+  /* الأول الذي يفهمه المحرّك يُشغَّل. VP9 أوّلاً: هو المضمون في WebView2. */
+  SOURCES: [
+    { src:'intro/intro.webm', type:'video/webm' },
+    { src:'intro/intro.mp4',  type:'video/mp4'  }
+  ],
+  POSTER: 'intro/intro-poster.jpg',
+  /* الحارس: مهما حدث لا تبقى المقدّمة أطول من هذا. وهو **أقصر** من حارس
+     طرف الصدأ (REVEAL_WATCHDOG_MS = 12s) عمداً: تتعافى الواجهة بنفسها قبل
+     أن تحتاج إلى الشبكة التي تحتها. */
+  MAX_MS: 9000,
+  /* تقليل الحركة: الإطار الثابت لُمَيحة ثم يُمضى — لا فيديو ولا انتظار له */
+  STILL_MS: 650,
+
+  el:null, video:null, started:false, over:false,
+  _endResolve:null, _ended:null, _timer:null,
+
+  /* هل تُعرض؟ `?intro=0` تُطفئها — تستعملها مجموعة الاختبارات كي لا تدفع
+     كل حالة اختبار ثمن خمس ثوانٍ، وتستعملها الصيانة حين تُفتح الشاشة مراراً. */
+  wanted(){
+    try { if (/[?&]intro=0\b/.test(location.search)) return false; }
+    catch(e){}
+    return !!document.getElementById('introRoot');
+  },
+
+  /* تُنادى في أول سطر من الإقلاع، قبل أي `await`. لا ترمي أبداً. */
+  mount(){
+    const root = document.getElementById('introRoot');
+    if (!root) return false;
+    if (!this.wanted()){ this.dispose(root); return false; }
+    this._ended = new Promise(res => { this._endResolve = res; });
+    try {
+      root.className = 'intro';
+      root.setAttribute('role', 'img');
+      root.setAttribute('aria-label', 'مقدّمة تبارك جيم');
+      this.el = root;
+      if (Brand.reducedMotion()) this._still(root);
+      else this._video(root);
+      /* الحارس الأخير: لا تبقى المقدّمة أبداً بعد هذا الحدّ */
+      this._timer = setTimeout(() => this.end('watchdog'), this.MAX_MS);
+      this.started = true;
+      return true;
+    } catch(e){
+      /* أي خطأ هنا = لا مقدّمة. الإقلاع لا يتوقّف على زينة. */
+      try { Log.warn('تعذّرت المقدّمة الافتتاحية', e); } catch(e2){}
+      this.end('error');
+      return false;
+    }
+  },
+
+  /* تقليل الحركة: إطار ثابت، ثم يُمضى. لا فيديو يُحمَّل أصلاً. */
+  _still(root){
+    root.innerHTML = `<div class="intro-still" style="background-image:url('${this.POSTER}')"></div>`;
+    setTimeout(() => this.end('still'), this.STILL_MS);
+  },
+
+  _video(root){
+    const srcs = this.SOURCES.map(s => `<source src="${s.src}" type="${s.type}">`).join('');
+    root.innerHTML = `<video muted playsinline preload="auto" poster="${this.POSTER}"
+        aria-hidden="true" tabindex="-1">${srcs}</video>
+      <button type="button" class="intro-skip" id="introSkip">تخطّي</button>`;
+    const v = root.querySelector('video');
+    this.video = v;
+    /* التخطّي: بالزرّ، أو بأي مفتاح، أو بضغطة على الصورة */
+    root.querySelector('#introSkip').onclick = () => this.end('skip');
+    root.addEventListener('click', e => { if (e.target !== v) return; this.end('skip'); });
+    this._key = e => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') this.end('skip'); };
+    document.addEventListener('keydown', this._key, true);
+
+    v.addEventListener('ended', () => this.end('ended'));
+    /* ترميز لا يفهمه المحرّك، أو ملف ناقص: لا مقدّمة، وإلى الدخول فوراً */
+    v.addEventListener('error', () => this.end('unsupported'));
+    /* آخر مصدر فشل ⇒ لا مصدر صالحاً */
+    const last = v.querySelector('source:last-of-type');
+    if (last) last.addEventListener('error', () => { if (!v.currentSrc) this.end('unsupported'); });
+
+    const play = v.play();
+    /* التشغيل التلقائي مكتوم مسموح في كل محرّك يعنينا — وإن رُفض فلا
+       تُترك صورةً جامدة: تُنهى إلى الدخول. */
+    if (play && typeof play.catch === 'function')
+      play.catch(() => this.end('autoplay-blocked'));
+  },
+
+  /* اللحظة التي صارت فيها المقدّمة على الشاشة — وعندها تُظهَر النافذة.
+     لا تُنتظر جاهزية الفيديو: `poster` والخلفية الداكنة مرسومان فوراً،
+     فالنافذة تُظهَر وفيها صورة مكتملة لا فراغ.
+
+     ولماذا سباقٌ مع مؤقّت لا إطارَا رسمٍ وحدهما؟ لأن النافذة **مخفيّة**
+     في هذه اللحظة بالضبط — وهذا هو الغرض — ومحرّك العرض يُبطئ
+     `requestAnimationFrame` أو يوقفه للصفحات غير المرئية. فلو كان الإظهار
+     معلّقاً على إطار رسمٍ وحده لأمكن ألّا يأتي أبداً، ولبقيت الشاشة سوداء
+     حتى يُنقذها حارس الصدأ بعد اثنتي عشرة ثانية. فأيّهما جاء أوّلاً. */
+  painted(){
+    return new Promise(res => {
+      let done = false;
+      const go = () => { if (!done){ done = true; res(); } };
+      try { requestAnimationFrame(() => requestAnimationFrame(go)); } catch(e){}
+      setTimeout(go, 90);
+    });
+  },
+
+  /* انتهت المقدّمة (بنهايتها أو بتخطٍّ أو بعطل). تُنهي مرّة واحدة. */
+  end(why){
+    if (this.over) return;
+    this.over = true;
+    if (this._timer){ clearTimeout(this._timer); this._timer = null; }
+    if (this._key){ document.removeEventListener('keydown', this._key, true); this._key = null; }
+    try { if (this.video){ this.video.pause(); } } catch(e){}
+    if (why && why !== 'ended' && why !== 'skip' && why !== 'still')
+      try { Log.info('المقدّمة الافتتاحية لم تُعرض', { why }); } catch(e){}
+    if (this._endResolve){ this._endResolve(why || 'ended'); this._endResolve = null; }
+  },
+
+  /* تُنتظر نهايتها ثم تتلاشى. تُنادى بعد أن تصير شاشة الدخول جاهزة تحتها —
+     فالتلاشي يقع على شاشة مكتملة لا على فراغ يُملأ بعده. */
+  async settle(){
+    if (!this.started) return;
+    await this._ended;
+    const el = this.el;
+    if (!el) return;
+    if (!Brand.reducedMotion()){
+      el.classList.add('leaving');
+      await new Promise(r => setTimeout(r, 430));
+    }
+    this.dispose(el);
+  },
+
+  dispose(el){
+    const node = el || this.el;
+    this.el = null; this.video = null;
+    if (node && node.parentNode) node.remove();
+  }
 };
 
 
@@ -8560,6 +8911,358 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
            PURCHASE_COLS, purchaseRows, SUPPLIER_PAY_COLS, supplierPayRows,
            PAYMENT_COLS, paymentRows, CASH_COLS, cashRows };
 })();
+
+
+/* ===== src/app/ui/15-image-editor.js ================================================= */
+/* ========================= محرّر الصورة — مكوّن واحد =========================
+   ثلاثة أسطح ترفع صوراً: شعار النادي، لافتته، وصورة الموظفة/المشتركة. وكانت
+   كلّها تفعل الشيء نفسه: `<input type=file>` ثم حفظ. فلا المستخدمة ترى ما
+   سيظهر، ولا ما سيُقصّ منه، ولا تملك تحريكه داخل مكانه.
+
+   فمحرّرٌ واحد يخدمها جميعاً — لا ثلاثة. والفرق بينها **بيانات لا شيفرة**:
+   `PRESET` يحمل الشكل والنسبة ومقاس المُخرَج، وكل سطح جديد سطرٌ فيه.
+
+   وثلاث قواعد بُني عليها:
+
+     · **ما يُرى هو ما يُحفظ.** المعاينة والإطار والمُخرَج تُحسب كلّها من
+       التحويل نفسه (`scale` و`ox/oy`)، فلا سبيل إلى أن يختلف المحفوظ عمّا
+       رأته المستخدمة. والرسم النهائي يعيد التحويل ذاته على canvas.
+     · **مصدر الصورة لا يقرّر شيئاً.** المُخرَج مقاسه من `PRESET` لا من
+       الملف: صورة 6000×4000 وصورة 300×200 تُنتجان الملف نفسه قياساً. وهذا
+       ما يُسقط عيب «الصورة تكسر مكانها» من جذره بدل مطاردته بـ`max-width`.
+     · **ما لا يُحسن المحرّر التعامل معه لا يمرّ به.** الصور المتحرّكة
+       (GIF) والـSVG تُمرَّر كما هي: قصُّ متحرّكةٍ على canvas يجمّدها في
+       إطار واحد، وتحويل SVG إلى بكسلات يُفقده ما بُني لأجله. والهوية
+       المتحرّكة ميزة قائمة في النظام فلا يجوز أن يكسرها محرّرٌ جديد. */
+const ImageEditor = {
+  /* كل سطح وسطره. `out` مقاس المحفوظ، و`fit` أدنى تكبير مسموح:
+     - cover  : الإطار ممتلئ دائماً (صورة شخصية أو لافتة — لا فراغ فيهما)
+     - contain: يُسمح بتصغير الصورة كاملةً داخل الإطار (شعارٌ له هوامش) */
+  PRESET: {
+    logo:   { shape:'square', aspect:1, out:512,  fit:'contain', alpha:true,
+              title:'ضبط شعار النادي', slot:'الشعار',
+              note:'الشعار يظهر في الشريط الجانبي وفي ترويسة كل مستند مطبوع. '
+                 + 'يُفضَّل مربّعاً بخلفية شفافة — وما يخرج عن الإطار لن يظهر.' },
+    banner: { shape:'banner', aspect:4, out:1600, fit:'cover', alpha:false,
+              title:'ضبط لافتة النادي', slot:'اللافتة',
+              note:'اللافتة شريط عريض أعلى شاشة الاستقبال. حرّكي الصورة داخل الإطار '
+                 + 'حتى يقع فيه ما تريدين إظهاره.' },
+    photo:  { shape:'circle', aspect:1, out:512,  fit:'cover', alpha:false,
+              title:'ضبط الصورة', slot:'الصورة',
+              note:'الصورة تظهر دائرية في الملف وفي القوائم. ضعي الوجه داخل الدائرة.' }
+  },
+  /* أقصى تكبير: خمسة أضعاف ملء الإطار — أبعد من هذا تصير البكسلات ظاهرة */
+  MAX_ZOOM: 5,
+
+  /* ما لا يمرّ بالمحرّر: المتحرّك يُجمَّد بالقصّ، والمتّجه يُفقد تحجيمه.
+     تُستعمل من مواضع الاستدعاء لتقرّر: أأفتح المحرّر أم أمرّر الملف كما هو؟ */
+  passthrough(file){
+    const t = String((file && file.type) || '').toLowerCase();
+    return t === 'image/svg+xml' || Svc.media.isAnimatedType(t);
+  },
+  /* سبب التمرير بعبارة تُقال للمستخدمة — لا رسالة تقنية */
+  passReason(file){
+    const t = String((file && file.type) || '').toLowerCase();
+    if (t === 'image/svg+xml') return 'ملف SVG يُحفظ كما هو — فهو يتحجّم بلا فقدان جودة.';
+    if (Svc.media.isAnimatedType(t)) return 'الصورة المتحرّكة تُحفظ كما هي حتى تبقى متحرّكة.';
+    return '';
+  },
+
+  /* أبعاد المُخرَج لسطحٍ ما — تُقرأ من مكان واحد كي تُعرض وتُرسم من المصدر ذاته */
+  outSize(p){ return { w:p.out, h:Math.round(p.out / p.aspect) }; },
+
+  /* ------------------------------------------------------------------
+     الفتح. تُعيد Promise:
+       · File   — صورة جديدة بمقاس السطح، جاهزة لـ Svc.media.saveFile
+       · null   — أُلغي، فلا يُمسّ شيء
+     ------------------------------------------------------------------ */
+  open(file, presetKey){
+    const p = this.PRESET[presetKey] || this.PRESET.photo;
+    const out = this.outSize(p);
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        UI.toast('تعذّر قراءة الصورة — جرّبي ملفاً آخر.', 'err');
+        resolve(null);
+      };
+      img.onload = () => this._mount({ file, url, img, p, out, resolve });
+      img.src = url;
+    });
+  },
+
+  _mount({ file, url, img, p, out, resolve }){
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if (!iw || !ih){
+      URL.revokeObjectURL(url);
+      UI.toast('تعذّر قراءة أبعاد الصورة.', 'err');
+      return resolve(null);
+    }
+    /* حالة التحويل: `s` بكسل معروض لكل بكسل أصليّ، و`ox/oy` موضع أعلى
+       الصورة بالنسبة إلى أعلى الإطار. هذه الثلاثة وحدها تصف كل شيء —
+       الشاشة والمعاينة والملف المحفوظ. */
+    const st = { s:1, ox:0, oy:0, fw:0, fh:0, min:1, max:1 };
+    let done = false;
+    const PREV = p.shape === 'banner' ? { w:168, h:42 } : { w:76, h:76 };
+
+    const body = `<div class="imed">
+      <div class="imed-stage ${p.shape}" id="imStage">
+        <img id="imImg" src="${U.esc(url)}" alt="">
+        <div class="imed-frame ${p.shape}" id="imFrame"></div>
+      </div>
+      <div class="imed-tools">
+        <button type="button" class="btn btn-sm btn-icon" id="imOut" aria-label="تصغير">−</button>
+        <div class="zoom"><input type="range" id="imZoom" min="0" max="1000" value="0"
+          aria-label="تكبير الصورة"><span class="zlab num" id="imZlab">100%</span></div>
+        <button type="button" class="btn btn-sm btn-icon" id="imIn" aria-label="تكبير">+</button>
+        <button type="button" class="btn btn-sm" id="imReset">إعادة الضبط</button>
+      </div>
+      <div class="imed-foot">
+        <div class="imed-prevwrap">
+          <div class="imed-prev ${p.shape}" id="imPrev"
+               style="width:${PREV.w}px;height:${PREV.h}px"></div>
+          <span>معاينة</span>
+        </div>
+        <div class="imed-meta">
+          <dl>
+            <dt>الصورة الأصلية</dt><dd class="num">${iw} × ${ih}</dd>
+            <dt>المحفوظ لـ${U.esc(p.slot)}</dt><dd class="num">${out.w} × ${out.h}</dd>
+            <dt>النسبة المطلوبة</dt><dd class="num">${p.aspect === 1 ? '1:1' : p.aspect + ':1'}</dd>
+            <dt>منطقة القص</dt><dd class="num" id="imCrop">—</dd>
+          </dl>
+          <div class="imed-note">${U.esc(p.note)}</div>
+          <div class="imed-warn" id="imWarn" style="display:none"></div>
+        </div>
+      </div>
+    </div>`;
+
+    const finish = (val) => {
+      if (done) return; done = true;
+      URL.revokeObjectURL(url);
+      resolve(val);
+    };
+
+    UI.modal({
+      title:p.title, size:'wide', body,
+      footer:`<button class="btn btn-primary" id="imApply">حفظ</button>
+              <button class="btn" id="imCancel">إلغاء</button><div class="sp"></div>`,
+      onClose(){ finish(null); },        /* الإغلاق بالـ✕ أو Esc = إلغاء */
+      onMount:(ov, handle) => {
+        const stage = ov.querySelector('#imStage'), frame = ov.querySelector('#imFrame');
+        const el = ov.querySelector('#imImg'), prev = ov.querySelector('#imPrev');
+        const zoom = ov.querySelector('#imZoom'), zlab = ov.querySelector('#imZlab');
+        const cropLab = ov.querySelector('#imCrop'), warn = ov.querySelector('#imWarn');
+
+        /* الإطار يُحسب من قياس المسرح الفعليّ لا من رقم مكتوب: النافذة
+           تتغيّر باتساع الشاشة، والإطار يتبعها بنسبته لا بمقاسه. */
+        const layout = () => {
+          const sw = stage.clientWidth, sh = stage.clientHeight;
+          if (!sw || !sh) return false;
+          const pad = Math.min(30, sw * .07);
+          let fw = sw - pad * 2, fh = fw / p.aspect;
+          if (fh > sh - pad * 2){ fh = sh - pad * 2; fw = fh * p.aspect; }
+          st.fw = Math.max(40, Math.round(fw)); st.fh = Math.max(24, Math.round(fh));
+          frame.style.width = st.fw + 'px'; frame.style.height = st.fh + 'px';
+          frame.style.left = Math.round((sw - st.fw) / 2) + 'px';
+          frame.style.top = Math.round((sh - st.fh) / 2) + 'px';
+          const cover = Math.max(st.fw / iw, st.fh / ih);
+          const contain = Math.min(st.fw / iw, st.fh / ih);
+          st.min = p.fit === 'contain' ? Math.min(contain, cover) : cover;
+          st.max = cover * ImageEditor.MAX_ZOOM;
+          return true;
+        };
+        /* حدود التحريك: حين تملأ الصورة الإطار لا يُسمح بفراغ عند حوافه؛
+           وحين تكون أصغر منه (شعار بهوامش) تُحبس داخله. المعادلة واحدة. */
+        const clamp = () => {
+          const iwS = iw * st.s, ihS = ih * st.s;
+          const loX = Math.min(0, st.fw - iwS), hiX = Math.max(0, st.fw - iwS);
+          const loY = Math.min(0, st.fh - ihS), hiY = Math.max(0, st.fh - ihS);
+          st.ox = Math.min(hiX, Math.max(loX, st.ox));
+          st.oy = Math.min(hiY, Math.max(loY, st.oy));
+        };
+        /* الرسم: الصورة على المسرح، والمعاينة بالخلفية، والأرقام. كلّها من
+           `st` وحده — فلا مصدرَين للحقيقة. */
+        const draw = () => {
+          clamp();
+          const fx = parseFloat(frame.style.left) || 0, fy = parseFloat(frame.style.top) || 0;
+          el.style.transform = `translate(${(fx + st.ox).toFixed(2)}px,${(fy + st.oy).toFixed(2)}px) scale(${st.s})`;
+          el.style.width = iw + 'px'; el.style.height = ih + 'px';
+          /* المعاينة: نفس التحويل مصغَّراً إلى مقاس المعاينة */
+          const k = PREV.w / st.fw;
+          prev.style.backgroundImage = `url("${url}")`;
+          prev.style.backgroundSize = `${(iw * st.s * k).toFixed(2)}px ${(ih * st.s * k).toFixed(2)}px`;
+          prev.style.backgroundPosition = `${(st.ox * k).toFixed(2)}px ${(st.oy * k).toFixed(2)}px`;
+          /* نسبة التكبير تُقاس من «ملء الإطار» لا من مقاس الملف */
+          const cover = Math.max(st.fw / iw, st.fh / ih);
+          zlab.textContent = Math.round(st.s / cover * 100) + '%';
+          const range = st.max - st.min;
+          zoom.value = String(range > 0 ? Math.round((st.s - st.min) / range * 1000) : 0);
+          /* منطقة القص بأصل الصورة — ما الذي يُؤخذ فعلاً من الملف */
+          const cw = Math.min(iw, Math.round(st.fw / st.s)), ch = Math.min(ih, Math.round(st.fh / st.s));
+          cropLab.textContent = `${cw} × ${ch}`;
+          /* تحذير الجودة: تكبيرٌ يتجاوز دقّة الملف يُنتج صورة ناعمة */
+          const short = cw < out.w * .5 || ch < out.h * .5;
+          warn.style.display = short ? 'block' : 'none';
+          if (short) warn.textContent = `المنطقة المختارة أصغر من المقاس المحفوظ (${out.w} × ${out.h}) — `
+            + 'قد تظهر الصورة أقل وضوحاً. صغّري التكبير أو اختاري ملفاً أكبر.';
+        };
+        /* أول ضبط: الصورة في الوسط وبأدنى تكبير مسموح */
+        const reset = () => {
+          if (!layout()) return;
+          st.s = st.min;
+          st.ox = (st.fw - iw * st.s) / 2;
+          st.oy = (st.fh - ih * st.s) / 2;
+          draw();
+        };
+        /* التكبير حول نقطة: ما تحت المؤشّر يبقى تحته */
+        const zoomAt = (ns, px, py) => {
+          ns = Math.min(st.max, Math.max(st.min, ns));
+          if (ns === st.s) return;
+          st.ox = px - (px - st.ox) * (ns / st.s);
+          st.oy = py - (py - st.oy) * (ns / st.s);
+          st.s = ns;
+          draw();
+        };
+        const centreZoom = ns => zoomAt(ns, st.fw / 2, st.fh / 2);
+
+        reset();
+        /* المسرح قد يُقاس قبل أن يستقرّ تخطيط النافذة — تُعاد مرة بعد الإطار */
+        requestAnimationFrame(() => { if (!st.fw) reset(); else { layout(); draw(); } });
+        if (typeof ResizeObserver !== 'undefined'){
+          const ro = new ResizeObserver(() => { const w = st.fw; if (layout()){ if (!w) reset(); else draw(); } });
+          ro.observe(stage);
+          const prevClose = handle.close.bind(handle);
+          handle.close = () => { try { ro.disconnect(); } catch(e){} prevClose(); };
+        }
+
+        /* ---- التحريك بالفأرة أو باللمس ---- */
+        let drag = null;
+        stage.addEventListener('pointerdown', e => {
+          drag = { x:e.clientX, y:e.clientY, ox:st.ox, oy:st.oy };
+          stage.classList.add('dragging');
+          try { stage.setPointerCapture(e.pointerId); } catch(err){}
+        });
+        stage.addEventListener('pointermove', e => {
+          if (!drag) return;
+          st.ox = drag.ox + (e.clientX - drag.x);
+          st.oy = drag.oy + (e.clientY - drag.y);
+          draw();
+        });
+        const endDrag = e => {
+          if (!drag) return;
+          drag = null; stage.classList.remove('dragging');
+          try { stage.releasePointerCapture(e.pointerId); } catch(err){}
+        };
+        stage.addEventListener('pointerup', endDrag);
+        stage.addEventListener('pointercancel', endDrag);
+        /* عجلة الفأرة تكبّر ولا تمرّر الصفحة تحتها */
+        stage.addEventListener('wheel', e => {
+          e.preventDefault();
+          const r = stage.getBoundingClientRect();
+          const fx = parseFloat(frame.style.left) || 0, fy = parseFloat(frame.style.top) || 0;
+          zoomAt(st.s * (e.deltaY < 0 ? 1.12 : 1 / 1.12),
+                 e.clientX - r.left - fx, e.clientY - r.top - fy);
+        }, { passive:false });
+        /* لوحة المفاتيح: المسرح عنصر يُركَّز عليه فيُحرَّك بالأسهم */
+        stage.tabIndex = 0;
+        stage.setAttribute('role', 'application');
+        stage.setAttribute('aria-label', 'حرّكي الصورة بالأسهم، وكبّري بـ + و −');
+        stage.addEventListener('keydown', e => {
+          const step = e.shiftKey ? 24 : 6;
+          if (e.key === 'ArrowLeft'){ st.ox -= step; draw(); }
+          else if (e.key === 'ArrowRight'){ st.ox += step; draw(); }
+          else if (e.key === 'ArrowUp'){ st.oy -= step; draw(); }
+          else if (e.key === 'ArrowDown'){ st.oy += step; draw(); }
+          else if (e.key === '+' || e.key === '='){ centreZoom(st.s * 1.12); }
+          else if (e.key === '-' || e.key === '_'){ centreZoom(st.s / 1.12); }
+          else return;
+          e.preventDefault();
+        });
+
+        zoom.oninput = () => { centreZoom(st.min + (st.max - st.min) * (Number(zoom.value) / 1000)); };
+        ov.querySelector('#imIn').onclick = () => centreZoom(st.s * 1.15);
+        ov.querySelector('#imOut').onclick = () => centreZoom(st.s / 1.15);
+        ov.querySelector('#imReset').onclick = reset;
+        ov.querySelector('#imCancel').onclick = () => handle.close();   /* onClose يحسمها إلغاءً */
+
+        ov.querySelector('#imApply').onclick = async () => {
+          const btn = ov.querySelector('#imApply');
+          btn.disabled = true; btn.textContent = 'جارٍ الحفظ…';
+          try {
+            const outFile = await ImageEditor._render({ img, st, p, out, file });
+            done = true;                       /* لا يحسمها onClose إلغاءً بعد الآن */
+            URL.revokeObjectURL(url);
+            handle.close();
+            resolve(outFile);
+          } catch(e){
+            Log.error('تعذّر تجهيز الصورة', e);
+            UI.toast('تعذّر تجهيز الصورة — جرّبي ملفاً آخر.', 'err');
+            btn.disabled = false; btn.textContent = 'حفظ';
+          }
+        };
+      }
+    });
+  },
+
+  /* الرسم النهائي: **التحويل نفسه** الذي رأته المستخدمة، مضروباً في نسبة
+     مقاس المُخرَج إلى مقاس الإطار. فلا حساب ثانٍ يمكن أن يخالف الأول. */
+  async _render({ img, st, p, out, file }){
+    const cv = document.createElement('canvas');
+    cv.width = out.w; cv.height = out.h;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    if (ctx.imageSmoothingQuality) ctx.imageSmoothingQuality = 'high';
+    const k = out.w / st.fw;
+    /* الشفافية تُحفظ للشعار وحده. وما عداه يُملأ أبيض: JPEG بلا قناة ألفا،
+       ولولا الملء لخرجت الهوامش سوداء. */
+    const alpha = p.alpha === true;
+    if (!alpha){ ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, out.w, out.h); }
+    ctx.save();
+    ctx.scale(k, k);
+    ctx.translate(st.ox, st.oy);
+    ctx.scale(st.s, st.s);
+    ctx.drawImage(img, 0, 0);
+    ctx.restore();
+
+    const type = alpha ? 'image/png' : 'image/jpeg';
+    const blob = await new Promise((res, rej) => {
+      if (cv.toBlob) cv.toBlob(b => b ? res(b) : rej(new Error('toBlob فارغ')), type, .92);
+      else {
+        try {
+          const parts = cv.toDataURL(type, .92).split(',');
+          const bin = atob(parts[1]), arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          res(new Blob([arr], { type }));
+        } catch(e){ rej(e); }
+      }
+    });
+    const base = String((file && file.name) || 'صورة').replace(/\.[^.]+$/, '');
+    const name = `${base}.${alpha ? 'png' : 'jpg'}`;
+    /* File لا Blob: مواضع الحفظ تقرأ `name` و`type` و`size` */
+    try { return new File([blob], name, { type }); }
+    catch(e){ blob.name = name; return blob; }      /* بيئة بلا File() */
+  },
+
+  /* ------------------------------------------------------------------
+     الطريق المختصر الذي تستعمله كل مواضع الرفع:
+     ملفٌ من المستخدمة ⇒ ملفٌ جاهز للحفظ (أو null إن أُلغي).
+     المتحرّك والـSVG يمرّان بلا محرّر مع كلمة تشرح السبب.
+     ------------------------------------------------------------------ */
+  async prepare(file, presetKey){
+    if (!file) return null;
+    if (!String(file.type || '').startsWith('image/')){
+      UI.toast('الملف ليس صورة.', 'err');
+      return null;
+    }
+    if (this.passthrough(file)){
+      const why = this.passReason(file);
+      if (why) UI.toast(why, 'ok', 5000);
+      return file;
+    }
+    return this.open(file, presetKey);
+  }
+};
 
 
 /* ===== src/app/ui/20-state-router.js ================================================= */
@@ -12631,9 +13334,15 @@ Views.settings = {
       const upload = async (input, kind) => {
         const f = input.files && input.files[0];
         if (!f) return;
+        /* المحرّر أولاً: المستخدمة ترى الإطار وتحرّك الصورة فيه وتعاين
+           النتيجة قبل أن يُكتب شيء. وإلغاؤه يُعيد الحقل فارغاً ولا يمسّ
+           الشعار الحالي. والمتحرّك والـSVG يمرّان بلا محرّر — انظري
+           ImageEditor.passthrough. */
+        const ready = await ImageEditor.prepare(f, kind === 'banner' ? 'banner' : 'logo');
+        if (!ready){ input.value = ''; return; }
         /* الرفع قد يستغرق لحظة على ملف متحرّك: يُعطَّل الحقل بدل تجميد الشاشة */
         input.disabled = true;
-        const res = await guard(null, () => Brand.setMedia(kind, f),
+        const res = await guard(null, () => Brand.setMedia(kind, ready),
           kind === 'banner' ? 'حُدّثت اللافتة' : 'حُدّث الشعار');
         input.disabled = false;
         if (res && Svc.media.isAnimated(res) && !res.posterUrl)
@@ -13978,16 +14687,25 @@ function photoField(name, currentMediaId, label){
       ${cur ? `<button type="button" class="btn btn-sm" data-clear="${name}" style="margin-top:8px">إزالة الصورة</button>` : ''}
     </div><span class="err"></span></div>`;
 }
-function bindPhotoField(ov, name){
+/* `preset` يفتح محرّر الصورة على الملف المختار قبل قبوله. تمرّ به صور
+   الأشخاص (دائرية في كل مكان تُعرض فيه) ولا تمرّ به صور الوثائق: الوثيقة
+   تُصوَّر لتُقرأ، وقصُّها في مربّع يقطع سطراً منها. */
+function bindPhotoField(ov, name, preset){
   const box = ov.querySelector(`[data-photo="${name}"]`);
   if (!box) return { file:null, remove:false };
   const state = { file:null, remove:false };
   const input = box.querySelector(`[data-file="${name}"]`);
   const prev = box.querySelector(`[data-prev="${name}"]`);
-  input.onchange = () => {
-    const f = input.files && input.files[0];
-    state.file = f || null; state.remove = false;
-    if (f){ const fr = new FileReader(); fr.onload = () => { prev.src = fr.result; prev.style.display = 'block'; }; fr.readAsDataURL(f); }
+  input.onchange = async () => {
+    const picked = input.files && input.files[0];
+    if (!picked) return;
+    const f = preset ? await ImageEditor.prepare(picked, preset) : picked;
+    /* إلغاء المحرّر يُعيد الحقل إلى ما كان: لا صورة جديدة ولا إزالة */
+    if (!f){ input.value = ''; return; }
+    state.file = f; state.remove = false;
+    const fr = new FileReader();
+    fr.onload = () => { prev.src = fr.result; prev.style.display = 'block'; };
+    fr.readAsDataURL(f);
   };
   const clear = box.querySelector(`[data-clear="${name}"]`);
   if (clear) clear.onclick = () => { state.remove = true; state.file = null; input.value = '';
@@ -14121,7 +14839,7 @@ Forms.member = function(id, opts){ /*v4*/
             <button class="btn" data-close>إلغاء</button><div class="sp"></div>
             <span class="t-sub">الاسم وحده مطلوب</span>`,
     onMount(ov){
-      const photo = bindPhotoField(ov, 'photo');
+      const photo = bindPhotoField(ov, 'photo', 'photo');
       const idPhoto = bindPhotoField(ov, 'idPhoto');
       /* قسم فيه خطأ يُفتح تلقائياً، وإلا بقي الخطأ مخفياً داخل قسم مطويّ */
       const revealErrors = () => ov.querySelectorAll('.sect').forEach(s => {
@@ -14734,7 +15452,7 @@ Forms.staff = function(id){ /*v4*/
     footer:`<button class="btn btn-primary" id="stSave">${s ? 'حفظ التعديلات' : 'إضافة'}</button>
             <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
     onMount(ov){
-      const photo = bindPhotoField(ov, 'photo');
+      const photo = bindPhotoField(ov, 'photo', 'photo');
       const idPhoto = bindPhotoField(ov, 'idPhoto');
       ov.querySelector('#stSave').onclick = async () => {
         const scope = ov.querySelector('#stForm'), d = UI.read(scope);
@@ -15749,7 +16467,20 @@ Screens.staffProfile = function(id){ /*v5*/
 
   UI.modal({ title:`ملف ${st.name}`, size:'wide',
     body:`<div class="row" style="gap:14px;align-items:flex-start;margin-bottom:16px">
-        ${photo ? `<img class="prof-photo" style="width:70px;height:70px;margin:0" src="${U.esc(photo.dataUrl)}" alt="">` : UI.avatar(st.name, true)}
+        ${(() => {
+          /* §9: الصورة نفسها هي مدخل تعديلها. كان تغييرها يوجب فتح نموذج
+             الموظفة كاملاً والنزول إلى حقل بين حقول — والصورة هي أول ما
+             تقع عليه العين في الملف. فقلمٌ يظهر عند المرور عليها.
+             ومن لا تملك `staff.edit` ترى الصورة ولا ترى القلم. */
+          const inner = photo
+            ? `<img class="prof-photo" style="width:70px;height:70px;margin:0" src="${U.esc(photo.dataUrl)}" alt="">`
+            : UI.avatar(st.name, true);
+          if (!Auth.can('staff.edit')) return inner;
+          return `<span class="photo-edit" data-photo-edit>${inner}
+            <button type="button" class="photo-edit-btn" data-photo-btn
+              aria-label="${photo ? 'تغيير صورة الموظفة' : 'إضافة صورة للموظفة'}"
+              title="${photo ? 'تغيير الصورة' : 'إضافة صورة'}">${svg(ICON.edit, 20, 1.9)}</button></span>`;
+        })()}
         <div style="flex:1">
           <h3 style="font-size:17px">${U.esc(st.name)}</h3>
           <div class="t-sub">${U.esc(st.role || '')}${st.specialty ? ' — ' + U.esc(st.specialty) : ''}</div>
@@ -15843,6 +16574,42 @@ Screens.staffProfile = function(id){ /*v5*/
     onMount(ov){
       const b = ov.querySelector('#spEdit');
       if (b) b.onclick = () => { UI.stack[UI.stack.length - 1].close(); Forms.staff(id); };
+
+      /* القلم ⇐ منتقي الملفات ⇐ المحرّر ⇐ الحفظ. والحفظ يمرّ بـ
+         `Svc.media.replaceOn` لا بترتيبٍ يُكتب هنا من جديد: هي نفسها
+         التي يستعملها النموذج، فالنتيجة واحدة والنسخة الاحتياطية تلتقط
+         الصورة كما تلتقط أي وسائط. */
+      const holder = ov.querySelector('[data-photo-edit]');
+      if (!holder) return;
+      const btn = holder.querySelector('[data-photo-btn]');
+      /* المنتقي يُصنع عند الضغط ولا يُكتب في صفحة الملف: الملف **وضع قراءة**،
+         وثابتٌ مقيس يعدّ حقول الإدخال فيه ويسقط إن وُجد واحد. وهذه ليست
+         حيلةً لإرضاء اختبار: الصفحة التي تُقرأ لا تحمل نموذجاً مخفيّاً
+         يُرسَل بالخطأ أو يلتقطه مكمّل كلمات المرور أو قارئ الشاشة. */
+      btn.onclick = () => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = MEDIA_ACCEPT;
+        input.onchange = () => pick(input.files && input.files[0]);
+        input.click();
+      };
+      const pick = async (picked) => {
+        if (!picked) return;
+        const ready = await ImageEditor.prepare(picked, 'photo');
+        if (!ready) return;                       /* أُلغي: لا يُمسّ شيء */
+        btn.disabled = true;
+        const res = await guard(null, async () => {
+          const rec = await Svc.media.replaceOn({ repo:Repos.staff, store:'staff',
+            id, field:'photoMediaId', perm:'staff.edit', file:ready });
+          await Audit.log('staff','update', `تحديث صورة موظفة: ${rec.name}`, id);
+          return rec;
+        }, 'حُدّثت الصورة');
+        btn.disabled = false;
+        if (!res) return;
+        /* الملف يُعاد فتحه ليُرى التغيير في مكانه، والقائمة خلفه تُحدَّث */
+        UI.stack[UI.stack.length - 1].close();
+        Screens.staffProfile(id);
+        renderRoute();
+      };
     }
   });
 };
@@ -17083,7 +17850,8 @@ const Gate = {
     if (nav) nav.innerHTML = '';
   },
   unlock(){ document.body.classList.remove('locked'); },
-  close(){ if (this.el){ this.el.remove(); this.el = null; } },
+  close(){ if (this.el){ this.el.remove(); this.el = null; } this.clearWorking(); },
+  loadEl:null,
   /* الهوية فوق البطاقة والحقول داخلها. الشعار يأخذ مقاسه من `Brand.BOX`
      لا من رقمٍ يُكتب هنا — فسطحٌ جديد لا يفتح باب العيب القديم. */
   mount(html, wire){
@@ -17135,6 +17903,49 @@ const Gate = {
     });
   },
 
+  /* --------------------- طبقة التحقّق ومدّتها الدنيا ---------------------
+     «لا أريد خمس ثوانٍ ثابتة»: فالمدّة هنا حدٌّ أدنى بصريّ لا تأخيرٌ يُضاف.
+     القاعدة ثلاث جمل:
+
+       · نجح التحقّق بسرعة  ⇒ تُكمَل المدّة الدنيا ثم يُنتقل (لا وميض).
+       · تأخّر التحقّق أكثر ⇒ يُنتظر هو وحده، ولا يُضاف إليه شيء.
+       · فشل التحقّق        ⇒ تُرفع الطبقة فوراً، فلا انتظار بلا فائدة.
+
+     وهي القاعدة نفسها التي تحكم المقدّمة الافتتاحية (`Intro`) — بابان لشيء
+     واحد: لا يُقتل ما بدأ في منتصفه، ولا يُحشى ما تأخّر. */
+  MIN_VISUAL_MS: 1500,
+  rest(startedAt, floor){
+    const f = floor == null ? this.MIN_VISUAL_MS : floor;
+    return Math.max(0, f - (Date.now() - startedAt));
+  },
+  wait(ms){ return ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve(); },
+  /* الطبقة داخل البطاقة: الترويسة فوقها لا تتحرّك، والنموذج تحتها سليم
+     كما تركته المستخدمة — فرفعُها عند الفشل يُعيد الشاشة بلا إعادة بناء. */
+  working(msg){
+    this.clearWorking();
+    const card = this.el && this.el.querySelector('.gate-card');
+    if (!card) return null;
+    const d = document.createElement('div');
+    d.className = 'gate-load';
+    d.setAttribute('role', 'status');
+    d.setAttribute('aria-live', 'polite');
+    d.innerHTML = `<div class="gate-spin" aria-hidden="true"></div>
+      <p>${U.esc(msg || 'جارٍ التحقّق من بيانات الدخول…')}</p>`;
+    card.appendChild(d);
+    this.loadEl = d;
+    return d;
+  },
+  clearWorking(){ if (this.loadEl){ this.loadEl.remove(); this.loadEl = null; } },
+  /* الخروج إلى لوحة التحكّم: تلاشٍ ثم إزالة. ومن يطلب تقليل الحركة لا ينتظر. */
+  async leave(){
+    if (this.el && !Brand.reducedMotion()){
+      this.el.classList.add('leaving');
+      await this.wait(260);
+    }
+    this.clearWorking();
+    this.close();
+  },
+
   /* ------------------------------ الدخول ------------------------------ */
   login(){
     this.lock();
@@ -17152,21 +17963,31 @@ const Gate = {
       this.wireEyes(d);
       d.querySelector('#gGo').onclick = async () => {
         const btn = d.querySelector('#gGo');
+        if (btn.disabled) return;                 /* ضغطتان متتاليتان: واحدة تكفي */
         const user = d.querySelector('#gUser').value, pass = d.querySelector('#gPass').value;
         if (!U.norm(user) || !pass) return this.err(d, 'اكتبي اسم المستخدمة وكلمة المرور');
         btn.disabled = true; this.err(d, '');
+        const label = btn.textContent;
+        btn.textContent = 'جارٍ التحقّق…';
+        const t0 = Date.now();
+        this.working();
         try {
           await Auth.login(user, pass);
-          this.close();
+          /* نجح: تُكمَل المدّة الدنيا إن بقي منها شيء — ولا يُضاف فوقها */
+          await this.wait(this.rest(t0));
+          await this.leave();
           await afterSignIn();
         } catch(e){
+          /* فشل: لا انتظار. الطبقة تُرفع في اللحظة نفسها. */
+          this.clearWorking();
           /* الرسالة تأتي من `Auth.login` وحدها: هي التي تضمن ألّا يُفرَّق
              بين «اسم غير موجود» و«كلمة مرور خاطئة». ولا يُضاف هنا أي
              تفصيل تقنيّ. */
           this.err(d, e.message || 'تعذّر الدخول');
+          btn.disabled = false; btn.textContent = label;
           d.querySelector('#gPass').value = '';
           d.querySelector('#gPass').focus();
-        } finally { btn.disabled = false; }
+        }
       };
       d.querySelector('#gForgot').onclick = () => this.recover();
     });
@@ -17222,7 +18043,7 @@ const Gate = {
          الشاشة بلا بوابة ولا صلاحية. */
       go.onclick = async () => {
         if (!Auth.session.actorId) return this.login();
-        this.close();
+        await this.leave();
         await afterSignIn();
       };
     });
@@ -17345,14 +18166,27 @@ let _readyResolve, _readyReject;
 const AppReady = new Promise((res, rej) => { _readyResolve = res; _readyReject = rej; });
 
 async function boot(){
-  /* أوّل سطر، قبل أي `await`: الهيكل مُقفل حتى تُقرأ الإعدادات.
-     انظري `Gate.shield` — هذه هي النقطة التي كانت تُرى فيها الومضة. */
+  /* أوّل سطرين، قبل أي `await`:
+
+     1) المقدّمة تُملأ وتُشغَّل. هي فوق كل شيء، فما يُبنى تحتها لا يُرى وهو
+        يُبنى — لا هيكل عظميّ ولا شاشة تُرسم أمام العين.
+     2) الهيكل مُقفل حتى تُقرأ الإعدادات (`Gate.shield`) — القاعدة القديمة
+        وهي باقية: المقدّمة زينة قد لا تُعرض، والقفل هو الضمان.
+
+     وترتيبهما مقصود: المقدّمة أوّلاً كي تكون على الشاشة في أقرب إطار ممكن،
+     فالنافذة لا تُظهَر قبلها. */
+  Intro.mount();
   Gate.shield();
   const root = $('viewRoot');
   root.innerHTML = `<div class="card"><div class="card-body">
     <div class="skeleton" style="width:40%;margin-bottom:12px"></div>
     <div class="skeleton" style="width:80%;margin-bottom:8px"></div>
     <div class="skeleton" style="width:60%"></div></div></div>`;
+  /* النافذة تُظهَر الآن — وفيها المقدّمة مرسومة. لا تُنتظر قاعدة البيانات
+     ولا الترقية: كانت النافذة تبقى مخفيّة حتى نهاية الإقلاع، فيطول السواد
+     على قاعدة كبيرة. وما يُظهَر الآن ليس شاشةً نصف مبنيّة بل صورة مكتملة. */
+  if (Intro.started) Intro.painted().then(() => Desktop.ready()).catch(() => {});
+
   let adapter;
   try {
     adapter = await new IDBAdapter(APP.db, APP.schema).open();
@@ -17466,6 +18300,9 @@ async function boot(){
   if (gated){
     if (Auth.needsSetup()) Gate.setup(); else Gate.login();
     Log.info('النظام جاهز — بانتظار تسجيل الدخول', { adapter:adapter.kind });
+    /* شاشة الدخول جاهزة تحت المقدّمة الآن، فالتلاشي يقع عليها مكتملةً.
+       وآخر إطار في المقدّمة شاشةُ دخول مرسومة — فيُقرأ الانتقال وصلاً لا قطعاً. */
+    await Intro.settle();
     return { adapter:adapter.kind, migration:mig, gated:true };
   }
 
@@ -17474,6 +18311,7 @@ async function boot(){
 
   renderRoute();
   Log.info('النظام جاهز', { adapter:adapter.kind, records:STORE_NAMES.reduce((a,s)=>a+DB.count(s),0) });
+  await Intro.settle();          /* الشاشة مرسومة تحتها ⇒ تتلاشى عليها */
   afterFirstPaint();
 
   return { adapter:adapter.kind, migration:mig, gated:false };
@@ -17506,7 +18344,9 @@ async function bootSafely(){
   catch(e){
     Log.error('فشل إقلاع النظام', e);
     /* شاشة التعافي تُرى دائماً: لو سقط الإقلاع بعد أن أُقفل الهيكل لبقيت
-       المستخدمة أمام بوّابةٍ لا تعمل ولا رسالة تحتها. القفل يُفكّ أوّلاً. */
+       المستخدمة أمام بوّابةٍ لا تعمل ولا رسالة تحتها. القفل يُفكّ أوّلاً،
+       والمقدّمة تُرفع فوراً — رسالة الخطأ لا تنتظر زينة. */
+    Intro.end('boot-failed'); Intro.dispose();
     Gate.close(); Gate.unlock();
     const root = $('viewRoot');
     if (root) root.innerHTML = `<div class="card"><div class="card-body">
@@ -17524,8 +18364,8 @@ async function bootSafely(){
 window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, PayMethods, Backup, Seed, Audit, Migrations, Integrity, Exporter,
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
-              Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
-              Desktop, DesktopFiles, FOLDERS, FileCentre, Build,
+              Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor,
+              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,
               ready:AppReady };

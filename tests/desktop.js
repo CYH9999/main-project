@@ -129,41 +129,35 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     c.bundle.icon.forEach(rel =>
       ok(`أصل الأيقونة موجود: ${rel}`, fs.existsSync(path.join(ROOT, 'src-tauri', rel))));
 
-    /* ----- النوافذ -----
-       كانت القاعدة «نافذة واحدة فقط» وهي تقيس العدد لا المعنى. والمعنى أدقّ:
-       **مساحة عمل واحدة**. فنافذة البدء لا تحمل واجهة ولا حالة ولا منطق عمل،
-       وتُغلق قبل أن تُفتح الرئيسية. فيُقاس ذلك مباشرةً بدل عدّ النوافذ:
-       واحدة للعمل، وأخرى فارغة تموت عند الجاهزية، ولا ثالثة. */
+    /* ----- النافذة -----
+       كانت هنا نافذتان: رئيسية مخفيّة ونافذة بدء صغيرة (420×320) تسبقها.
+       وهذا ما رأته المستخدمة ووصفته بـ«نافذة صغيرة ثم يكبر التطبيق». فصارت
+       نافذة واحدة تُنشأ **مكبّرة ومخفيّة**، والمقدّمة تُعرض داخلها، ثم تُظهَر
+       وهي بمقاسها النهائي. فلا نافذتان تتبادلان الشاشة ولا تكبيرٌ يُرى. */
     const w = c.app.windows.find(x => x.label === 'main');
-    const sp = c.app.windows.find(x => x.label === 'splash');
     ok('مساحة عمل واحدة: نافذة رئيسية واحدة لا أكثر',
        c.app.windows.filter(x => x.label === 'main').length === 1,
        c.app.windows.map(x => x.label).join('، '));
-    ok('ولا نافذة ثالثة غير البدء', c.app.windows.length <= 2, c.app.windows.length);
-    ok('النافذة الرئيسية مخفيّة حتى تجهز الواجهة', w.visible === false, String(w.visible));
-    ok('نافذة البدء ظاهرة عند الإقلاع', !!sp && sp.visible === true);
-    ok('نافذة البدء بلا حدود ولا شريط مهام — ليست نافذة تطبيق',
-       !!sp && sp.decorations === false && sp.skipTaskbar === true);
-    ok('نافذة البدء لا تُغلَق بيد المستخدمة — يُغلقها النظام',
-       !!sp && sp.closable === false);
-    /* نافذة البدء ليست تطبيقاً ثانياً: لا سكربت فيها أصلاً، فلا منطق عمل
-       يُصان في مكانين ولا نسخة ثانية من أي شاشة. */
-    const splashSrc = fs.readFileSync(path.join(ROOT, 'desktop', 'splash.html'), 'utf8');
-    ok('نافذة البدء بلا سكربت واحد', !/<script/i.test(splashSrc));
-    ok('ولا تلمس قاعدة البيانات ولا الجسر الأصليّ',
-       !/indexedDB|__TAURI|invoke\(|localStorage/i.test(splashSrc));
-    ok('ولا تحمل مفردة عمل واحدة',
-       !/(member|subscription|payment|revenue|مشترك|اشتراك|دفعة|إيراد)/i.test(splashSrc));
-    ok('وتحترم تقليل الحركة', /prefers-reduced-motion/.test(splashSrc));
-    ok('وفيها علامة النظام واسمه', /viewBox="0 0 512 512"/.test(splashSrc) && /تبارك جيم/.test(splashSrc));
-    ok('نافذة البدء تُنسخ إلى مجلّد البناء',
-       fs.existsSync(path.join(ROOT, 'app', 'splash.html'))
-       && fs.readFileSync(path.join(ROOT, 'app', 'splash.html'), 'utf8') === splashSrc);
-    /* الحارس: نافذة بدء عالقة أسوأ من غيابها. فمن يكشف الرئيسية ثلاثة:
-       نجاح الإقلاع، وفشله، وحارسٌ زمنيّ في الصدأ لا يتعلّق بالواجهة. */
+    ok('ولا نافذة ثانية من أي نوع', c.app.windows.length === 1, c.app.windows.length);
+    ok('النافذة الرئيسية مخفيّة حتى تصير المقدّمة على الشاشة', w.visible === false, String(w.visible));
+    ok('وتُنشأ مكبّرة — فما يُظهَر يكون بمقاسه النهائي', w.maximized === true, String(w.maximized));
+    ok('وخلفيتها من لون الهوية لا بيضاء', w.backgroundColor === '#241826', String(w.backgroundColor));
+    ok('ولها حدّ أدنى معقول يبقى بعد إلغاء التكبير',
+       w.minWidth >= 1024 && w.minHeight >= 600, `${w.minWidth}×${w.minHeight}`);
+    /* أصول المقدّمة: ما لا تعمل بدونه، وتُنسخ إلى مجلّد البناء */
+    for (const f of ['intro.webm', 'intro.mp4', 'intro-poster.jpg']) {
+      const a = path.join(ROOT, 'intro', f), b = path.join(ROOT, 'app', 'intro', f);
+      ok(`أصل المقدّمة يُنسخ إلى مجلّد البناء: ${f}`,
+         fs.existsSync(a) && fs.existsSync(b) && fs.readFileSync(a).equals(fs.readFileSync(b)));
+    }
+    ok('ولا أثر لنافذة البدء القديمة',
+       !fs.existsSync(path.join(ROOT, 'desktop', 'splash.html'))
+       && !fs.existsSync(path.join(ROOT, 'app', 'splash.html')));
+    /* الحارس: نافذة مخفيّة إلى الأبد أسوأ من غياب مقدّمة. فمن يُظهر الرئيسية
+       ثلاثة: نجاح الإقلاع، وفشله، وحارسٌ زمنيّ في الصدأ لا يتعلّق بالواجهة. */
     const mainRsEarly = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
-    ok('للنافذة الرئيسية حارس زمنيّ يكشفها مهما حدث',
-       /SPLASH_WATCHDOG_MS/.test(mainRsEarly) && /reveal_main\(&handle\)/.test(mainRsEarly));
+    ok('للنافذة الرئيسية حارس زمنيّ يُظهرها مهما حدث',
+       /REVEAL_WATCHDOG_MS/.test(mainRsEarly) && /reveal_main\(&handle\)/.test(mainRsEarly));
     ok('والكشف يقع مرة واحدة لا مرّتين', /REVEALED\.swap\(true/.test(mainRsEarly));
     const appHtml = fs.readFileSync(SOURCE, 'utf8');
     ok('الواجهة تعلن جاهزيتها عند النجاح وعند الفشل معاً',
@@ -281,7 +275,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — الإقلاع والتخزين', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors, requests } = await openDesktop(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -323,7 +317,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — الطباعة', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openDesktop(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -415,7 +409,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — النسخ الاحتياطي والهجرة', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openDesktop(browser, url);
 
     /* نادٍ كامل كما تطلب المرحلة: هوية ومتحرّكة وحسابات واشتراكات ودفعات
@@ -553,7 +547,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — الهوية المتحرّكة', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const all = [];
 
     for (const reduced of [false, true]){
@@ -661,7 +655,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — الدخول والصلاحيات', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openDesktop(browser, url);
     const PW = { owner:'كلمة-المالكة-٢٠٢٦', rec:'كلمة-الاستقبال-٢٠٢٦' };
     const rows = await page.evaluate(async (PW) => {
@@ -754,7 +748,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — بلا شبكة', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const ctx = await browser.newContext();
     await ctx.addInitScript(() => { window.open = function(){ return null; }; });
     const page = await ctx.newPage();
@@ -830,7 +824,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — العربية والمسارات', async (browser) => {
     const srv = await serveDesktop();
-    const url = `http://127.0.0.1:${srv.address().port}/`;
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const { ctx, page, errors } = await openDesktop(browser, url);
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -891,7 +885,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
    * ===================================================================== */
   group('سطح المكتب — الأداء على قاعدة كبيرة', async (browser, browserUrl) => {
     const srv = await serveDesktop();
-    const dUrl = `http://127.0.0.1:${srv.address().port}/`;
+    const dUrl = `http://127.0.0.1:${srv.address().port}/?intro=0`;
     const FIXTURE = fs.readFileSync(path.join(__dirname, 'fixture-large.js'), 'utf8');
 
     async function measure(url, desktop){
