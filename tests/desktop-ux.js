@@ -1405,7 +1405,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
         for (const [k, preset] of [['logo', 'logo'], ['banner', 'banner'], ['photo', 'photo']]) {
           pr = IE.open(big, preset); await settle(300);
           document.querySelector('#imApply').click();
-          r[k] = await read(await pr);
+          r[k] = await read((await pr).file);
         }
 
         /* 4) التحريك يغيّر ما يُحفظ فعلاً */
@@ -1417,7 +1417,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
         ev('pointerdown', 0); ev('pointermove', 4000); ev('pointerup', 4000);
         await settle(90);
         document.querySelector('#imApply').click();
-        r.panned = await read(await pr);
+        r.panned = await read((await pr).file);
 
         /* 5) التكبير يُصغّر منطقة القص — والرقم معروض للمستخدمة */
         pr = IE.open(big, 'photo'); await settle(300);
@@ -1431,7 +1431,8 @@ module.exports = function register({ group, record, TESTS_JS }) {
         document.querySelector('#imCancel').click(); await pr;
         r.crop = { before, zoomed, reset };
 
-        /* 6) المتحرّك والمتّجه يمرّان بلا محرّر — وإلا جُمّد المتحرّك بالقصّ */
+        /* 6) طريق الصور العادية (المشتركة، الموظفة، المرفقات): المتحرّك
+              والمتّجه يمرّان بلا محرّر — وهذه المسارات لا تقبل متحرّكاً أصلاً */
         r.pass = { gif: IE.passthrough({ type: 'image/gif' }),
                    svg: IE.passthrough({ type: 'image/svg+xml' }),
                    png: IE.passthrough({ type: 'image/png' }),
@@ -1463,7 +1464,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
          `${out.crop.before} ⟵ ${out.crop.zoomed}`);
       ok('وإعادة الضبط تُرجعها كما كانت', out.crop.reset === out.crop.before,
          `${out.crop.reset} / ${out.crop.before}`);
-      ok('الصورة المتحرّكة لا تمرّ بالمحرّر — القصّ يجمّدها', out.pass.gif === true);
+      ok('في طريق الصور العادية المتحرّك يمرّ بلا محرّر', out.pass.gif === true);
       ok('ولا المتّجه — الترميز يُفقده تحجيمه', out.pass.svg === true);
       ok('أمّا الثابتة فتمرّ به', out.pass.png === false && out.pass.jpg === false);
       ok('ولا نافذة معلّقة بعد كل هذا', out.stack === 0, out.stack);
@@ -1471,6 +1472,274 @@ module.exports = function register({ group, record, TESTS_JS }) {
       srv.close();
     } catch (e) { srv.close(); throw e; }
     record('محرّر الصورة — ما يُرى هو ما يُحفظ', rows, errors);
+  });
+
+  /* ===================================================================== *
+   * وثيقة التعريف — مصغّرة تُنقر، وأصلٌ يُرى كاملاً                         *
+   * ===================================================================== */
+  group('وثيقة التعريف — مصغّرة وعارض', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    let errors = [];
+    try {
+      const a = await openBrowser(browser, url, { context: { viewport: { width: 1440, height: 900 } } });
+      errors = a.errors;
+
+      /* وثيقة عملاقة وعريضة: هي بالضبط الحالة التي كانت تبتلع الملف */
+      const out = await a.page.evaluate(async ([W, H]) => {
+        const TG = window.TG;
+        const settle = ms => new Promise(r => setTimeout(r, ms));
+        const box = el => { if (!el) return null; const r = el.getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) }; };
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const x = c.getContext('2d');
+        x.fillStyle = '#432C4C'; x.fillRect(0, 0, W, H);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        const med = await TG.Svc.media.saveFile(new File([blob], 'هوية.png', { type: 'image/png' }));
+        const st = await TG.Repos.staff.create({ name: 'رهف الإدارية', role: 'إدارية',
+          baseSalary: 300, status: 'active', hireDate: '2024-01-01',
+          idType: 'بطاقة', idNumber: '199', idMediaId: med.id });
+
+        TG.Screens.staffProfile(st.id);
+        await settle(180);
+        const modal = document.querySelector('.overlay .modal');
+        const r = { routeBefore: TG.State.route };
+        const thumb = modal.querySelector('[data-mediaview]');
+        r.thumbExists = !!thumb;
+        r.thumbIsButton = !!thumb && thumb.tagName === 'BUTTON';
+        r.thumbBox = box(thumb);
+        r.thumbLabelled = !!thumb && !!thumb.getAttribute('aria-label');
+        /* لا صورة عارية بمقاس المصدر في الملف بعد الآن */
+        const loose = [...modal.querySelectorAll('img')]
+          .filter(i => { const b = i.getBoundingClientRect(); return b.width > 200 || b.height > 200; });
+        r.looseBig = loose.length;
+        r.profileBox = box(modal);
+
+        /* --- النقر يفتح العارض --- */
+        thumb.click();
+        await settle(200);
+        const ov = [...document.querySelectorAll('.overlay')].pop();
+        r.lightbox = !!ov && ov.classList.contains('lightbox');
+        const big = ov && ov.querySelector('.lb-media');
+        r.viewerImg = box(big);
+        r.viewerFits = !!big && big.getBoundingClientRect().height <= window.innerHeight
+                            && big.getBoundingClientRect().width <= window.innerWidth;
+        /* الأصل يُعرض كما حُفظ — لا نسخة مصغَّرة */
+        r.viewerShowsOriginal = !!big && big.getAttribute('src') === TG.Repos.media.get(med.id).dataUrl;
+        r.viewerNatural = big ? { w: big.naturalWidth, h: big.naturalHeight } : null;
+        r.hasCloseBtn = !!ov && !!ov.querySelector('[data-close]');
+        r.stackWithViewer = TG.UI.stack.length;
+
+        /* --- Esc يُغلق العارض ويُبقي الملف --- */
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await settle(160);
+        r.stackAfterEsc = TG.UI.stack.length;
+        r.profileStillOpen = !!document.querySelector('.overlay .modal [data-mediaview]');
+        r.route = TG.State.route;
+
+        /* --- وزر الإغلاق يعمل كذلك --- */
+        document.querySelector('[data-mediaview]').click();
+        await settle(180);
+        const ov2 = [...document.querySelectorAll('.overlay')].pop();
+        ov2.querySelector('[data-close]').click();
+        await settle(160);
+        r.stackAfterBtn = TG.UI.stack.length;
+        /* --- الأصل لم يُمسّ --- */
+        const after = TG.Repos.media.get(med.id);
+        r.originalKept = after.width === W && after.height === H && after.dataUrl.length > 100;
+        return r;
+      }, [1800, 1200]);
+
+      ok('الوثيقة تظهر مصغّرة قابلة للنقر', out.thumbExists && out.thumbIsButton);
+      ok('ومقاسها محدود لا يتبع مقاس الوثيقة',
+         out.thumbBox.w <= 120 && out.thumbBox.h <= 120, `${out.thumbBox.w}×${out.thumbBox.h}`);
+      ok('ولها وصفٌ يقرؤه قارئ الشاشة', out.thumbLabelled);
+      ok('ولا صورة في الملف بمقاس مصدرها', out.looseBig === 0, out.looseBig);
+      ok('النقر يفتح عارضاً بخلفية داكنة', out.lightbox === true);
+      ok('والوثيقة فيه أكبر بكثير من مصغّرتها',
+         out.viewerImg.w > out.thumbBox.w * 3, `${out.viewerImg.w} مقابل ${out.thumbBox.w}`);
+      ok('ولا تتجاوز الشاشة', out.viewerFits === true,
+         `${out.viewerImg.w}×${out.viewerImg.h}`);
+      ok('والمعروض هو الأصل لا نسخة مصغَّرة',
+         out.viewerShowsOriginal === true
+         && out.viewerNatural.w === 1800 && out.viewerNatural.h === 1200,
+         JSON.stringify(out.viewerNatural));
+      ok('وفيه زرّ إغلاق ظاهر', out.hasCloseBtn === true);
+      ok('Escape يُغلق العارض', out.stackWithViewer === 2 && out.stackAfterEsc === 1,
+         `${out.stackWithViewer} ⟵ ${out.stackAfterEsc}`);
+      /* الملف نافذةٌ فوق الشاشة: فالمطلوب أن الإغلاق لا يُغادر شيئاً —
+         الملف ما زال مفتوحاً والشاشة تحته لم تتبدّل. */
+      ok('ويعود إلى ملف الموظفة بلا مغادرة الشاشة',
+         out.profileStillOpen === true && out.route === out.routeBefore,
+         `${out.routeBefore} ⟵ ${out.route}`);
+      ok('وزرّ الإغلاق يفعل مثله', out.stackAfterBtn === 1, out.stackAfterBtn);
+      ok('والأصل محفوظ كما هو — لم يُصغَّر ولم يُعَد ترميزه', out.originalKept === true);
+      await a.ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('وثيقة التعريف — مصغّرة وعارض', rows, errors);
+  });
+
+  /* ===================================================================== *
+   * الهوية المتحرّكة — تُقصّ ولا تُجمَّد                                    *
+   * ===================================================================== */
+  group('الهوية المتحرّكة — تُقصّ ولا تُجمَّد', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    let errors = [];
+    try {
+      const a = await openBrowser(browser, url, { context: { viewport: { width: 1440, height: 900 } } });
+      errors = a.errors;
+      const gifB64 = fs.readFileSync(path.join(__dirname, 'fixtures-anim.gif')).toString('base64');
+
+      const out = await a.page.evaluate(async (b64) => {
+        const TG = window.TG, IE = TG.ImageEditor;
+        const settle = ms => new Promise(r => setTimeout(r, ms));
+        const mkGif = () => {
+          const bin = atob(b64); const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          return new File([arr], 'anim.gif', { type: 'image/gif' });
+        };
+        const box = el => { if (!el) return null; const r = el.getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) }; };
+        const r = {};
+
+        /* --- 1) المتحرّك يفتح المحرّر في طريق الهوية --- */
+        const gif = mkGif();
+        let pr = IE.prepareBrand(gif, 'logo');
+        await settle(340);
+        r.editorOpened = !!document.querySelector('#imStage');
+        r.stageIsGif = String((document.querySelector('#imImg') || {}).src || '').length > 0;
+        r.hasFrame = !!document.querySelector('#imFrame');
+        r.hasZoom = !!document.querySelector('#imZoom');
+        r.hasPreview = !!document.querySelector('#imPrev');
+        /* تحريك وتكبير قبل الحفظ — فالقصّ المحفوظ ليس القصّ الافتراضي */
+        const z = document.querySelector('#imZoom');
+        z.value = '420'; z.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle(80);
+        document.querySelector('#imApply').click();
+        const got = await pr;
+        r.returnedOriginal = !!got && got.file === gif;      /* الملف نفسه لا نسخة مُعاد ترميزها */
+        r.returnedType = got && got.file && got.file.type;
+        r.crop = got && got.crop;
+
+        /* --- 2) يُحفظ فيبقى متحرّكاً، ويُرسم مقصوصاً في صندوقه --- */
+        await TG.Brand.setMedia('logo', got.file, got.crop);
+        TG.go('settings', { sec: 'brand' });
+        TG.renderRoute();
+        await settle(260);
+        r.storedAnimated = TG.Brand.isAnimated('logo');
+        r.storedType = TG.Brand.media('logo').type;
+        r.renderLive = TG.Brand.motionStatus().logo.rendering;   /* live = الملف المتحرّك */
+        r.cropKept = TG.Brand.cropOf('logo');
+        r.sidebar = box(document.querySelector('.brand .brand-logo'));
+        r.prevBox = box(document.querySelector('.media-drop .brand-prev'));
+        r.prevImgSrcIsGif = String((document.querySelector('[data-brand-prev="logo"]') || {}).src || '')
+          .startsWith('data:image/gif');
+        r.cropMarkup = /data-brand-crop/.test(TG.Brand.logoHtml(38));
+        /* الصورة المقصوصة لا تخرج من صندوقها مهما كان القصّ */
+        const slot = document.querySelector('.brand .brand-logo');
+        const inner = slot && slot.querySelector('img');
+        r.innerBox = box(inner);
+        r.slotHidesOverflow = slot ? getComputedStyle(slot).overflow === 'hidden' : false;
+
+        /* --- 3) اللافتة المتحرّكة كذلك --- */
+        const gif2 = mkGif();
+        pr = IE.prepareBrand(gif2, 'banner');
+        await settle(340);
+        r.bannerEditorOpened = !!document.querySelector('#imStage');
+        document.querySelector('#imApply').click();
+        const got2 = await pr;
+        await TG.Brand.setMedia('banner', got2.file, got2.crop);
+        TG.go('dashboard'); TG.renderRoute();
+        await settle(220);
+        const bimg = document.querySelector('.brand-banner img');
+        r.bannerAnimated = TG.Brand.isAnimated('banner');
+        r.bannerCrop = TG.Brand.cropOf('banner');
+        r.bannerSrcIsGif = String((bimg || {}).src || '').startsWith('data:image/gif');
+        r.bannerBox = box(document.querySelector('.brand-banner'));
+
+        /* --- 3.5) القصّ ينجو من النسخة الاحتياطية والاستعادة ---
+           §21: المحفوظ ووصفُ قصّه يجب أن يعبرا الحفظ وإعادة التشغيل
+           والنسخة والاستعادة. والقصّ يعيش في `Settings.branding`، فهو
+           داخل النسخة بحكم موضعه لا بترتيبٍ يُكتب له. */
+        const logoCropBefore = JSON.stringify(TG.Brand.cropOf('logo'));
+        const bannerCropBefore = JSON.stringify(TG.Brand.cropOf('banner'));
+        const snap = TG.Backup.build(true);
+        r.backupCarriesCrop = /logoCrop/.test(JSON.stringify(snap));
+        await TG.Backup.restore(JSON.parse(JSON.stringify(snap)), { mode: 'replace' });
+        await settle(300);
+        r.cropSurvived = JSON.stringify(TG.Brand.cropOf('logo')) === logoCropBefore
+                      && logoCropBefore !== 'null';
+        r.bannerCropSurvived = JSON.stringify(TG.Brand.cropOf('banner')) === bannerCropBefore
+                            && bannerCropBefore !== 'null';
+        r.animatedAfterRestore = TG.Brand.isAnimated('logo')
+                              && TG.Brand.media('logo').type === 'image/gif';
+        TG.go('settings', { sec: 'brand' }); TG.renderRoute();
+        await settle(260);
+        r.sidebarAfterRestore = box(document.querySelector('.brand .brand-logo'));
+
+        /* --- 4) الإلغاء لا يمسّ شيئاً --- */
+        const before = TG.Brand.media('logo').id;
+        pr = IE.prepareBrand(mkGif(), 'logo');
+        await settle(320);
+        document.querySelector('#imCancel').click();
+        r.cancelled = await pr;
+        r.unchangedAfterCancel = TG.Brand.media('logo').id === before;
+
+        /* --- 5) المتّجه يبقى بلا محرّر --- */
+        const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"></svg>'],
+                             's.svg', { type: 'image/svg+xml' });
+        const sres = await IE.prepareBrand(svg, 'logo');
+        r.svgNoEditor = !!sres && sres.file === svg && sres.crop === null
+                        && !document.querySelector('#imStage');
+        r.stack = TG.UI.stack.length;
+        return r;
+      }, gifB64);
+
+      ok('المتحرّك يفتح المحرّر بدل أن يُمرَّر من فوقه', out.editorOpened);
+      ok('وفيه إطار القصّ والتكبير والمعاينة',
+         out.hasFrame && out.hasZoom && out.hasPreview && out.stageIsGif);
+      ok('والخارج منه هو الملف الأصلي نفسه — لا إطارٌ مجمَّد ولا إعادة ترميز',
+         out.returnedOriginal === true && out.returnedType === 'image/gif', out.returnedType);
+      ok('ومعه وصف القصّ: أربعة أرقام',
+         !!out.crop && ['w', 'h', 'x', 'y'].every(k => typeof out.crop[k] === 'number'),
+         JSON.stringify(out.crop));
+      ok('المحفوظ ما زال متحرّكاً', out.storedAnimated === true && out.storedType === 'image/gif');
+      ok('ويُرسم من الملف المتحرّك لا من إطاره الثابت', out.renderLive === 'live', out.renderLive);
+      ok('والقصّ نجا من الحفظ', !!out.cropKept && out.cropKept.w === out.crop.w,
+         JSON.stringify(out.cropKept));
+      ok('والرسم يحمل القصّ فعلاً', out.cropMarkup === true);
+      ok('ومعاينة الإعدادات مصدرها GIF — لم تُستبدل بصورة ساكنة', out.prevImgSrcIsGif === true);
+      /* الضمان الأول ما زال قائماً: القصّ لا يمنح الملف حقّ تقرير التخطيط */
+      ok('الشريط الجانبي 38×38 رغم القصّ والتكبير',
+         out.sidebar.w === 38 && out.sidebar.h === 38, `${out.sidebar.w}×${out.sidebar.h}`);
+      ok('ومعاينة الإعدادات 120×120', out.prevBox.w === 120 && out.prevBox.h === 120,
+         `${out.prevBox.w}×${out.prevBox.h}`);
+      ok('والصندوق يقصّ ما خرج عنه', out.slotHidesOverflow === true);
+      ok('اللافتة المتحرّكة تمرّ بالمحرّر كذلك', out.bannerEditorOpened === true);
+      ok('وتبقى متحرّكة بعد الحفظ', out.bannerAnimated === true && out.bannerSrcIsGif === true);
+      ok('ولها وصف قصّ محفوظ', !!out.bannerCrop, JSON.stringify(out.bannerCrop));
+      ok('وصندوق اللافتة لم يتغيّر — 132 ارتفاعاً', out.bannerBox.h === 132, out.bannerBox.h);
+      ok('النسخة الاحتياطية تحمل وصف القصّ', out.backupCarriesCrop === true);
+      ok('والقصّ ينجو من الاستعادة — الشعار واللافتة',
+         out.cropSurvived === true && out.bannerCropSurvived === true);
+      ok('والصورة تبقى متحرّكة بعد الاستعادة', out.animatedAfterRestore === true);
+      ok('وصندوقها بعد الاستعادة 38×38',
+         out.sidebarAfterRestore.w === 38 && out.sidebarAfterRestore.h === 38,
+         `${out.sidebarAfterRestore.w}×${out.sidebarAfterRestore.h}`);
+      ok('الإلغاء لا يُنتج شيئاً ولا يمسّ المحفوظ',
+         out.cancelled === null && out.unchangedAfterCancel === true);
+      ok('والمتّجه يبقى بلا محرّر', out.svgNoEditor === true);
+      ok('ولا نافذة معلّقة بعد كل هذا', out.stack === 0, out.stack);
+      await a.ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('الهوية المتحرّكة — تُقصّ ولا تُجمَّد', rows, errors);
   });
 
   /* ===================================================================== *

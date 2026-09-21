@@ -389,16 +389,46 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('المستند وُضع محتوىً علويّاً في الصفحة', !!root && root.parentElement === document.body);
       ok('المستند يحمل نصّ الوصل', !!root && /سجى الطباعة/.test(root.innerHTML));
       ok('اتجاهه من اليمين', !!root && root.getAttribute('dir') === 'rtl');
-      ok('لا يُرى على الشاشة', !!root && getComputedStyle(root).display === 'none');
+      /* ------------------- ما يراه محرّك الطباعة هو ما في العرض -------------------
+         `ShowPrintUI` تطبع ما في العرض. فالمستند يجب أن يكون **هو** ما في
+         العرض لحظةَ النداء، لا شيئاً مخفيّاً ينتظر `@media print` أن تُظهره:
+         تلك قاعدةٌ واحدة، إن لم تُطبَّق خرجت صفحة التطبيق إلى الورق — وهي
+         ملفٌ واحد فيه الأنماط والشيفرة كلّها، فتخرج معها.
+         فيُفحص العرض نفسه: حالةُ الطباعة معلنة، والمستند ظاهر، وكل ما عداه
+         مخفيّ — وفي مقدّمته وسمُ `<script>` الذي يحمل شيفرة التطبيق. */
+      ok('حالة الطباعة معلنة على الجذر',
+         document.documentElement.getAttribute('data-tg-print') === 'on');
+      ok('المستند هو الظاهر في العرض', !!root && getComputedStyle(root).display !== 'none');
+      const bodyKids = [...document.body.children];
+      const shown = bodyKids.filter(el => el.id !== 'tgPrintRoot'
+                                       && getComputedStyle(el).display !== 'none');
+      ok('ولا شيء سواه في العرض', shown.length === 0,
+         shown.map(e => e.tagName + (e.id ? '#' + e.id : '')).join('، '));
+      const srcTags = bodyKids.filter(el => el.tagName === 'SCRIPT' || el.tagName === 'STYLE');
+      ok('شيفرة التطبيق ليست في العرض — لا تصل إلى الورق',
+         srcTags.length > 0 && srcTags.every(el => getComputedStyle(el).display === 'none'),
+         `${srcTags.length} وسماً`);
       const st = document.getElementById('tgPrintStyle');
       ok('قاعدة الطباعة مُركَّبة', !!st && /@media print/.test(st.textContent));
       ok('القاعدة تُخفي كل ما عدا المستند عند الطباعة',
          !!st && /body>\*:not\(#tgPrintRoot\)\{display:none!important\}/.test(st.textContent.replace(/\s+/g, '')));
       ok('وتُظهر المستند', !!st && /#tgPrintRoot\{display:block!important/.test(st.textContent.replace(/\s+/g, '')));
       ok('قياس الورقة مضبوط', !!st && /@page/.test(st.textContent));
+      ok('حالة الطباعة بلغت النداء الأصليّ',
+         ['native', 'done'].includes(UI._printState), UI._printState);
+      ok('والحالات معلَنة بترتيبها لا مستنتَجة',
+         Array.isArray(UI.PRINT_STATES)
+         && UI.PRINT_STATES.join('>') === 'idle>preparing>ready>native>done',
+         (UI.PRINT_STATES || []).join('>'));
       await settle();
       ok('بعد انتهاء الطباعة تعود الصفحة كما كانت',
          !document.getElementById('tgPrintRoot') && !document.getElementById('tgPrintStyle'));
+      /* والعرض يعود إلى التطبيق: الحالة تُرفع عن الجذر، ولا يبقى شيء مخفيّ */
+      ok('وحالة الطباعة رُفعت عن الجذر',
+         !document.documentElement.hasAttribute('data-tg-print'));
+      ok('والتطبيق ظهر ثانيةً',
+         getComputedStyle(document.querySelector('.app')).display !== 'none');
+      ok('والحالة عادت إلى «انتهت»', UI._printState === 'done', UI._printState);
 
       /* --- كل مسارات الطباعة --- */
       const paths = {

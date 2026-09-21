@@ -237,6 +237,33 @@ textarea.inp{min-height:74px;resize:vertical}
 .modal{background:#fff;border-radius:var(--r-lg);width:min(700px,100%);box-shadow:var(--shadow-pop);animation:pop .16s ease-out;margin:auto 0}
 .modal.wide{width:min(1000px,100%)}
 .modal.narrow{width:min(460px,100%)}
+/* ------------------------------ عارض المستندات ------------------------------
+   وثيقة التعريف كانت تُرسم في الملف بمقاس الملف نفسه (سقفٌ بالطول وعرضٌ
+   حرّ)، فوثيقةٌ عريضة تأخذ العمود كلّه وتزيح ما تحتها. والعلاج ليس تصغير
+   الأصل — الأصل وثيقةٌ تُقرأ ويجب أن تبقى بدقّتها — بل **فصل العرض عن
+   الأصل**: مصغّرةٌ مقيسة في الملف، والأصل كاملاً في عارضٍ فوق الصفحة.
+
+   والعارض نافذةٌ من نوافذ النظام نفسها (UI.modal): فتُغلق بـEsc وبالنقر
+   خارجها وبالزر، ويعمل فيها ما يعمل في غيرها — بلا مكدّس ثانٍ يُصان. */
+.doc-thumb{display:inline-flex;align-items:center;justify-content:center;
+  width:104px;height:104px;flex:0 0 auto;overflow:hidden;padding:0;cursor:zoom-in;
+  border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);
+  margin-top:10px;position:relative}
+.doc-thumb>img{width:100%;height:100%;object-fit:cover;display:block}
+.doc-thumb:hover{border-color:var(--rose-600)}
+.doc-thumb:focus-visible{outline:2px solid var(--rose-600);outline-offset:2px}
+.doc-thumb-wrap{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.doc-thumb-hint{font-size:11.5px;color:var(--muted);padding-bottom:4px}
+/* الصندوق الضوئي: خلفية داكنة، والوثيقة تملأ ما يسمح به العرض بلا تشويه */
+.overlay.lightbox{background:rgba(14,9,16,.93);padding:24px 16px}
+.modal.light{background:transparent;box-shadow:none;width:min(1500px,100%);animation:none}
+.modal.light .modal-head{border-bottom:0;padding:4px 4px 10px}
+.modal.light .modal-head h3{color:#fff;font-weight:600}
+.modal.light .modal-head .btn{color:#fff;background:rgba(255,255,255,.12)}
+.modal.light .modal-head .btn:hover{background:rgba(255,255,255,.22)}
+.modal.light .modal-body{padding:0;max-height:none;overflow:visible}
+.lb-media{display:block;margin:0 auto;max-width:100%;max-height:82vh;
+  width:auto;height:auto;object-fit:contain;border-radius:8px;background:#fff}
 @keyframes pop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .modal-head{padding:16px 20px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:12px}
 
@@ -535,6 +562,32 @@ body.locked{background:var(--plum-900)}
 .brand-logo{border-radius:8px;flex:0 0 auto;object-fit:contain}
 .brand-box{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;overflow:hidden}
 .brand-box>img,.brand-box>svg{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block}
+/* --------------------- الحاجز الأخير: سمةٌ لا صنف ---------------------
+   كل ما سبق يفترض أن السطح **تذكّر** أن يضع الصورة في صندوق. وهذا بالضبط
+   ما لا يُضمن: السطح الثامن يُكتب بعد شهر، فيضع `<img>` عارية بصنفٍ جديد،
+   فيعود العيب من حيث لا يُنظر. وقد وقع هذا مرّتين في هذا الملف نفسه —
+   معاينة الإعدادات ونافذة «اختبار الحركة» كانتا تكتبان مقاسيهما بأيديهما.
+
+   فالقاعدة الأخيرة لا تقع على صنفٍ يُنسى، بل على سمةٍ يكتبها `Brand` في
+   **كل** صورة هوية يُخرجها: `data-brand-img` للصورة و`data-brand-slot`
+   لصندوقها. وما دام المُخرِج واحداً (`logoHtml` و`previewHtml`
+   و`bannerHtml`) فالسمة موجودة حتماً، ولا يملك السطحُ أن ينساها.
+
+   ولا وزن نوعي يزاحمها: الأنماط السطرية التي يكتبها `boxStyle` هي التي
+   تقرّر المقاس (وهي أقوى)، وهذه تمنع التجاوز حين لا يكون هناك مقاس سطري.
+   و`overflow:hidden` على الصندوق هو الضمان الأخير: ما فاض لا يُرسم ولا
+   يدفع ما حوله — فحتى صورةٌ أفلتت من كل ما سبق لا تستطيع أن تمطّ التخطيط. */
+[data-brand-img]{max-width:100%;max-height:100%;object-fit:contain;display:block}
+[data-brand-slot]{display:flex;align-items:center;justify-content:center;
+  flex:0 0 auto;overflow:hidden;line-height:0}
+[data-brand-slot]>img,[data-brand-slot]>svg{max-width:100%;max-height:100%;
+  width:auto;height:auto;object-fit:contain;display:block}
+/* الصورة المقصوصة بالبيانات الوصفية (الصور المتحرّكة): موضوعة داخل صندوقها
+   بإحداثيات نسبية، فتبقى **الملفَّ الأصلي** — متحرّكاً كما رُفع — ويتغيّر
+   ما يُرى منه لا هو. و`overflow:hidden` على الصندوق يقصّ ما خرج، فالضمان
+   الأول (أبعاد الملف لا تقرّر التخطيط) قائمٌ هنا أيضاً. */
+[data-brand-slot]{position:relative}
+[data-brand-crop]{position:absolute}
 /* معاينة الهوية في الإعدادات: صندوق مربّع ثابت للشعار، وصندوق عريض للّافتة.
    والصندوق `flex` لا `inline`: عنصر سطريّ لا يقبل عرضاً ولا ارتفاعاً أصلاً،
    فيعود الحجم إلى الصورة وتعود المشكلة كما كانت. */
@@ -947,7 +1000,7 @@ body.locked{background:var(--plum-900)}
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.8.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.9.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -7885,12 +7938,35 @@ const UI = {
 
      وقواعد الهوية على حالها: المطبوع يأخذ الإطار الثابت دائماً، لأن الذي
      يبني الترويسة هو `Brand.printHeader` نفسه لا مسار جديد. */
-  _printing: false,
-  _printUndo: null,
   printCss(o){
     const page = o.slip ? '@page{size:80mm auto;margin:4mm}'
                         : `@page{size:${o.landscape ? 'A4 landscape' : 'A4'};margin:14mm 12mm}`;
+    /* ------------------- حالة الطباعة تقع على العرض نفسه -------------------
+       العيب الذي أوجد هذا: `ShowPrintUI` تطبع **ما في العرض**. وكان إخفاء
+       التطبيق معلّقاً على `@media print` وحدها — أي أن كل ما يمنع وصول
+       صفحة التطبيق إلى الورق قاعدةٌ واحدة في وسيطٍ لا نملك لحظةَ تطبيقه.
+       وصفحة التطبيق هذه ملفٌ واحد فيه الأنماط والشيفرة كلّها؛ فإن خرجت
+       إلى الورق خرجت بما فيها. وهذا ما رأته المستخدمة.
+
+       فالحالة الآن **معلَنة على الجذر** (`data-tg-print`) وتسري على الشاشة
+       قبل الورق: حين نطبع لا يكون في العرض إلا المستند. فما تراه واجهة
+       الطباعة هو ما تراه العين — لا فرق بينهما يمكن أن ينكسر. ولم يبقَ
+       لوسيط الطباعة إلا ما هو من شأنه وحده: مقاس الورقة وفواصل الصفحات.
+
+       و`@media print` أدناه بقيت كما هي: ليست الضمان بل طبقةٌ ثانية فوقه. */
     return `#tgPrintRoot{display:none}
+html[data-tg-print="on"]{background:#fff}
+html[data-tg-print="on"] body{background:#fff;margin:0}
+html[data-tg-print="on"] body>*:not(#tgPrintRoot){display:none!important}
+html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;margin:0 auto;padding:0}
+/* مخرجٌ مرئيّ من وضع الطباعة. لمّا صار المستند هو ما في العرض، صارت على
+   الشاشة حالةٌ يمكن أن تعلق لو لم يصل حدث انتهاء الطباعة ولم ينتهِ الحارس
+   بعد — فلا تُترك المستخدمة أمام ورقة بلا طريق رجوع. ولا يُطبع هذا الشريط. */
+#tgPrintExit{position:fixed;top:12px;inset-inline-start:12px;z-index:9;
+  display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;
+  background:#241826;color:#fff;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.28);
+  cursor:pointer;border:0;font-family:inherit}
+@media print{#tgPrintExit{display:none!important}}
 @media print{
   ${page}
   html,body{height:auto!important;min-height:0!important;overflow:visible!important;background:#fff!important}
@@ -7923,11 +7999,19 @@ const UI = {
   },
   /* يُعيد true إن فُتحت واجهة الطباعة، وnull إن لم تُفتح — والرسالة تُقال
      بلغة المستخدمة لا بلغة المتصفّح. */
+  /* حالات الطباعة — معلنة لا مستنتَجة. الاختبار يقرؤها، وأي عطل يقول أين
+     وقف: هل جُهّز المستند؟ هل اكتملت صوره؟ هل نُوديت الواجهة الأصلية؟ */
+  PRINT_STATES: ['idle', 'preparing', 'ready', 'native', 'done'],
+  _printState: 'idle',
+  _printing: false,
+  _printUndo: null,
+  _printStep(st){ UI._printState = st; return st; },
   async printNative(bodyHtml, opts){
     const o = opts || {};
     if (UI._printing) return null;               /* ضغطتان متتاليتان: واحدة تكفي */
     UI._printing = true;
     if (UI._printUndo) UI._printUndo();          /* بقايا طباعة سابقة لا تُطبع مرتين */
+    UI._printStep('preparing');
 
     const style = document.createElement('style');
     style.id = 'tgPrintStyle';
@@ -7938,6 +8022,27 @@ const UI = {
     root.innerHTML = bodyHtml;
     document.body.appendChild(style);
     document.body.appendChild(root);
+    /* الحالة تُعلن على الجذر **قبل** انتظار الصور: فمن هنا فصاعداً ليس في
+       العرض إلا المستند — لا صفحة التطبيق ولا شيفرتها — مهما طال الانتظار
+       أو انقطع في منتصفه. (انظري `printCss`.) */
+    document.documentElement.setAttribute('data-tg-print', 'on');
+    const scrollY = window.scrollY || 0;
+    try { window.scrollTo(0, 0); } catch(e){}
+    const exit = document.createElement('button');
+    exit.id = 'tgPrintExit'; exit.type = 'button';
+    exit.textContent = 'العودة إلى النظام';
+    exit.onclick = () => { if (UI._printUndo) UI._printUndo(); };
+    root.appendChild(exit);
+    /* الالتقاط أوّلاً ثم الإيقاف: Escape في وضع الطباعة يخرج من الوضع **وحده**.
+       ولولا `stopPropagation` لبلغت الضغطةُ حارسَ النوافذ فأغلق معها الوصلَ
+       أو التقرير الذي طُبع منه — فتخرج المستخدمة من شاشتين بضغطة واحدة. */
+    const onKey = e => {
+      if (e.key !== 'Escape' || !UI._printUndo) return;
+      e.preventDefault(); e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      UI._printUndo();
+    };
+    window.addEventListener('keydown', onKey, true);
 
     /* الصور تُحمَّل بعد إدراج الـHTML لا معه. وواجهة الطباعة تصوّر ما هو
        مرسوم **الآن** — فنداءٌ فوريّ يطبع ترويسةً بلا شعار. في المتصفح كان
@@ -7945,27 +8050,48 @@ const UI = {
        فيُنتظر اكتمال الصور صراحةً، بحدٍّ أعلى حتى لا تتعلّق الطباعة على
        صورة لا تكتمل. */
     await UI.printAwaitMedia(root, 2000);
+    UI._printStep('ready');
 
     let closed = false;
     const undo = () => {
       if (closed) return; closed = true;
+      clearTimeout(guard);
       try { style.remove(); root.remove(); } catch(e){}
+      document.documentElement.removeAttribute('data-tg-print');
+      try { window.scrollTo(0, scrollY); } catch(e){}
       window.removeEventListener('afterprint', onAfter);
+      window.removeEventListener('keydown', onKey, true);
       if (UI._printUndo === undo) UI._printUndo = null;
       UI._printing = false;                      /* انتهت هذه الطباعة: الطريق مفتوح */
+      UI._printStep('done');
     };
-    const onAfter = () => setTimeout(undo, 400);
+    /* **لا يُهدم المستند وحوارُ الطباعة مفتوح.** `ShowPrintUI` تعود بمجرد
+       أن يظهر الحوار لا بعد أن يُغلق، وبعض المحرّكات تُطلق `afterprint`
+       عند فتح المعاينة لا عند انتهائها. فإن صدّقناها هدمنا المستند من تحت
+       الحوار، ثم طبعت المستخدمة ما بقي في العرض — وهو صفحة التطبيق.
+       فـ`afterprint` لا تُقبل إلا بعد أن يعود النداء الأصليّ وتمضي مهلة
+       قصيرة؛ وما جاء قبل ذلك يُهمَل ويبقى المستند. */
+    let nativeDone = false;
+    const onAfter = () => {
+      /* الشرط حالةٌ لا زمن: ما دام النداء الأصليّ لم يعد بعد، فالحوار لم
+         يُفتح أصلاً، وأي `afterprint` الآن ليست نهاية طباعة. وبعد عودته
+         تُقبل كما كانت تُقبل دائماً. */
+      if (!nativeDone) return;
+      setTimeout(undo, 400);
+    };
     UI._printUndo = undo;
     window.addEventListener('afterprint', onAfter);
     /* `ShowPrintUI` لا تقول متى أُغلق الحوار. فـ`afterprint` إن جاء، وإلا
-       حارسٌ بعيد يُنظّف. والمستند مخفيّ على الشاشة فبقاؤه لا يُرى. */
+       حارسٌ بعيد يُنظّف. */
     const guard = setTimeout(undo, 180000);
 
     try {
+      UI._printStep('native');
       await Desktop.call('tg_print');
+      nativeDone = true;
       return true;
     } catch(e){
-      clearTimeout(guard); undo();
+      undo();
       Log.error('تعذّرت الطباعة الأصلية', e);
       UI.toast('تعذرت الطباعة — تأكدي من وجود طابعة أو من إعدادات الطباعة.', 'err', 9000);
       return null;
@@ -8217,7 +8343,8 @@ const Intro = {
 
    كل شيء هنا يعمل بلا شعار: الطباعة لا تنكسر لأن صورة غير موجودة. */
 const Brand = {
-  get(){ return Object.assign({ logoMediaId:null, bannerMediaId:null, subtitle:'', phone:'', address:'', instagram:'', footer:'', accent:'' },
+  get(){ return Object.assign({ logoMediaId:null, bannerMediaId:null, logoCrop:null, bannerCrop:null,
+                                subtitle:'', phone:'', address:'', instagram:'', footer:'', accent:'' },
                               Settings.get('branding') || {}); },
   name(){ return Settings.get('gymName') || APP.name; },
   media(kind){
@@ -8297,6 +8424,37 @@ const Brand = {
     return out;
   },
   isAnimated(kind){ return Svc.media.isAnimated(this.media(kind)); },
+  /* ------------------------- قصٌّ بلا إتلاف -------------------------
+     الصورة المتحرّكة لا تمرّ على canvas: أول ما يفعله القصّ على canvas أن
+     يأخذ إطاراً واحداً ويرمي البقيّة — فتصير الحركة صورةً ساكنة. والمطلوب
+     عكسه: أن تبقى متحرّكة وأن تُقصّ معاً.
+
+     فالمحفوظ ليس صورةً جديدة بل **أربعة أرقام** تصف أين تقع الصورة من
+     صندوقها، نسبةً إلى الصندوق لا بالبكسل: العرض والارتفاع والإزاحتان.
+     ونسبيّتها مقصودة — الصندوق نفسه يختلف بين الشريط الجانبي (38) وشاشة
+     الدخول (64) والطباعة (54)، والقصّ واحدٌ فيها جميعاً.
+
+     والأصل لا يُمسّ أبداً: يبقى في الوسائط كما رُفع، فالنسخة الاحتياطية
+     تحمله كاملاً، والتراجع عن القصّ لا يفقد شيئاً. */
+  cropOf(kind){
+    const c = this.get()[kind === 'banner' ? 'bannerCrop' : 'logoCrop'];
+    if (!c || typeof c !== 'object') return null;
+    const n = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+    const w = n(c.w), h = n(c.h), x = n(c.x), y = n(c.y);
+    if (w === null || h === null || x === null || y === null) return null;
+    if (w <= 0 || h <= 0) return null;
+    return { w, h, x, y };
+  },
+  /* كل ما يصف الموضع يُكتب **سطريّاً**، لا في ورقة الأنماط. والسبب وزنٌ
+     نوعيّ لا ذوق: قواعد قائمة مثل `.media-drop .brand-prev>img` و
+     `.brand-banner img` تضع `max-width:100%` و`object-fit:cover` بوزنٍ
+     يغلب أي محدِّد سمة. فلو تُركت هذه هناك لقُصّت الصورة مرّتين: مرّةً
+     بالبيانات الوصفية ومرّةً بقاعدة عامّة لا تعرف بها — وهو بالضبط صنف
+     العيوب الذي جاء هذا الملف كلّه ليقفله. */
+  cropStyle(c){
+    return `position:absolute;left:${c.x}%;top:${c.y}%;width:${c.w}%;height:${c.h}%;`
+         + 'max-width:none;max-height:none;object-fit:fill;display:block';
+  },
   /* الصورة الثابتة: الإطار المحفوظ وقت الرفع، وإلا الأصل */
   stillUrl(kind){ return Svc.media.stillUrl(this.media(kind)); },
   /* ما يُرسم فعلاً. الطباعة ثابتة دائماً مهما كان الوضع — الورقة لا إطار
@@ -8336,10 +8494,11 @@ const Brand = {
   BOX: {
     sidebar: 38,          /* الشريط الجانبي */
     gate:    64,          /* شاشة الدخول */
-    settings:120,         /* معاينة الإعدادات (في CSS كذلك: .brand-prev) */
+    settings:120,         /* معاينة الإعدادات — تُكتب من هنا في الأنماط السطرية */
     print:   54,          /* ترويسة كل مستند مطبوع */
     receipt: 56,          /* وصل A4 */
     slip:    44,          /* وصل شريطي 80mm */
+    motion:  150,         /* نافذة «اختبار الحركة» */
   },
   /* الأنماط التي تصنع الصندوق — تُكتب هنا وحدها.
      `flex:0 0 auto` حتى لا يمطّه صفٌّ مرن، و`max-*` إلى جانب `width/height`
@@ -8353,8 +8512,18 @@ const Brand = {
     /* الطباعة تأخذ الإطار الثابت دائماً: الورقة لا تتحرّك ولا تنتظر إطاراً */
     const url = this.renderUrl('logo', forPrint);
     const box = this.boxStyle(size);
-    if (url) return `<img class="brand-logo" src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${box}">`;
-    return `<svg class="brand-mark" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
+    /* `data-brand-img` ليست زينة: هي ما يربط الصورة بقاعدة CSS تمنع
+       تجاوزَ الصندوق مهما كان السطح — انظري الأنماط عند `[data-brand-img]`.
+       وبقصٍّ محفوظ يصير الغلافُ هو الصندوق، والصورة محتوىً فيه بإحداثياتها.
+       وبلا قصّ: الصورة نفسها بصندوقها السطريّ كما كانت تماماً — فلا يتغيّر
+       شيء لمن لم يقصّ شيئاً. */
+    const crop = url ? this.cropOf('logo') : null;
+    if (url && crop)
+      return `<span class="brand-logo" data-brand-slot style="${box}">`
+        + `<img data-brand-img="logo" data-brand-crop src="${U.esc(url)}" `
+        + `alt="${U.esc(this.name())}" style="${this.cropStyle(crop)}"></span>`;
+    if (url) return `<img class="brand-logo" data-brand-img="logo" src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${box}">`;
+    return `<svg class="brand-mark" data-brand-img="logo" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
       <circle cx="20" cy="20" r="19" fill="${forPrint ? '#432C4C' : '#C43E6B'}"/>
       <rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/>
       <rect x="6" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/>
@@ -8363,9 +8532,36 @@ const Brand = {
   /* الشعار داخل غلافٍ صريح — لسطحٍ يحتاج توسيطاً أو خلفية حوله.
      الغلاف هو الصندوق، والشعار داخله محتوىً: فحتى لو فشل تحميل الصورة بقي
      المكان محجوزاً ولم يقفز ما حولها. تستعمله شاشة الدخول. */
-  logoBox(size){
-    return `<span class="brand-box" style="width:${size}px;height:${size}px;`
-         + `max-width:${size}px;max-height:${size}px">${this.logoHtml(size)}</span>`;
+  logoBox(size){ return this.slot(size, size, this.logoHtml(size)); },
+  /* صندوقٌ عامّ: عرضٌ وارتفاعٌ صريحان، و`overflow:hidden`، وما بداخله محتوى.
+     كل سطحٍ يحتاج أن يضع صورة هوية في مكانٍ محجوز يستعمل هذا — فلا يكتب
+     أحدٌ مقاساً بيده مرّة أخرى. */
+  slot(w, h, inner, extra){
+    return `<span class="brand-box" data-brand-slot style="width:${w}px;height:${h}px;`
+         + `max-width:${w}px;max-height:${h}px${extra ? ';' + extra : ''}">${inner}</span>`;
+  },
+  /* معاينة الهوية في الإعدادات — المصدر الوحيد لها.
+     كانت الإعدادات تكتب `<span class="brand-prev"><img ...>` بلا مقاس،
+     فيتكفّل بالمقاس ملفُ الأنماط وحده: رقمٌ مكتوب في مكانين، وصورةٌ عارية
+     من السمة التي تحميها. صارت تُبنى هنا، فتأخذ مقاسها من `BOX` وسمتها
+     من `logoHtml`، وتبقى `.brand-prev` للشكل (الإطار والخلفية) لا للحجم. */
+  previewHtml(kind){
+    const m = this.media(kind);
+    if (!m) return '';
+    const url = this.renderUrl(kind);
+    if (!url) return '';
+    const crop = this.cropOf(kind);
+    const cst = crop ? ` data-brand-crop style="${this.cropStyle(crop)}"` : '';
+    const img = `<img data-brand-img="${U.esc(kind)}" data-brand-prev="${U.esc(kind)}" `
+      + `src="${U.esc(url)}" alt=""${cst}>`;
+    /* الشعار: مربّعٌ مقاسه من `BOX` — الرقم يُكتب هنا لا في ملف الأنماط.
+       اللافتة: تبقى على قياسها العريض في `.media-drop.wide .brand-prev`
+       كما هي منذ المرحلة السابقة — وهي تعمل، فلا تُمسّ. الجديد فيهما
+       معاً هو الصندوق والسمة، لا المقاس. */
+    const size = kind === 'banner' ? ''
+      : ` style="width:${this.BOX.settings}px;height:${this.BOX.settings}px;`
+        + `max-width:${this.BOX.settings}px;max-height:${this.BOX.settings}px"`;
+    return `<span class="brand-prev" data-brand-slot${size}>${img}</span>`;
   },
   /* اللافتة العريضة: تُقصّ ولا تُمطّ، ولا تظهر أصلاً إن لم تُرفع */
   bannerHtml(forPrint){
@@ -8375,8 +8571,10 @@ const Brand = {
     if (!url) return '';
     /* «حيّ» يعني: المرسوم هو الملف الأصلي. تُقرأ الحالة من العنصر نفسه. */
     const live = url === m.dataUrl && this.isAnimated('banner');
-    return `<div class="brand-banner" data-motion="${live ? 'live' : 'still'}">
-      <img src="${U.esc(url)}" alt="لافتة ${U.esc(this.name())}" data-brand="banner"></div>`;
+    const crop = this.cropOf('banner');
+    const st = crop ? ` data-brand-crop style="${this.cropStyle(crop)}"` : '';
+    return `<div class="brand-banner" data-brand-slot data-motion="${live ? 'live' : 'still'}">
+      <img src="${U.esc(url)}" alt="لافتة ${U.esc(this.name())}" data-brand="banner" data-brand-img="banner"${st}></div>`;
   },
   contactLine(){
     const b = this.get();
@@ -8400,16 +8598,20 @@ const Brand = {
   ACCEPT: { logo:'image/png,image/jpeg,image/webp,image/svg+xml,image/gif',
             banner:'image/png,image/jpeg,image/webp,image/gif' },
   accept(kind){ return this.ACCEPT[kind === 'banner' ? 'banner' : 'logo']; },
-  async setMedia(kind, file){
+  async setMedia(kind, file, crop){
     Auth.require('settings.edit');
     const key = kind === 'banner' ? 'bannerMediaId' : 'logoMediaId';
+    const ckey = kind === 'banner' ? 'bannerCrop' : 'logoCrop';
     const prev = this.get()[key];
     const ok = String(this.accept(kind)).split(',');
     if (file && file.type && !ok.includes(String(file.type).toLowerCase()))
       throw new AppError(`نوع الملف غير مدعوم للهوية البصرية (${U.esc(file.type)}) — `
         + 'استعملي PNG أو JPEG أو WebP أو GIF.', 'BAD_TYPE');
     const saved = await Svc.media.saveFile(file, { animated:true, maxDim:Svc.media.MAX_DIM });
-    try { await Settings.set({ branding:Object.assign({}, this.get(), { [key]:saved.id }) }); }
+    /* القصّ يُكتب مع المعرّف في عمليةٍ واحدة: لا لحظة تكون فيها صورةٌ جديدة
+       بقصّ صورةٍ قديمة. وصورةٌ بلا قصّ تمسح القصّ السابق صراحةً. */
+    const cr = crop && typeof crop === 'object' ? crop : null;
+    try { await Settings.set({ branding:Object.assign({}, this.get(), { [key]:saved.id, [ckey]:cr }) }); }
     catch(e){ await Svc.media.remove(saved.id).catch(() => {}); throw e; }
     if (prev && prev !== saved.id) await Svc.media.removeIfUnused(prev);
     this.applyToShell();
@@ -8420,9 +8622,10 @@ const Brand = {
   async clearMedia(kind){
     Auth.require('settings.edit');
     const key = kind === 'banner' ? 'bannerMediaId' : 'logoMediaId';
+    const ckey = kind === 'banner' ? 'bannerCrop' : 'logoCrop';
     const prev = this.get()[key];
     if (!prev) return null;
-    await Settings.set({ branding:Object.assign({}, this.get(), { [key]:null }) });
+    await Settings.set({ branding:Object.assign({}, this.get(), { [key]:null, [ckey]:null }) });
     await Svc.media.removeIfUnused(prev);
     this.applyToShell();
     await Audit.log('settings','branding',`إزالة ${kind === 'banner' ? 'لافتة' : 'شعار'} النادي`);
@@ -8430,7 +8633,15 @@ const Brand = {
   },
   /* تطبيق الهوية على هيكل الصفحة: الشعار في الشريط الجانبي والوصف تحته */
   applyToShell(){
-    const mark = document.querySelector('.brand-mark, .brand-logo');
+    /* **مقيَّدٌ بالشريط الجانبي عمداً.** كان البحث عامّاً على الصفحة كلّها
+       (`document.querySelector`)، فيلتقط **أول** عنصر هوية في ترتيب الـDOM
+       أيّاً كان: معاينة الإعدادات، أو ترويسة وصلٍ معروض، أو صورة في نافذة
+       مفتوحة. فيُستبدل عنصرٌ ليس الشريط الجانبي بشعارٍ مقاسه مقاس الشريط
+       (38px)، ويبقى الشريط نفسه على شعاره القديم. عيبٌ يظهر على سطحٍ
+       ويختفي على آخر بحسب ما هو معروض وقت الحفظ — وهذا أسوأ أنواعه.
+       والشريط له حاويةٌ معروفة: `.brand`. فالبحث فيها وحدها. */
+    const shell = document.querySelector('.brand') || document;
+    const mark = shell.querySelector('.brand-mark, .brand-logo');
     if (mark){
       const holder = document.createElement('div');
       holder.innerHTML = this.logoHtml(this.BOX.sidebar);
@@ -8976,7 +9187,14 @@ const ImageEditor = {
        · File   — صورة جديدة بمقاس السطح، جاهزة لـ Svc.media.saveFile
        · null   — أُلغي، فلا يُمسّ شيء
      ------------------------------------------------------------------ */
-  open(file, presetKey){
+  /* وصفُ الموضع نسبةً إلى الإطار — أربعة أرقام تكفي لإعادة رسم ما رأته
+     المستخدمة على أي صندوق مهما كان مقاسه. */
+  _crop(st, iw, ih){
+    const r = v => Math.round(v * 1000) / 1000;
+    return { w:r(iw * st.s / st.fw * 100), h:r(ih * st.s / st.fh * 100),
+             x:r(st.ox / st.fw * 100),     y:r(st.oy / st.fh * 100) };
+  },
+  open(file, presetKey, animated){
     const p = this.PRESET[presetKey] || this.PRESET.photo;
     const out = this.outSize(p);
     return new Promise(resolve => {
@@ -8987,12 +9205,12 @@ const ImageEditor = {
         UI.toast('تعذّر قراءة الصورة — جرّبي ملفاً آخر.', 'err');
         resolve(null);
       };
-      img.onload = () => this._mount({ file, url, img, p, out, resolve });
+      img.onload = () => this._mount({ file, url, img, p, out, resolve, animated:!!animated });
       img.src = url;
     });
   },
 
-  _mount({ file, url, img, p, out, resolve }){
+  _mount({ file, url, img, p, out, resolve, animated }){
     const iw = img.naturalWidth, ih = img.naturalHeight;
     if (!iw || !ih){
       URL.revokeObjectURL(url);
@@ -9027,7 +9245,8 @@ const ImageEditor = {
         <div class="imed-meta">
           <dl>
             <dt>الصورة الأصلية</dt><dd class="num">${iw} × ${ih}</dd>
-            <dt>المحفوظ لـ${U.esc(p.slot)}</dt><dd class="num">${out.w} × ${out.h}</dd>
+            <dt>المحفوظ لـ${U.esc(p.slot)}</dt>
+            <dd class="${animated ? '' : 'num'}">${animated ? 'الملف كما هو — يبقى متحرّكاً' : `${out.w} × ${out.h}`}</dd>
             <dt>النسبة المطلوبة</dt><dd class="num">${p.aspect === 1 ? '1:1' : p.aspect + ':1'}</dd>
             <dt>منطقة القص</dt><dd class="num" id="imCrop">—</dd>
           </dl>
@@ -9102,7 +9321,9 @@ const ImageEditor = {
           const cw = Math.min(iw, Math.round(st.fw / st.s)), ch = Math.min(ih, Math.round(st.fh / st.s));
           cropLab.textContent = `${cw} × ${ch}`;
           /* تحذير الجودة: تكبيرٌ يتجاوز دقّة الملف يُنتج صورة ناعمة */
-          const short = cw < out.w * .5 || ch < out.h * .5;
+          /* تحذير الجودة لا معنى له للمتحرّك: لا يُعاد ترميزه أصلاً، فلا
+             تفقد دقّته بالتكبير — يُعرض الملف نفسه مقصوصاً بالعرض. */
+          const short = !animated && (cw < out.w * .5 || ch < out.h * .5);
           warn.style.display = short ? 'block' : 'none';
           if (short) warn.textContent = `المنطقة المختارة أصغر من المقاس المحفوظ (${out.w} × ${out.h}) — `
             + 'قد تظهر الصورة أقل وضوحاً. صغّري التكبير أو اختاري ملفاً أكبر.';
@@ -9190,11 +9411,15 @@ const ImageEditor = {
           const btn = ov.querySelector('#imApply');
           btn.disabled = true; btn.textContent = 'جارٍ الحفظ…';
           try {
-            const outFile = await ImageEditor._render({ img, st, p, out, file });
+            /* المتحرّك: لا رسم ولا إعادة ترميز — الملف كما هو ومعه وصفُ
+               موضعه. الساكن: الرسم النهائي كما كان منذ المرحلة السابقة. */
+            const outVal = animated
+              ? { file, crop:ImageEditor._crop(st, iw, ih) }
+              : { file:await ImageEditor._render({ img, st, p, out, file }), crop:null };
             done = true;                       /* لا يحسمها onClose إلغاءً بعد الآن */
             URL.revokeObjectURL(url);
             handle.close();
-            resolve(outFile);
+            resolve(outVal);
           } catch(e){
             Log.error('تعذّر تجهيز الصورة', e);
             UI.toast('تعذّر تجهيز الصورة — جرّبي ملفاً آخر.', 'err');
@@ -9255,12 +9480,37 @@ const ImageEditor = {
       UI.toast('الملف ليس صورة.', 'err');
       return null;
     }
+    /* `prepare` تبقى كما كانت لبقيّة النظام: المتحرّك والمتّجه يمرّان */
     if (this.passthrough(file)){
       const why = this.passReason(file);
       if (why) UI.toast(why, 'ok', 5000);
       return file;
     }
-    return this.open(file, presetKey);
+    const r = await this.open(file, presetKey);
+    return r ? r.file : null;
+  },
+  /* ------------------------------------------------------------------
+     طريق الهوية البصرية وحده. يختلف عن `prepare` في شيء واحد: المتحرّك
+     **يدخل المحرّر** بدل أن يمرّ من فوقه، ويخرج منه بملفه كما هو ومعه
+     وصفُ قصّه. وما عداه — الساكن والمتّجه — كما كان حرفاً بحرف.
+
+     ولماذا طريقٌ ثانٍ لا تغييرُ الأول؟ لأن `prepare` تخدم صورة المشتركة
+     وصورة الموظفة والمرفقات، وتلك لا تقبل متحرّكاً أصلاً (انظري
+     `Brand.ACCEPT`) — فتغييرُ عقدها يمسّ ثلاثة مواضع تعمل بلا سبب. */
+  async prepareBrand(file, kind){
+    if (!file) return null;
+    if (!String(file.type || '').startsWith('image/')){
+      UI.toast('الملف ليس صورة.', 'err');
+      return null;
+    }
+    const t = String(file.type || '').toLowerCase();
+    /* المتّجه يبقى بلا محرّر: لا بكسلات تُقصّ، ويتحجّم بلا فقدان جودة. */
+    if (t === 'image/svg+xml'){
+      UI.toast(this.passReason(file), 'ok', 5000);
+      return { file, crop:null };
+    }
+    return this.open(file, kind === 'banner' ? 'banner' : 'logo',
+                     Svc.media.isAnimatedType(t));
   }
 };
 
@@ -13275,7 +13525,7 @@ Views.settings = {
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">الشعار</h4>
               <div class="media-drop">
-                ${logo ? `<span class="brand-prev"><img src="${U.esc(Brand.renderUrl('logo'))}" alt="" data-brand-prev="logo"></span>` : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
+                ${logo ? Brand.previewHtml('logo') : '<div class="t-sub" style="margin-bottom:10px">لا شعار — تُستعمل العلامة المرسومة المدمجة</div>'}
                 <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('logo'))}" id="bLogo">
                 ${logo ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bLogoDel">إزالة الشعار</button>' : ''}
               </div>
@@ -13287,7 +13537,7 @@ Views.settings = {
             <div>
               <h4 style="font-size:13px;margin-bottom:8px">اللافتة العريضة</h4>
               <div class="media-drop wide">
-                ${banner ? `<span class="brand-prev"><img src="${U.esc(Brand.renderUrl('banner'))}" alt="" data-brand-prev="banner"></span>` : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
+                ${banner ? Brand.previewHtml('banner') : '<div class="t-sub" style="margin-bottom:10px">لا لافتة</div>'}
                 <input type="file" data-perm="settings.edit" accept="${U.esc(Brand.accept('banner'))}" id="bBanner">
                 ${banner ? '<button class="btn btn-sm btn-danger" data-perm="settings.edit" style="margin-top:8px" id="bBannerDel">إزالة اللافتة</button>' : ''}
               </div>
@@ -13338,11 +13588,11 @@ Views.settings = {
            النتيجة قبل أن يُكتب شيء. وإلغاؤه يُعيد الحقل فارغاً ولا يمسّ
            الشعار الحالي. والمتحرّك والـSVG يمرّان بلا محرّر — انظري
            ImageEditor.passthrough. */
-        const ready = await ImageEditor.prepare(f, kind === 'banner' ? 'banner' : 'logo');
+        const ready = await ImageEditor.prepareBrand(f, kind);
         if (!ready){ input.value = ''; return; }
         /* الرفع قد يستغرق لحظة على ملف متحرّك: يُعطَّل الحقل بدل تجميد الشاشة */
         input.disabled = true;
-        const res = await guard(null, () => Brand.setMedia(kind, ready),
+        const res = await guard(null, () => Brand.setMedia(kind, ready.file, ready.crop),
           kind === 'banner' ? 'حُدّثت اللافتة' : 'حُدّث الشعار');
         input.disabled = false;
         if (res && Svc.media.isAnimated(res) && !res.posterUrl)
@@ -13373,9 +13623,9 @@ Views.settings = {
             <div class="t-sub" style="margin-bottom:6px"><strong>${k === 'logo' ? 'الشعار' : 'اللافتة'}</strong>
               — ${st[k].animated ? 'صورة متحرّكة' : 'صورة ثابتة'}
               ${st[k].animated ? `، المعروض الآن في النظام: ${st[k].rendering === 'live' ? 'الملف المتحرّك' : 'الإطار الثابت'}` : ''}</div>
-            <span class="brand-box" style="width:${k === 'logo' ? 150 : 300}px;height:150px;
-              border:1px solid var(--line);border-radius:8px;background:var(--surface-2)">
-              <img src="${U.esc(m.dataUrl)}" alt=""></span>
+            ${Brand.slot(k === 'logo' ? Brand.BOX.motion : Brand.BOX.motion * 2, Brand.BOX.motion,
+              `<img data-brand-img="${U.esc(k)}" src="${U.esc(m.dataUrl)}" alt="">`,
+              'border:1px solid var(--line);border-radius:8px;background:var(--surface-2)')}
           </div>`;
         };
         UI.modal({ title:'اختبار الحركة', size:'narrow',
@@ -16398,14 +16648,31 @@ Object.assign(Screens, {
 /* نقطة الاستدعاء القديمة تبقى تعمل: كل زر «الملف» في النظام يفتح الشاشة الجديدة */
 Screens.memberProfile = function(id){ /*v4*/ go('member', { id }); };
 
-/* عارض مرفقات بسيط: صورة داخل نافذة، بلا تنزيل ولا مغادرة الشاشة */
+/* عارض المرفقات: الأصل كاملاً فوق خلفية داكنة، بلا تنزيل ولا مغادرة الشاشة.
+   هو نفسه الذي تستعمله المشتركة والموظفة — عارضٌ واحد لا اثنان. والأصل
+   يُعرض كما هو: لا تصغير ولا إعادة ترميز، فما تراه هو ما حُفظ. */
 Screens.viewMedia = function(mediaId){
   const med = mediaId ? Repos.media.get(mediaId) : null;
   if (!med) return UI.toast('المرفق غير موجود','err');
-  UI.modal({ title:med.name || 'مرفق', size:'wide',
+  return UI.modal({ title:med.name || 'مرفق', size:'light', footer:null,
     body: med.kind === 'video'
-      ? `<video src="${U.esc(med.dataUrl)}" controls style="max-width:100%;max-height:70vh"></video>`
-      : `<img src="${U.esc(med.dataUrl)}" alt="" style="max-width:100%;max-height:70vh;display:block;margin:0 auto">` });
+      ? `<video src="${U.esc(med.dataUrl)}" controls class="lb-media"></video>`
+      : `<img src="${U.esc(med.dataUrl)}" alt="${U.esc(med.name || 'مرفق')}" class="lb-media" data-lightbox>`,
+    onMount(ov){ ov.classList.add('lightbox'); } });
+};
+
+/* مصغّرة قابلة للنقر لأي مرفق صورة. مقاسها من الورقة النمطية لا من الملف،
+   وهي `button` لا `div`: تُركَّز بالمفاتيح وتُفتح بـEnter كأي زر. */
+UI.docThumb = function(med, hint){
+  if (!med) return '';
+  const img = med.kind === 'video'
+    ? `<span style="font-size:22px">▶</span>`
+    : `<img src="${U.esc(med.dataUrl)}" alt="">`;
+  return `<div class="doc-thumb-wrap">
+    <button type="button" class="doc-thumb" data-mediaview="${U.esc(med.id)}"
+      aria-label="عرض ${U.esc(med.name || 'المرفق')} بالحجم الكامل" title="اضغطي للتكبير">${img}</button>
+    ${hint ? `<span class="doc-thumb-hint">${U.esc(hint)}</span>` : ''}
+  </div>`;
 };
 
 /* ملف الموظفة: بياناتها وحصصها وسجلّها المالي في مكان واحد */
@@ -16531,8 +16798,7 @@ Screens.staffProfile = function(id){ /*v5*/
                 ['رقم الوثيقة', txt(st.idNumber), 'num'],
                 ['تنتهي في', st.idExpiry ? D.fmt(st.idExpiry) : '', 'num'],
               ])}
-              ${idPhoto ? `<img src="${U.esc(idPhoto.dataUrl)}" alt="صورة الوثيقة"
-                   style="max-width:100%;max-height:170px;object-fit:contain;display:block;margin-top:10px;border-radius:6px">` : ''}
+              ${idPhoto ? UI.docThumb(idPhoto, 'اضغطي على الصورة لعرض الوثيقة كاملةً') : ''}
               </div>`
             : '<div class="t-sub">لا وثيقة مسجّلة.</div>') : ''}
           ${custom.length ? sect('حقول النادي', kv(custom.map(fd =>
@@ -16579,6 +16845,11 @@ Screens.staffProfile = function(id){ /*v5*/
          `Svc.media.replaceOn` لا بترتيبٍ يُكتب هنا من جديد: هي نفسها
          التي يستعملها النموذج، فالنتيجة واحدة والنسخة الاحتياطية تلتقط
          الصورة كما تلتقط أي وسائط. */
+      /* المصغّرة تفتح العارض: مستندٌ واحد، ونقرةٌ واحدة، ولا مغادرة للملف.
+         تُربط قبل حارس `[data-photo-edit]` أدناه — فالعرض حقٌّ لمن تقرأ
+         الملف، والتعديل وحده هو ما يحتاج صلاحية. */
+      ov.querySelectorAll('[data-mediaview]').forEach(b =>
+        b.onclick = () => Screens.viewMedia(b.dataset.mediaview));
       const holder = ov.querySelector('[data-photo-edit]');
       if (!holder) return;
       const btn = holder.querySelector('[data-photo-btn]');

@@ -421,6 +421,12 @@ group('الهوية المتحرّكة في الشاشة', async (browser, url) 
     'R0lGODlhAgACAPIAAP///wAAAP//AAAA/wAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh'
     + '+QQJCgAAACwAAAAAAgACAAADBAgEpQIAIfkECQoAAAAsAAAAAAIAAgAAAwQIhKUCADs=', 'base64'));
   await page.setInputFiles('#bLogo', gifPath);
+  /* المتحرّك صار يفتح المحرّر كما يفتحه الساكن — وهو المطلوب: تُرى الحركة
+     ويُختار ما يظهر منها. فالطريق الحقيقيّ للمستخدمة يمرّ بـ«حفظ». */
+  await page.waitForSelector('#imApply', { timeout:15000 });
+  rows.push({ name:'اختيار GIF يفتح محرّر الصورة لا يتجاوزه',
+              pass:await page.evaluate(() => !!document.querySelector('#imStage img')), detail:'' });
+  await page.click('#imApply');
   await page.waitForTimeout(700);
   await page.evaluate(() => { window.TG.go('settings', { sec:'brand' }); window.TG.renderRoute(); });
   await page.waitForTimeout(250);

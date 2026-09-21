@@ -77,14 +77,38 @@ const FEATURES = [
     html: [/\.brand-prev\{[^}]*display:flex/, /max-width:\$\{size\}px;max-height:\$\{size\}px/,
            /\.media-drop \.brand-prev>img\{[^}]*object-fit:contain/, /class="brand-prev"/,
            /boxStyle\(size\)\{/, /logoBox\(size\)\{/,
-           /BOX: \{[\s\S]{0,400}?sidebar: 38,[\s\S]{0,400}?print:   54,/] },
+           /BOX: \{[\s\S]{0,400}?sidebar: 38,[\s\S]{0,400}?print:   54,/,
+           /* الحاجز الأخير: سمةٌ على كل صورة هوية، وصندوقٌ يقصّ ما خرج عنه.
+              بلا هذه لا يبقى إلا سقفٌ مكتوب في كل سطح على حدة — وهو ما فشل. */
+           /\[data-brand-img\]\{/, /\[data-brand-slot\]\{/,
+           /data-brand-img="logo"/, /previewHtml\(kind\)\{/,
+           /const shell = document\.querySelector\('\.brand'\) \|\| document;/] },
+
+  { key: 'gifcrop', label: 'قصّ الصور المتحرّكة بلا تجميد',
+    html: [/cropOf\(kind\)\{/, /cropStyle\(c\)\{/, /_crop\(st, iw, ih\)\{/,
+           /async prepareBrand\(file, kind\)\{/, /data-brand-crop/,
+           /ImageEditor\.prepareBrand\(f, kind\)/,
+           /Brand\.setMedia\(kind, ready\.file, ready\.crop\)/,
+           /\{ file, crop:ImageEditor\._crop\(st, iw, ih\) \}/] },
+
+  { key: 'docview', label: 'مصغّرة وثيقة التعريف وعارضها',
+    html: [/UI\.docThumb = function/, /\.doc-thumb\{/, /data-mediaview=/,
+           /\.overlay\.lightbox\{/, /size:'light'/, /class="lb-media"/,
+           /ov\.querySelectorAll\('\[data-mediaview\]'\)/] },
 
   { key: 'files', label: 'مركز الملفات',
     html: [/const FileCentre = \{/, /Views\.files = \{/, /ملفات تبارك جيم/],
     rust: [/fn tg_list_files/] },
 
   { key: 'print', label: 'جسر الطباعة الأصليّ',
-    html: [/Desktop\.call\('tg_print'\)/],
+    /* حالة الطباعة تقع على العرض لا في @media print وحدها: `ShowPrintUI`
+       تطبع ما في العرض، فما في العرض يجب أن يكون المستند. وبلا هذا يعود
+       احتمالُ خروج صفحة التطبيق — بشيفرتها — إلى الورق. */
+    html: [/Desktop\.call\('tg_print'\)/,
+           /html\[data-tg-print="on"\] body>\*:not\(#tgPrintRoot\)\{display:none!important\}/,
+           /document\.documentElement\.setAttribute\('data-tg-print', 'on'\)/,
+           /document\.documentElement\.removeAttribute\('data-tg-print'\)/,
+           /PRINT_STATES:/, /if \(!nativeDone\) return;/, /id="tgPrintExit"|tgPrintExit/],
     rust: [/ShowPrintUI/, /COREWEBVIEW2_PRINT_DIALOG_KIND_SYSTEM/] },
 
   { key: 'ctrlp', label: 'اعتراض Ctrl + P في سطح المكتب',

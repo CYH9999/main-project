@@ -1,6 +1,6 @@
 {
   "name": "tabarak-gym",
-  "version": "7.8.0",
+  "version": "7.9.0",
   "private": true,
   "description": "نظام إدارة تبارك جيم — ملف واحد يعمل بلا إنترنت، مع مجموعة اختبارات تتحقّق من ثوابته",
   "scripts": {
@@ -10,7 +10,8 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:build:windows": "tauri build --bundles nsis",
-    "test:paths": "node scripts/check-paths-rs.mjs"
+    "test:paths": "node scripts/check-paths-rs.mjs",
+    "test:render": "node tests/verify-render.cjs"
   },
   "devDependencies": {
     "playwright": "1.55.0",
