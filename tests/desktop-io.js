@@ -23,9 +23,14 @@ const http = require('http');
 const ROOT = path.join(__dirname, '..');
 const CONF = path.join(ROOT, 'src-tauri', 'tauri.conf.json');
 const DIST = path.join(ROOT, 'app', 'index.html');
+/* النسخة تُقرأ من مصدرها وتُمرَّر إلى الجسر المزيّف — لا رقم مكتوب في اختبار */
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 /* الجسر المزيّف — يُحقن قبل أي سطر من سطور التطبيق، كما يفعل Tauri */
 function installBridge(opts) {
+  /* النسخة تصل مع الخيارات: الجسر المزيّف يقول ما يقوله الحقيقيّ، ولا
+     يُكتب فيه رقمٌ يتخلّف عن `package.json` عند أول ترقية. */
+  const PKG_VERSION = (opts && opts.version) || '0.0.0';
   const R = 'C:\\Users\\gym\\Documents\\تبارك جيم';
   const FOLDER = {
     csv: 'Exports\\CSV', excel: 'Exports\\Excel', word: 'Exports\\Word',
@@ -84,7 +89,7 @@ function installBridge(opts) {
       platform: 'windows', root: R,
       exports: R + '\\Exports', backups: R + '\\Backups', can_print: true, can_open: true,
       /* هويّة البناء كما يخبزها `build.rs` — الواجهة تقرؤها ولا تخترعها */
-      version: '7.6.1', git_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+      version: PKG_VERSION, git_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
       git_short: 'a1b2c3d', build_at: 1789900000, build_id: 'a1b2c3d-ci42',
       frontend_sha: 'deadbeef',
     }),
@@ -204,7 +209,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
   async function openBridged(browser, url, opts = {}) {
     const ctx = await browser.newContext();
     await ctx.addInitScript(() => { window.open = function () { return null; }; });
-    await ctx.addInitScript(installBridge, { fail: opts.fail || {} });
+    await ctx.addInitScript(installBridge, { fail: opts.fail || {}, version: PKG_VERSION });
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(String(e.message)));

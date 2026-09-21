@@ -424,15 +424,38 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
 .hit .t-name{font-weight:600}
 
 /* ------------------------------ شاشة الدخول ------------------------------
-   بسيطة عمداً: بطاقة واحدة في وسط الشاشة، لا لوحة تحكّم ولا مصطلحات أمنية. */
+   هي أوّل ما تراه المستخدمة بعد نافذة البدء، فهي الوجه الأوّل للنظام لا
+   حاجزٌ يُعبَر. لذلك تحمل هوية تبارك جيم نفسها — خلفية البرقوق، ووهجُ
+   وردٍ خافت، والعلامة في صندوقها الثابت — لا بطاقةً بيضاء عامّة.
+
+   والقاعدة الحاكمة تحتها (§16 من المرحلة 4.3): **لا يُرى مكان العمل قبل
+   الدخول.** ولهذا لا يكفي أن تغطّي هذه الطبقةُ الشاشة: `body.locked` يخفي
+   `.app` كلّها من التخطيط، والإقلاع لا يبني تنقّلاً ولا يرسم شاشة أصلاً
+   ما دامت البوّابة مطلوبة. فما لا يُبنى لا يُرى ولا يُلتقط بصورة شاشة. */
+body.locked .app{display:none}
+body.locked{background:var(--plum-900)}
 .gate{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(160deg,var(--plum-900) 0%,var(--plum-700) 100%);padding:20px}
-.gate-card{background:var(--surface);border-radius:var(--r-lg);box-shadow:0 18px 50px rgba(0,0,0,.28);
-  width:100%;max-width:380px;padding:26px 24px}
-.gate-card .brand-mark,.gate-card .brand-logo{margin:0 auto 12px}
-.gate-card h2{font-size:19px;text-align:center;margin:0 0 4px}
-.gate-card .gate-sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:18px}
+  padding:20px;overflow:auto;
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(219,92,134,.22) 0%, rgba(219,92,134,0) 60%),
+    linear-gradient(160deg,var(--plum-700) 0%,var(--plum-900) 55%,#1C1220 100%)}
+/* هوية فوق البطاقة لا داخلها: العلامة والاسم على الخلفية البرقوقية،
+   والبطاقة تحتها للحقول وحدها. هذا ما يجعلها تبدو شاشة نظام لا نموذج ويب. */
+.gate-head{text-align:center;margin-bottom:18px;color:var(--rose-50)}
+.gate-head .brand-box{margin:0 auto 12px}
+.gate-head h1{font-size:24px;font-weight:700;letter-spacing:.3px;margin:0;color:#fff;line-height:1.25}
+.gate-head p{margin:6px 0 0;font-size:12.5px;color:var(--rose-100);opacity:.82;letter-spacing:.2px}
+.gate-wrap{width:100%;max-width:392px}
+.gate-card{background:var(--surface);border-radius:var(--r-lg);
+  box-shadow:0 22px 60px rgba(0,0,0,.34),0 0 0 1px rgba(255,255,255,.05);
+  padding:24px 22px}
+.gate-card .brand-mark,.gate-card .brand-logo,.gate-card .brand-box{margin:0 auto 12px}
+.gate-card h2{font-size:17px;text-align:center;margin:0 0 4px}
+.gate-card .gate-sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:16px}
 .gate-card .field{margin-bottom:12px}
+/* `:not(.switch)` مقصود: خانة الإقرار في شاشة رمز الاسترجاع تستعمل
+   `label.switch` وهي `inline-flex` — فلا يُقلب تخطيطها إلى كتلة. */
+.gate-card .field label:not(.switch){display:block;font-size:12.5px;color:var(--ink-2);margin-bottom:5px}
 .gate-card .btn{width:100%;justify-content:center}
 .gate-err{background:var(--red-50);border:1px solid #F0CFCF;color:var(--red-600);
   border-radius:var(--r-sm);padding:9px 12px;font-size:13px;margin-bottom:12px}
@@ -442,6 +465,24 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
 .gate-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:19px;letter-spacing:2px;
   text-align:center;background:var(--surface-2);border:1px dashed var(--line);border-radius:var(--r-md);
   padding:14px;margin:10px 0;direction:ltr}
+/* حقل كلمة المرور وزرّ إظهارها: الزرّ داخل الحقل لا بجانبه، فلا يزيح
+   التخطيط حين يتبدّل نصّه، ولا يُلتقط في تسلسل Tab قبل زرّ الدخول. */
+.gate-pw{position:relative}
+.gate-pw .inp{padding-inline-start:44px}
+.gate-pw button{position:absolute;inset-inline-start:6px;top:50%;transform:translateY(-50%);
+  background:none;border:0;cursor:pointer;color:var(--muted);padding:6px;border-radius:6px;
+  display:flex;align-items:center;min-height:32px;min-width:32px;justify-content:center}
+.gate-pw button:hover{color:var(--rose-700);background:var(--rose-50)}
+/* الانتقال من نافذة البدء إلى الدخول: تلاشٍ وصعود بضعة بكسلات، تحت
+   الثلث من الثانية. المطلوب «سَلِس» لا «مشهد سينمائي». */
+@keyframes gateIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes gateFade{from{opacity:0}to{opacity:1}}
+.gate .gate-wrap{animation:gateIn 280ms cubic-bezier(.22,.7,.3,1) both}
+.gate{animation:gateFade 200ms ease-out both}
+/* تقليل الحركة: لا صعود ولا تلاشٍ — الشاشة تظهر مكتملة، وتبقى مرتّبة. */
+@media (prefers-reduced-motion:reduce){
+  .gate,.gate .gate-wrap{animation:none}
+}
 /* هوية المستخدمة في الشريط العلوي */
 .whoami{display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid var(--line);
   border-radius:99px;background:var(--surface-2);font-size:12.5px;white-space:nowrap}
@@ -744,7 +785,7 @@ tr.rep-total th{background:var(--rose-50);color:var(--ink);border-top:2px solid 
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.6.1', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.7.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -1148,7 +1189,24 @@ const DEFAULT_SETTINGS = {
   paymentMethods:[{ key:'cash', label:'نقد', active:true }, { key:'transfer', label:'تحويل', active:true },
                   { key:'card', label:'بطاقة', active:true }],
   autoRevenueFromSubs:true,
-  /* الصلاحيات: البنية جاهزة والتفعيل مؤجّل لمرحلة لاحقة (شاشة دخول + مستخدمات) */
+  /* ---------------------- الدخول: مفتاح الإنتاج ----------------------
+     **إعداد الإنتاج المقصود هو `authEnabled: true`**، ويُشغَّل من
+     الإعدادات ⟵ الدخول والصلاحيات (مفتاح واحد، ومعه شاشة تهيئة تُنشئ حساب
+     المالكة ورمز الاسترجاع). انظري docs/DESKTOP-BUILD.md § «إعداد الإنتاج».
+
+     ولماذا يبقى الافتراض `false` هنا؟ لسببين مقيسين لا لتردّد:
+
+       · `Settings.load` تدمج المحفوظ فوق هذه الافتراضات، و`Settings.set`
+         تكتب اللقطة كاملةً — وأوّل إقلاعٍ لأيّ نسخة سابقة كتب
+         `authEnabled:false` صراحةً على القرص. فقلبُ هذا السطر **لا يُظهر
+         بوّابةً لنادٍ يعمل اليوم**: يبقى على ما هو محفوظ عنده. من يريد
+         البوّابة يشغّلها من الإعدادات، والقلب هنا لا يغنيه عن ذلك.
+       · التطوير والاختبار يحتاجان النظام مفتوحاً (§15): مجموعة الاختبارات
+         تفتح التطبيق في 35 موضعاً وتعمل على الخدمات مباشرةً بلا جلسة.
+
+     فالمطلوب من هذه المرحلة ليس قلبَ افتراضٍ لا يغيّر شيئاً عند المستخدمة،
+     بل أن تكون البوّابة **صحيحة وظاهرة حين تُشغَّل**: نافذة بدء ⟵ دخول ⟵
+     مساحة عمل، بلا ومضةٍ ولا شيءٍ مرسوم خلفها. وهذا ما تقيسه المجموعة. */
   authEnabled:false,
   /* الحضور: السماح بتسجيل حضور مشتركة بلا اشتراك فعّال (بتنبيه) */
   attendanceAllowExpired:true,
@@ -1627,9 +1685,14 @@ const Auth = {
     /* رسالة واحدة للحالتين: لا يُكشف أي اسم موجود وأيّها غير موجود */
     const fail = () => { throw new AppError('اسم المستخدمة أو كلمة المرور غير صحيحة','BAD_LOGIN'); };
     if (!u) { await Crypto.hash(String(password || '')); fail(); }   /* زمن مماثل */
-    if (u.disabled) throw new AppError('هذا الحساب موقوف — راجعي المالكة','USER_DISABLED');
+    /* كلمة المرور تُفحص **قبل** أن يُقال «موقوف».
+       كان الترتيب معكوساً، فكان من يكتب أي اسم مستخدمة يعرف من الردّ وحده
+       هل الحساب موجود وموقوف أم غير موجود — أي تعدادُ أسماء المستخدمات بلا
+       كلمة مرور. والآن: من لا يعرف كلمة المرور يرى الرسالة الواحدة مهما
+       كان الاسم، ومن يعرفها يُقال لها سببُ المنع كاملاً. */
     const ok = await Crypto.verify(String(password || ''), u.pass);
     if (!ok) fail();
+    if (u.disabled) throw new AppError('هذا الحساب موقوف — راجعي المالكة','USER_DISABLED');
     await this.startSession(u);
     await Repos.users.update(u.id, { lastLoginAt:new Date().toISOString() });
     await Audit.log('auth','login',`دخول ${u.name}`, u.id);
@@ -7243,12 +7306,19 @@ const Desktop = {
     const parts = ['المستندات', FOLDERS.root, ...tail.split(/[\\/]/)].filter(Boolean);
     return parts.map(x => this.FOLDER_AR[x] || x).join(' ‹ ');
   },
+  /* هل يطلب الجهاز تقليل الحركة؟ تُقرأ هنا لأن طرف الصدأ لا يستطيع قراءتها،
+     وهو يحتاجها: مقدّمة نافذة البدء لا تعمل عند تقليل الحركة، فانتظارها
+     يصير حشواً محضاً (انظري `splash_rest_ms` في main.rs). */
+  reducedMotion(){
+    try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch(e){ return false; }
+  },
   /* جاهزية الواجهة: تُغلق نافذة البدء وتُظهر النافذة الرئيسية. تُنادى عند
      نجاح الإقلاع وعند فشله معاً — فنافذة بدءٍ عالقة أسوأ من رسالة خطأ.
      ولا تُرمى أبداً: لا شيء في النظام يتوقّف على نجاحها. */
   async ready(){
     if (!this.on()) return false;
-    try { await this.call('tg_ready'); return true; }
+    try { await this.call('tg_ready', { reducedMotion:this.reducedMotion() }); return true; }
     catch(e){ Log.warn('تعذّر إعلان جاهزية الواجهة', e); return false; }
   },
   /* فتح ملفٍّ أو مجلّد. الواجهة ترسل فئةً واسماً — ولا ترسل مساراً أبداً،
@@ -7896,27 +7966,55 @@ const Brand = {
              animated:Svc.media.isAnimated(m), hasPoster:!!m.posterUrl };
   },
 
-  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور.
+  /* ======================= BrandLogo — صندوق الشعار =======================
+     العيب الذي أوجد هذا: **أبعاد الملف المرفوع كانت تقرّر حجم الشعار على
+     الشاشة.** ملفٌ 2400×600 يمطّ الشريط الجانبي، وملفٌ 600×2400 يطيله.
 
-     الحجم هنا **صندوق لا اقتراح**: عرضٌ وارتفاعٌ مقفلان بحدٍّ أعلى كذلك،
-     و`object-fit:contain` داخله، و`flex:0 0 auto` حتى لا يمطّه صفٌّ مرن من
-     حوله. فملفٌ 2400×2400 وملفٌ 128×128 يُرسمان في الصندوق نفسه بالبكسل
-     نفسه؛ ما يتغيّر هو الفراغ داخله لا مكانه على الشاشة.
+     والقاعدة المضادّة له ليست «نضع max-width هنا وهناك»: سقفٌ مكتوب في
+     سبعة مواضع يُنسى في الثامن، وهذا ما تُثبته الشاشة التالية التي تُضاف.
+     فالقاعدة أن يكون للشعار **مكانٌ واحد يقرّر حجمه**:
 
-     وأبعاد الطباعة لم تُمسّ: الأرقام المارّة من `printHeader` (54) ومن
-     الوصل (44/56) كما كانت، والحدّ الأعلى المضاف يساوي العرض نفسه فلا يغيّر
-     شيئاً مرسوماً. */
+         أبعاد الملف ⇢ BOX[surface] ⇢ object-fit:contain ⇢ حجم ثابت
+
+     `BOX` هي كل المقاسات في النظام، و`boxStyle` هي كل ما يُكتب من أنماط،
+     و`logoHtml` هي المُخرج الوحيد. كل سطح جديد (شاشة الدخول مثلاً) يأخذ
+     مقاسه من هنا — فلا يستطيع أن يُعيد العيب حتى لو أراد.
+
+     وأبعاد الطباعة لم تُمسّ: 54 للترويسة و56/44 للوصل كما كانت منذ المرحلة
+     الثالثة، والاختبار يقيسها بالبكسل ويسقط إن تغيّرت. */
+  BOX: {
+    sidebar: 38,          /* الشريط الجانبي */
+    gate:    64,          /* شاشة الدخول */
+    settings:120,         /* معاينة الإعدادات (في CSS كذلك: .brand-prev) */
+    print:   54,          /* ترويسة كل مستند مطبوع */
+    receipt: 56,          /* وصل A4 */
+    slip:    44,          /* وصل شريطي 80mm */
+  },
+  /* الأنماط التي تصنع الصندوق — تُكتب هنا وحدها.
+     `flex:0 0 auto` حتى لا يمطّه صفٌّ مرن، و`max-*` إلى جانب `width/height`
+     حتى لا يكسره تنسيقٌ أعمّ منه في سياق لم نتوقّعه. */
+  boxStyle(size){
+    return `width:${size}px;height:${size}px;max-width:${size}px;max-height:${size}px;`
+         + 'object-fit:contain;display:block;flex:0 0 auto';
+  },
+  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور. */
   logoHtml(size=40, forPrint=false){
     /* الطباعة تأخذ الإطار الثابت دائماً: الورقة لا تتحرّك ولا تنتظر إطاراً */
     const url = this.renderUrl('logo', forPrint);
-    const box = `width:${size}px;height:${size}px;max-width:${size}px;max-height:${size}px;`
-              + 'object-fit:contain;display:block;flex:0 0 auto';
+    const box = this.boxStyle(size);
     if (url) return `<img class="brand-logo" src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${box}">`;
     return `<svg class="brand-mark" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
       <circle cx="20" cy="20" r="19" fill="${forPrint ? '#432C4C' : '#C43E6B'}"/>
       <rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/>
       <rect x="6" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/>
       <rect x="29" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/></svg>`;
+  },
+  /* الشعار داخل غلافٍ صريح — لسطحٍ يحتاج توسيطاً أو خلفية حوله.
+     الغلاف هو الصندوق، والشعار داخله محتوىً: فحتى لو فشل تحميل الصورة بقي
+     المكان محجوزاً ولم يقفز ما حولها. تستعمله شاشة الدخول. */
+  logoBox(size){
+    return `<span class="brand-box" style="width:${size}px;height:${size}px;`
+         + `max-width:${size}px;max-height:${size}px">${this.logoHtml(size)}</span>`;
   },
   /* اللافتة العريضة: تُقصّ ولا تُمطّ، ولا تظهر أصلاً إن لم تُرفع */
   bannerHtml(forPrint){
@@ -7937,7 +8035,7 @@ const Brand = {
   printHeader(title, sub){
     const b = this.get();
     return `<div class="doc-head">
-      <div class="doc-head-brand">${this.logoHtml(54, true)}
+      <div class="doc-head-brand">${this.logoHtml(this.BOX.print, true)}
         <div><strong>${U.esc(this.name())}</strong>
           ${b.subtitle ? `<span>${U.esc(b.subtitle)}</span>` : ''}
           ${this.contactLine() ? `<span>${U.esc(this.contactLine())}</span>` : ''}</div></div>
@@ -7984,7 +8082,7 @@ const Brand = {
     const mark = document.querySelector('.brand-mark, .brand-logo');
     if (mark){
       const holder = document.createElement('div');
-      holder.innerHTML = this.logoHtml(38);
+      holder.innerHTML = this.logoHtml(this.BOX.sidebar);
       const el = holder.firstElementChild;
       if (el){ el.classList.add(this.has('logo') ? 'brand-logo' : 'brand-mark'); mark.replaceWith(el); }
     }
@@ -12496,6 +12594,8 @@ Views.settings = {
                 ونسبةٌ مختلفة تُقبل كما هي — يُقصّ منها ما يخرج عن الإطار.</div>
             </div>
           </div>
+          <div class="t-sub" style="margin-top:10px">المقاسات مقترحة وليست إلزامية — أي ملف ضمن
+            الحدود التقنية مقبول، ويُعرض في صندوق ثابت مهما كانت أبعاده.</div>
           <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
             <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
               <div style="min-width:260px">${UI.field('brandMotion','حركة الهوية',
@@ -12564,8 +12664,9 @@ Views.settings = {
             <div class="t-sub" style="margin-bottom:6px"><strong>${k === 'logo' ? 'الشعار' : 'اللافتة'}</strong>
               — ${st[k].animated ? 'صورة متحرّكة' : 'صورة ثابتة'}
               ${st[k].animated ? `، المعروض الآن في النظام: ${st[k].rendering === 'live' ? 'الملف المتحرّك' : 'الإطار الثابت'}` : ''}</div>
-            <img src="${U.esc(m.dataUrl)}" alt=""
-              style="max-width:100%;max-height:150px;object-fit:contain;border:1px solid var(--line);border-radius:8px;display:block">
+            <span class="brand-box" style="width:${k === 'logo' ? 150 : 300}px;height:150px;
+              border:1px solid var(--line);border-radius:8px;background:var(--surface-2)">
+              <img src="${U.esc(m.dataUrl)}" alt=""></span>
           </div>`;
         };
         UI.modal({ title:'اختبار الحركة', size:'narrow',
@@ -16090,7 +16191,7 @@ const Print = {
     const g = s.gym || {}, mem = s.member || {}, doc = s.doc || {}, pay = s.payment || {};
     const slip = (o.format || receipt.format) === 'slip';
     const copies = Number(receipt.reprints) || 0;
-    const logo = Brand.logoHtml(slip ? 44 : 56, true);
+    const logo = Brand.logoHtml(slip ? Brand.BOX.slip : Brand.BOX.receipt, true);
     const contact = [g.phone, g.address, g.instagram ? '@' + String(g.instagram).replace(/^@/, '') : ''].filter(x => U.norm(x)).join(' — ');
     const lines = (doc.lines || []);
     return `<div class="doc ${slip ? 'slip' : ''}">
@@ -16954,12 +17055,49 @@ Forms.userPassword = function(id){
 const Gate = {
   el:null,
   showing(){ return !!this.el; },
+  /* ------------------------------ القفل ------------------------------
+     §16 من المرحلة 4.3: لا تُرى لوحة التحكّم — ولا اسمُ مشتركةٍ واحد —
+     قبل الدخول، **ولا للحظة**.
+
+     وتغطيةُ الشاشة بطبقةٍ فوقها لا تكفي: ما رُسم تحتها موجود في الـDOM،
+     يظهر بأي خلل في الطبقة، ويُلتقط في صورة شاشة، ويُقرأ بقارئ شاشة.
+     وهذا ما كان يقع فعلاً: قياسُ النسخة السابقة أعطى **51 لقطة من 52**
+     رأت لوحة التحكّم مرسومةً خلف شاشة الدخول.
+
+     فطبقتان تحت البوّابة:
+
+       · `shield` — يُقفل الهيكل من التخطيط. ويُنادى في **أوّل سطر من
+         `boot`، قبل أي `await`**: معرفةُ هل البوّابة مطلوبة تحتاج فتحَ
+         قاعدة البيانات وقراءة الإعدادات، وبينهما إطاراتٌ يُرسم فيها
+         الهيكل. فالقاعدة «مُقفلٌ حتى يثبت العكس»، ويُرفع فور القراءة إن
+         لم تكن مطلوبة.
+       · `lock` — يضيف إليه مسحَ ما رُسم. ومعه في `boot` قاعدةٌ أهمّ:
+         **لا يُبنى** تنقّلٌ ولا تُرسم شاشة ما دامت البوّابة مطلوبة.
+         فما لا يُبنى لا يُرى. */
+  shield(){ document.body.classList.add('locked'); },
+  lock(){
+    this.shield();
+    const v = document.getElementById('viewRoot');
+    if (v) v.innerHTML = '';                 /* حتى هيكل الإقلاع لا يبقى تحتها */
+    const nav = document.getElementById('nav');
+    if (nav) nav.innerHTML = '';
+  },
+  unlock(){ document.body.classList.remove('locked'); },
   close(){ if (this.el){ this.el.remove(); this.el = null; } },
+  /* الهوية فوق البطاقة والحقول داخلها. الشعار يأخذ مقاسه من `Brand.BOX`
+     لا من رقمٍ يُكتب هنا — فسطحٌ جديد لا يفتح باب العيب القديم. */
   mount(html, wire){
     this.close();
     const d = document.createElement('div');
     d.className = 'gate';
-    d.innerHTML = `<div class="gate-card">${Brand.logoHtml(52)}${html}</div>`;
+    d.setAttribute('role', 'dialog');
+    d.setAttribute('aria-modal', 'true');
+    d.setAttribute('aria-label', 'تسجيل الدخول');
+    d.innerHTML = `<div class="gate-wrap">
+      <div class="gate-head">${Brand.logoBox(Brand.BOX.gate)}
+        <h1>${U.esc(Brand.name())}</h1>
+        <p>${U.esc(Brand.get().subtitle || 'نظام إدارة النادي')}</p></div>
+      <div class="gate-card">${html}</div></div>`;
     document.body.appendChild(d);
     this.el = d;
     const first = d.querySelector('input:not([type=hidden])');
@@ -16975,21 +17113,43 @@ const Gate = {
     const box = d.querySelector('#gErr');
     if (box){ box.textContent = msg; box.style.display = msg ? 'block' : 'none'; }
   },
+  /* حقل كلمة المرور وزرّ «إظهار». الزرّ خارج تسلسل Tab (`tabindex=-1`):
+     من يكتب كلمة المرور ثم يضغط Tab يريد زرّ الدخول لا زرّ الإظهار. */
+  passField(id, label, autocomplete){
+    return `<div class="field"><label for="${id}">${U.esc(label)}</label>
+      <div class="gate-pw">
+        <input class="inp" id="${id}" type="password" autocomplete="${autocomplete}">
+        <button type="button" tabindex="-1" data-eye="${id}" aria-label="إظهار كلمة المرور"
+          aria-pressed="false">${svg(ICON.eye, 17, 1.7)}</button>
+      </div></div>`;
+  },
+  wireEyes(d){
+    d.querySelectorAll('[data-eye]').forEach(b => b.onclick = () => {
+      const inp = d.querySelector('#' + b.dataset.eye);
+      if (!inp) return;
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      b.setAttribute('aria-pressed', show ? 'true' : 'false');
+      b.setAttribute('aria-label', show ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور');
+      inp.focus();
+    });
+  },
 
   /* ------------------------------ الدخول ------------------------------ */
   login(){
+    this.lock();
     this.mount(`
-      <h2>${U.esc(Brand.name())}</h2>
-      <div class="gate-sub">سجّلي دخولك للمتابعة</div>
-      <div class="gate-err" id="gErr" style="display:none"></div>
+      <h2>تسجيل الدخول</h2>
+      <div class="gate-sub">أدخلي بياناتك للمتابعة</div>
+      <div class="gate-err" id="gErr" role="alert" style="display:none"></div>
       <div class="field"><label for="gUser">اسم المستخدمة</label>
         <input class="inp" id="gUser" autocomplete="username" autocapitalize="off" spellcheck="false"></div>
-      <div class="field"><label for="gPass">كلمة المرور</label>
-        <input class="inp" id="gPass" type="password" autocomplete="current-password"></div>
-      <button class="btn btn-primary" id="gGo" data-submit>دخول</button>
+      ${this.passField('gPass','كلمة المرور','current-password')}
+      <button class="btn btn-primary" id="gGo" data-submit>تسجيل الدخول</button>
       <div class="gate-foot">
         <button type="button" id="gForgot">نسيتِ كلمة المرور؟</button>
       </div>`, d => {
+      this.wireEyes(d);
       d.querySelector('#gGo').onclick = async () => {
         const btn = d.querySelector('#gGo');
         const user = d.querySelector('#gUser').value, pass = d.querySelector('#gPass').value;
@@ -17000,6 +17160,9 @@ const Gate = {
           this.close();
           await afterSignIn();
         } catch(e){
+          /* الرسالة تأتي من `Auth.login` وحدها: هي التي تضمن ألّا يُفرَّق
+             بين «اسم غير موجود» و«كلمة مرور خاطئة». ولا يُضاف هنا أي
+             تفصيل تقنيّ. */
           this.err(d, e.message || 'تعذّر الدخول');
           d.querySelector('#gPass').value = '';
           d.querySelector('#gPass').focus();
@@ -17011,6 +17174,7 @@ const Gate = {
 
   /* ------------------------------ التهيئة ------------------------------ */
   setup(){
+    this.lock();
     this.mount(`
       <h2>تهيئة الحساب الأول</h2>
       <div class="gate-sub">أنشئي حساب المالكة — وهو الحساب الوحيد الذي يدير بقية الحسابات</div>
@@ -17019,12 +17183,11 @@ const Gate = {
         <input class="inp" id="sName" placeholder="مثال: أم تبارك"></div>
       <div class="field"><label for="sUser">اسم المستخدمة للدخول</label>
         <input class="inp" id="sUser" autocapitalize="off" spellcheck="false" placeholder="بالإنجليزية أو العربية"></div>
-      <div class="field"><label for="sPass">كلمة المرور</label>
-        <input class="inp" id="sPass" type="password" autocomplete="new-password"></div>
-      <div class="field"><label for="sPass2">تأكيد كلمة المرور</label>
-        <input class="inp" id="sPass2" type="password" autocomplete="new-password"></div>
+      ${this.passField('sPass','كلمة المرور','new-password')}
+      ${this.passField('sPass2','تأكيد كلمة المرور','new-password')}
       <button class="btn btn-primary" id="sGo" data-submit>إنشاء الحساب</button>
       <div class="gate-foot">لن تُطلب كلمة المرور من أحد غيرك، ولا تُحفظ مكتوبة في أي مكان.</div>`, d => {
+      this.wireEyes(d);
       d.querySelector('#sGo').onclick = async () => {
         const btn = d.querySelector('#sGo');
         const v = k => d.querySelector('#' + k).value;
@@ -17043,6 +17206,7 @@ const Gate = {
 
   /* رمز الاسترجاع يُعرَض مرة واحدة — والمتابعة مشروطة بإقرار كتابته */
   recoveryShown(code){
+    this.lock();
     this.mount(`
       <h2>رمز الاسترجاع</h2>
       <div class="gate-sub">اكتبيه على ورقة واحفظيها في مكان آمن — لن يُعرَض مرة أخرى</div>
@@ -17066,6 +17230,7 @@ const Gate = {
 
   /* ------------------------------ الاسترجاع ------------------------------ */
   recover(){
+    this.lock();
     this.mount(`
       <h2>استرجاع كلمة المرور</h2>
       <div class="gate-sub">أدخلي رمز الاسترجاع الذي كُتب عند التهيئة</div>
@@ -17074,10 +17239,10 @@ const Gate = {
         <input class="inp" id="rCode" style="direction:ltr;text-align:center" placeholder="XXXX-XXXX-XXXX-XXXX"></div>
       <div class="field"><label for="rUser">اسم مستخدمة المالكة</label>
         <input class="inp" id="rUser" autocapitalize="off" spellcheck="false"></div>
-      <div class="field"><label for="rPass">كلمة المرور الجديدة</label>
-        <input class="inp" id="rPass" type="password" autocomplete="new-password"></div>
+      ${this.passField('rPass','كلمة المرور الجديدة','new-password')}
       <button class="btn btn-primary" id="rGo2" data-submit>تعيين كلمة المرور</button>
       <div class="gate-foot"><button type="button" id="rBack">رجوع إلى الدخول</button></div>`, d => {
+      this.wireEyes(d);
       d.querySelector('#rBack').onclick = () => this.login();
       d.querySelector('#rGo2').onclick = async () => {
         const btn = d.querySelector('#rGo2');
@@ -17096,13 +17261,19 @@ const Gate = {
   }
 };
 
-/* بعد الدخول: الشاشات تُبنى من جديد بصلاحيات هذه المستخدمة لا بصلاحيات سابقتها */
+/* بعد الدخول: الشاشات تُبنى من جديد بصلاحيات هذه المستخدمة لا بصلاحيات سابقتها.
+   وهنا **أوّل** بناءٍ للتنقّل وأوّل رسمٍ لشاشة حين تكون البوّابة مفعّلة —
+   لأن الإقلاع لم يبنِ ولم يرسم شيئاً قبلها (انظري `boot`). */
 async function afterSignIn(){
+  Gate.unlock();
   buildNav();
   paintWhoAmI();
   const start = Settings.get('startScreen') === 'dashboard' ? 'dashboard' : 'desk';
   go(Auth.can(`${start}.view`) ? start : firstAllowedRoute());
   renderRoute();
+  /* ما أُجّل إلى ما بعد الدخول: التنبيهات والنسخة التلقائية. لا يعملان على
+     بيانات لم يُسمح لأحدٍ برؤيتها بعد. */
+  afterFirstPaint();
 }
 /* أول شاشة يسمح بها دورها — كي لا تقع مستخدمة على شاشة ممنوعة عند الدخول */
 function firstAllowedRoute(){
@@ -17174,6 +17345,9 @@ let _readyResolve, _readyReject;
 const AppReady = new Promise((res, rej) => { _readyResolve = res; _readyReject = rej; });
 
 async function boot(){
+  /* أوّل سطر، قبل أي `await`: الهيكل مُقفل حتى تُقرأ الإعدادات.
+     انظري `Gate.shield` — هذه هي النقطة التي كانت تُرى فيها الومضة. */
+  Gate.shield();
   const root = $('viewRoot');
   root.innerHTML = `<div class="card"><div class="card-body">
     <div class="skeleton" style="width:40%;margin-bottom:12px"></div>
@@ -17202,6 +17376,13 @@ async function boot(){
      لا بصلاحيات مفتوحة ثم يُصحَّح بعدها. */
   Auth.restoreSession();
 
+  /* البوّابة تُقرّر **قبل** أن يُبنى تنقّل أو تُرسم شاشة.
+     §16: «لا تظهر مساحة العمل ثم تظهر شاشة الدخول». وهذا لا يُحلّ بطبقةٍ
+     تغطّي: ما رُسم تحتها موجود. فحين تكون البوّابة مطلوبة لا يُبنى شيء
+     أصلاً — لا `buildNav` ولا `renderRoute` ولا تنبيهات ولا نسخة تلقائية. */
+  const gated = Auth.enabled() && !Auth.session.actorId;
+  if (!gated) Gate.unlock();                 /* لا بوّابة ⟵ يُرفع الدرع فوراً */
+
   Brand.applyToShell();                              // الشعار والاسم والوصف من الإعدادات
   $('verLabel').textContent = `الإصدار ${APP.version}`;
   /* هويّة البناء تُلحَق بالإصدار حين يجيب الجسر. لا تُنتظر: الإقلاع لا
@@ -17210,8 +17391,7 @@ async function boot(){
     const el = $('verLabel'), tag = Build.label();
     if (el && tag) el.textContent = `الإصدار ${APP.version} · ${tag}`;
   }).catch(() => {});
-  buildNav();
-  paintWhoAmI();
+  if (!gated){ buildNav(); paintWhoAmI(); }
 
   if (adapter.kind === 'memory')
     UI.toast('المتصفح يمنع الحفظ المحلي — البيانات لن تبقى بعد الإغلاق. افتحي الملف من متصفح عادي (غير وضع التصفح الخاص).','err', 12000);
@@ -17252,8 +17432,18 @@ async function boot(){
 
      وفي المتصفح لا يُلمس الاختصار: طباعة المتصفح تبقى كما هي (المرحلة 30). */
   if (Desktop.on()) document.addEventListener('keydown', e => {
-    const key = (e.key || '').toLowerCase();
-    if (key !== 'p' || !(e.ctrlKey || e.metaKey)) return;
+    /* **مستقلّ عن تخطيط لوحة المفاتيح.** هذا كان العيب: الفحص كان على
+       `e.key === 'p'` وحده، و`e.key` يحمل الحرف الذي يُنتجه التخطيط لا
+       المفتاح. فعلى لوحة عربية — وهي لوحة هذا النادي — المفتاح نفسه يُعطي
+       `'ح'`، بينما يفتح المحرّك اختصار الطباعة لأنه يقابل الاختصارات
+       بمفاتيحها اللاتينية. فكان الشرط يسقط، وتمضي الضغطة إلى WebView2،
+       فتظهر العبارة الإنجليزية «This app doesn't support print preview».
+
+       و`e.code` هو المفتاح الماديّ: لا يتغيّر بتغيّر التخطيط. ويبقى
+       `e.key` احتياطاً لبيئةٍ لا تملؤه. */
+    const physical = e.code === 'KeyP';
+    const logical = (e.key || '').toLowerCase() === 'p';
+    if (!(physical || logical) || !(e.ctrlKey || e.metaKey) || e.altKey) return;
     e.preventDefault(); e.stopPropagation();
     /* أقرب زرّ طباعة: ما في النافذة المفتوحة أوّلاً ثم ما في الشاشة */
     const scope = UI.stack.length ? UI.stack[UI.stack.length - 1].el : document;
@@ -17269,28 +17459,37 @@ async function boot(){
     UI.toast((ev.reason && ev.reason.message) || 'فشلت العملية','err');
   });
 
-  /* البوّابة آخر خطوة: النظام جاهز خلفها، فإن أُغلقت ظهر جاهزاً فوراً.
-     وإن كانت الصلاحيات معطّلة لا تظهر أصلاً ولا يتغيّر شيء في نادٍ لم يفعّلها. */
-  if (Auth.enabled() && !Auth.session.actorId){
+  if (mig.applied.length) UI.toast('تمت ترقية بياناتك إلى الإصدار ' + APP.version + ' بنجاح', 'ok', 6000);
+
+  /* البوّابة: تُعرض ولا يُرسم خلفها شيء. وما بعدها (التنقّل، الشاشة،
+     التنبيهات، النسخة التلقائية) يقع في `afterSignIn` لا هنا. */
+  if (gated){
     if (Auth.needsSetup()) Gate.setup(); else Gate.login();
-  } else if (Auth.enabled()){
-    /* جلسة مستعادة: ابدئي على شاشة يسمح بها دورها */
-    if (!Auth.can(`${State.route}.view`)) go(firstAllowedRoute());
+    Log.info('النظام جاهز — بانتظار تسجيل الدخول', { adapter:adapter.kind });
+    return { adapter:adapter.kind, migration:mig, gated:true };
   }
 
+  /* جلسة مستعادة: ابدئي على شاشة يسمح بها دورها */
+  if (Auth.enabled() && !Auth.can(`${State.route}.view`)) go(firstAllowedRoute());
+
   renderRoute();
-  if (mig.applied.length) UI.toast('تمت ترقية بياناتك إلى الإصدار ' + APP.version + ' بنجاح', 'ok', 6000);
+  Log.info('النظام جاهز', { adapter:adapter.kind, records:STORE_NAMES.reduce((a,s)=>a+DB.count(s),0) });
+  afterFirstPaint();
+
+  return { adapter:adapter.kind, migration:mig, gated:false };
+}
+
+/* ما يقع بعد أوّل رسمٍ مسموحٍ به — لا قبله، ولا خلف بوّابة مغلقة.
+   التنبيهات تقرأ بيانات المشتركات، والنسخة التلقائية تكتبها إلى القرص:
+   كلاهما عملٌ على بيانات لم يُصرَّح لأحدٍ برؤيتها ما دام الدخول مطلوباً. */
+function afterFirstPaint(){
   const alerts = Svc.notify.build().filter(n => n.level === 'red');
   if (alerts.length) setTimeout(() => UI.toast(alerts[0].title, 'warn', 6000), 900);
-  Log.info('النظام جاهز', { adapter:adapter.kind, records:STORE_NAMES.reduce((a,s)=>a+DB.count(s),0) });
-
   /* النسخة التلقائية آخر ما يحدث، ومؤجَّلة بعد أول رسم: الإقلاع لا ينتظرها،
      والترقية والاستعادة قد انتهتا قبلها. وفشلها لا يُرى في الشاشة ولا
      يوقف شيئاً — يُسجَّل وتُعاد المحاولة غداً. */
   if (Backup.autoDue())
     setTimeout(() => { Backup.runAuto().catch(e => Log.warn('النسخة التلقائية', e)); }, 4000);
-
-  return { adapter:adapter.kind, migration:mig };
 }
 
 /* الإقلاع لا يُترك بلا شبكة أمان: شاشة الهيكل العظمي إلى الأبد أسوأ من رسالة خطأ.
@@ -17306,6 +17505,9 @@ async function bootSafely(){
   try { const info = await boot(); Desktop.ready(); _readyResolve(info); }
   catch(e){
     Log.error('فشل إقلاع النظام', e);
+    /* شاشة التعافي تُرى دائماً: لو سقط الإقلاع بعد أن أُقفل الهيكل لبقيت
+       المستخدمة أمام بوّابةٍ لا تعمل ولا رسالة تحتها. القفل يُفكّ أوّلاً. */
+    Gate.close(); Gate.unlock();
     const root = $('viewRoot');
     if (root) root.innerHTML = `<div class="card"><div class="card-body">
       <h3 style="color:var(--red-600);margin-bottom:8px">تعذّر تشغيل النظام</h3>
@@ -17325,7 +17527,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print,
               Desktop, DesktopFiles, FOLDERS, FileCentre, Build,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
-              boot, renderRoute, go, State, buildNav, currentRoute, navBadges,
+              boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,
               ready:AppReady };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootSafely);

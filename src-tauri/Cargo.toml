@@ -1,6 +1,6 @@
 [package]
 name = "tabarak-gym-desktop"
-version = "7.6.1"
+version = "7.7.0"
 description = "نظام إدارة تبارك جيم — غلاف سطح المكتب"
 edition = "2021"
 rust-version = "1.82"

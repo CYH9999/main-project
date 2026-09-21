@@ -334,21 +334,42 @@ fn open_with_shell(target: &Path) -> Result<(), String> {
 
 /* ============================ بدء التشغيل ============================
    نافذة البدء ليست زينة: النافذة الرئيسية تبقى مخفيّة حتى تجهز الواجهة،
-   فلا ترى المستخدمة هيكلاً فارغاً يُملأ أمامها. وثلاث قواعد تحكمها:
+   فلا ترى المستخدمة هيكلاً فارغاً يُملأ أمامها، ولا لوحة تحكّم قبل الدخول.
+   وأربع قواعد تحكمها:
 
      · لا تبقى أبداً. الواجهة تنادي `tg_ready` عند الجاهزية **وعند فشل
        الإقلاع أيضاً**؛ ومن فوقهما حارسٌ زمنيّ في هذا الملف يكشف النافذة
        الرئيسية مهما حدث. فشاشةُ بدءٍ عالقة أسوأ من غياب شاشة بدء.
-     · لا تُبطئ. لا انتظار مفتعل: ما يُنتظر هو زمن الإقلاع الحقيقي وحده،
-       وتحته حدّ أدنى قصير يكفي لإتمام التلاشي فلا تومض النافذة وميضاً.
+     · لا تُقتل في منتصف حركتها. هذا كان العيب الذي رأته المستخدمة:
+       مقدّمة `desktop/splash.html` تستغرق 900ms لتكتمل، وكان الكشف يقع
+       بعد 350ms — فما كانت تُرى شاشةُ بدءٍ بل وميضٌ داكن. فالحدّ الأدنى
+       الآن هو **طول المقدّمة نفسها**، لا رقمٌ اختير ليبدو جميلاً: إن
+       انتهى الإقلاع قبلها انتظرت المقدّمةُ نفسَها لتكمل، وإن كان الإقلاع
+       أبطأ منها لم يُضَف إليه شيء.
+     · لا تُبطئ من لا يريدها. حين يطلب الجهاز تقليل الحركة لا مقدّمة
+       أصلاً (انظري `@media (prefers-reduced-motion)` في صفحة البدء)،
+       فانتظارُ مقدّمةٍ لا تعمل حشوٌ محض — فتُكشف النافذة فوراً تقريباً.
+       والواجهة هي من تقول ذلك، لأنها وحدها تقرأ تفضيل الجهاز.
      · تُكشف مرّة واحدة. `REVEALED` يمنع تكرار الإظهار والإغلاق.
 */
 static STARTED: OnceLock<Instant> = OnceLock::new();
 static REVEALED: AtomicBool = AtomicBool::new(false);
-/// أقصر زمن تبقى فيه نافذة البدء — مهلة انتقال لا حشوٌ لبلوغ رقم.
-const MIN_SPLASH_MS: u128 = 350;
+/// طول مقدّمة نافذة البدء — نظيره `--intro` في `desktop/splash.html`.
+/// اختبارٌ في المجموعة يقارن الرقمين ويسقط إن تفرّقا.
+const SPLASH_INTRO_MS: u128 = 900;
+/// حين لا مقدّمة (تقليل الحركة): مهلة انتقال تمنع الوميض لا غير.
+const SPLASH_STILL_MS: u128 = 140;
 /// الحارس: بعده تُكشف النافذة الرئيسية ولو لم تنطق الواجهة.
 const SPLASH_WATCHDOG_MS: u64 = 12_000;
+
+/// كم يتبقّى من الحدّ الأدنى بعد `elapsed` من عمر العملية.
+///
+/// مفصولةٌ عن Tauri عمداً حتى تُختبر وحدها: هذه هي القاعدة التي سقطت في
+/// المرحلة السابقة، فيجب أن تكون مقيسة لا موصوفة.
+fn splash_rest_ms(elapsed: u128, reduced_motion: bool) -> u64 {
+    let floor = if reduced_motion { SPLASH_STILL_MS } else { SPLASH_INTRO_MS };
+    floor.saturating_sub(elapsed) as u64
+}
 
 fn reveal_main(app: &tauri::AppHandle) {
     if REVEALED.swap(true, Ordering::SeqCst) {
@@ -364,10 +385,13 @@ fn reveal_main(app: &tauri::AppHandle) {
 }
 
 /// تُناديها الواجهة حين تنتهي من الإقلاع — بنجاحه أو بفشله.
+///
+/// `reduced_motion` يأتي من `matchMedia` في الواجهة: لا يستطيع طرف الصدأ
+/// قراءة تفضيل الحركة، والواجهة تقرؤه أصلاً لتضبط حركاتها. فيُمرَّر معه.
 #[tauri::command]
-fn tg_ready(app: tauri::AppHandle) {
+fn tg_ready(app: tauri::AppHandle, reduced_motion: Option<bool>) {
     let elapsed = STARTED.get().map(|t| t.elapsed().as_millis()).unwrap_or(u128::MAX);
-    let rest = MIN_SPLASH_MS.saturating_sub(elapsed) as u64;
+    let rest = splash_rest_ms(elapsed, reduced_motion.unwrap_or(false));
     if rest == 0 {
         return reveal_main(&app);
     }
@@ -455,4 +479,36 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("تعذّر تشغيل تبارك جيم");
+}
+
+#[cfg(test)]
+mod splash_tests {
+    use super::*;
+
+    #[test]
+    fn intro_is_awaited_when_boot_is_faster_than_it() {
+        // إقلاع في 200ms: يبقى ما يكمل المقدّمة — لا وميض
+        assert_eq!(splash_rest_ms(200, false), (SPLASH_INTRO_MS - 200) as u64);
+    }
+
+    #[test]
+    fn slow_boot_is_never_padded() {
+        // إقلاع أبطأ من المقدّمة: لا يُضاف إليه شيء
+        assert_eq!(splash_rest_ms(SPLASH_INTRO_MS, false), 0);
+        assert_eq!(splash_rest_ms(SPLASH_INTRO_MS + 4_000, false), 0);
+    }
+
+    #[test]
+    fn reduced_motion_waits_for_no_animation() {
+        // لا مقدّمة تعمل ⇒ لا انتظار لها، ومهلة الانتقال وحدها
+        assert_eq!(splash_rest_ms(0, true), SPLASH_STILL_MS as u64);
+        assert!(splash_rest_ms(0, true) < splash_rest_ms(0, false));
+        assert_eq!(splash_rest_ms(SPLASH_STILL_MS, true), 0);
+    }
+
+    #[test]
+    fn watchdog_outlives_the_floor() {
+        // الحارس يجب أن يأتي بعد الحدّ الأدنى دائماً، وإلا كشف قبل المقدّمة
+        assert!(SPLASH_WATCHDOG_MS as u128 > SPLASH_INTRO_MS);
+    }
 }

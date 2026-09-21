@@ -51,16 +51,26 @@ const ok = (name, pass, detail) => {
    --------------------------------------------------------------------------- */
 const FEATURES = [
   { key: 'splash', label: 'نافذة البدء',
-    html: [/Desktop\.ready\(\)/g],
+    html: [/Desktop\.ready\(\)/g, /reducedMotion:this\.reducedMotion\(\)/],
     htmlMin: { 'Desktop.ready()': 2 },          // النجاح والفشل معاً
-    rust: [/fn tg_ready/, /fn reveal_main/, /SPLASH_WATCHDOG_MS/],
+    rust: [/fn tg_ready/, /fn reveal_main/, /SPLASH_WATCHDOG_MS/,
+           /fn splash_rest_ms/, /SPLASH_INTRO_MS/, /SPLASH_STILL_MS/],
     conf: c => c.app.windows.some(w => w.label === 'splash' && w.visible === true)
             && c.app.windows.some(w => w.label === 'main' && w.visible === false),
     confWhy: 'نافذة splash ظاهرة و main مخفيّة' },
 
+  { key: 'gate', label: 'بوّابة الدخول قبل مساحة العمل',
+    html: [/body\.locked \.app\{display:none\}/,
+           /const gated = Auth\.enabled\(\) && !Auth\.session\.actorId/,
+           /if \(!gated\)\{ buildNav\(\); paintWhoAmI\(\); \}/,
+           /unlock\(\)\{ document\.body\.classList\.remove\('locked'\); \}/,
+           /data-eye=/, /passField\(id, label, autocomplete\)/] },
+
   { key: 'logo', label: 'صندوق الشعار الثابت',
     html: [/\.brand-prev\{[^}]*display:flex/, /max-width:\$\{size\}px;max-height:\$\{size\}px/,
-           /\.media-drop \.brand-prev>img\{[^}]*object-fit:contain/, /class="brand-prev"/] },
+           /\.media-drop \.brand-prev>img\{[^}]*object-fit:contain/, /class="brand-prev"/,
+           /boxStyle\(size\)\{/, /logoBox\(size\)\{/,
+           /BOX: \{[\s\S]{0,400}?sidebar: 38,[\s\S]{0,400}?print:   54,/] },
 
   { key: 'files', label: 'مركز الملفات',
     html: [/const FileCentre = \{/, /Views\.files = \{/, /ملفات تبارك جيم/],
@@ -72,7 +82,8 @@ const FEATURES = [
 
   { key: 'ctrlp', label: 'اعتراض Ctrl + P في سطح المكتب',
     html: [/if \(Desktop\.on\(\)\) document\.addEventListener\('keydown'/,
-           /key !== 'p' \|\| !\(e\.ctrlKey \|\| e\.metaKey\)/] },
+           /const physical = e\.code === 'KeyP';/,
+           /if \(!\(physical \|\| logical\) \|\| !\(e\.ctrlKey \|\| e\.metaKey\) \|\| e\.altKey\) return;/] },
 
   { key: 'open', label: 'فتح الملف والمجلّد',
     html: [/async openFile\(category, name\)/, /async openFolder\(category\)/],
@@ -118,6 +129,18 @@ function verifySource() {
   const sp = read(SPLASH_SRC);
   ok('نافذة البدء بلا سكربت ولا قاعدة بيانات',
      !/<script/i.test(sp) && !/indexedDB|__TAURI|localStorage/i.test(sp));
+
+  /* طول المقدّمة رقمٌ واحد في ملفّين: `--intro` في صفحة البدء
+     و`SPLASH_INTRO_MS` في طرف الصدأ. إن تفرّقا عاد العيب الذي أُصلح —
+     نافذةٌ تُغلق في منتصف حركتها. فيُقارَنان هنا قبل أن يُبنى شيء. */
+  const introCss = Number((sp.match(/--intro:\s*(\d+)ms/) || [])[1]);
+  const introRs = Number((rust.match(/SPLASH_INTRO_MS: u128 = (\d+)/) || [])[1]);
+  ok('طول مقدّمة البدء واحد في الصفحة وفي طرف الصدأ',
+     !!introCss && introCss === introRs, `css=${introCss} rust=${introRs}`);
+  ok('والمقدّمة داخل المدى المقصود (0.8–1.5 ثانية)',
+     introCss >= 800 && introCss <= 1500, `${introCss}ms`);
+  ok('ونافذة البدء تحترم تقليل الحركة',
+     /prefers-reduced-motion:reduce/.test(sp) && /animation:none/.test(sp));
   return conf.version;
 }
 

@@ -28,6 +28,9 @@ const { installBridge } = require('./desktop-io.js');
 const ROOT = path.join(__dirname, '..');
 const CONF = path.join(ROOT, 'src-tauri', 'tauri.conf.json');
 const DIST = path.join(ROOT, 'app', 'index.html');
+/* النسخة تُقرأ من مصدرها لا تُكتب في الاختبار. المقيس هو **الاتّفاق** بين
+   المواضع الأربعة، لا رقمٌ بعينه — ورقمٌ مكتوب هنا يسقط مع كل ترقية. */
+const VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 module.exports = function register({ group, record, TESTS_JS }) {
   const conf = () => JSON.parse(fs.readFileSync(CONF, 'utf8'));
@@ -56,7 +59,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
   async function openDesktop(browser, url, opts = {}) {
     const ctx = await browser.newContext(opts.context || {});
     await ctx.addInitScript(() => { window.open = function () { return null; }; });
-    await ctx.addInitScript(installBridge, { fail: opts.fail || {} });
+    await ctx.addInitScript(installBridge, { fail: opts.fail || {}, version: VER });
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(String(e.message)));
@@ -144,7 +147,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
       /* ---- الإقلاع الفاشل: الجاهزية تُعلَن أيضاً ----
          وإلا بقيت المستخدمة أمام شعار لا ينتهي ولا تعرف أن شيئاً فشل. */
       const ctx = await browser.newContext();
-      await ctx.addInitScript(installBridge, { fail: {} });
+      await ctx.addInitScript(installBridge, { fail: {}, version: VER });
       /* تُكسر قاعدة البيانات قبل أي سطر: IndexedDB والتخزين المحلي معاً */
       await ctx.addInitScript(() => {
         try { Object.defineProperty(window, 'indexedDB', { get(){ throw new Error('منع الاختبار'); } }); } catch (e) {}
@@ -177,36 +180,95 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const srv = await serveDesktop();
     const url = `http://127.0.0.1:${srv.address().port}/splash.html`;
     try {
-      /* بلا تفضيل: الحركة تعمل — نُقاس بمقارنة إطارين لا بوصف */
+      /* المقدّمة المتدرّجة: علامة ⟵ اسم ⟵ وصف ⟵ خيط. تُقاس بحالة كل عنصر
+         لا بوصفها، ومعها **ترتيبها**: تأخيرُ الاسم بعد العلامة وتأخيرُ
+         الوصف بعده. وهذا هو ما كانت المستخدمة لا تراه: المقدّمة كانت
+         تُقتل في منتصفها لأن الكشف يقع بعد 350ms. */
       for (const reduce of [false, true]) {
         const ctx = await browser.newContext({ reducedMotion: reduce ? 'reduce' : 'no-preference' });
         const page = await ctx.newPage();
         await page.goto(url, { waitUntil: 'load' });
         const state = await page.evaluate(() => {
-          const bar = document.querySelector('.bar i');
-          const mark = document.querySelector('.mark');
+          const q = sel => document.querySelector(sel);
           const cs = el => el ? getComputedStyle(el) : null;
-          const barCs = cs(bar), markCs = cs(mark);
-          return {
-            hasMark: !!mark,
-            barVisible: !!bar && barCs.display !== 'none',
-            barAnim: bar ? barCs.animationName : 'none',
-            markAnim: mark ? markCs.animationName : 'none',
-            waitText: getComputedStyle(document.querySelector('.bar'), '::after').content,
-          };
+          const st = sel => { const c = cs(q(sel)); return c
+            ? { anim: c.animationName, delay: c.animationDelay, dur: c.animationDuration,
+                opacity: Number(c.opacity), display: c.display }
+            : null; };
+          const introMs = Number((getComputedStyle(document.documentElement)
+            .getPropertyValue('--intro') || '').replace(/[^\d]/g, ''));
+          return { introMs, mark: st('.mark'), name: st('.name'), sub: st('.sub'),
+                   rule: st('.rule'), wait: st('.wait'),
+                   waitText: (q('.wait') || {}).textContent || '',
+                   /* القياس من التخطيط لا من الإطار المرسوم:
+                      `getBoundingClientRect` يضمّ تحويل الحركة الجارية، فصندوقٌ
+                      ثابت يُقاس 90 في منتصف `scale(.94)` وهو 96. و`offsetWidth`
+                      غير موجود على عناصر SVG أصلاً. فالمقيس هو العرض المحسوب. */
+                   markBox: (() => { const e = q('.mark'); if (!e) return null;
+                     const c = getComputedStyle(e);
+                     return { w: Math.round(parseFloat(c.width)), h: Math.round(parseFloat(c.height)) }; })(),
+                   names: [...document.body.innerText.matchAll(/تبارك جيم|نظام إدارة النادي/g)].map(m => m[0]) };
         });
-        ok(`${reduce ? 'مع' : 'بلا'} تقليل الحركة: الشعار مرسوم`, state.hasMark);
+        const ms = v => Number(String(v || '0s').replace('s', '')) * 1000;
+
+        ok(`${reduce ? 'مع' : 'بلا'} تقليل الحركة: العلامة مرسومة في صندوقها الثابت`,
+           state.markBox && state.markBox.w === 96 && state.markBox.h === 96,
+           JSON.stringify(state.markBox));
+        ok(`${reduce ? 'مع' : 'بلا'} تقليل الحركة: الاسم والوصف مكتوبان`,
+           state.names.includes('تبارك جيم') && state.names.includes('نظام إدارة النادي'),
+           state.names.join('، '));
+
         if (reduce) {
-          ok('تقليل الحركة: لا شريط متحرّك', !state.barVisible, state.barAnim);
-          ok('تقليل الحركة: لا حركة على الشعار', state.markAnim === 'none', state.markAnim);
-          ok('تقليل الحركة: الانتظار يُقال بكلمة لا بحركة',
-             /جارٍ التحميل/.test(state.waitText || ''), state.waitText);
+          ok('تقليل الحركة: لا حركة على العلامة', state.mark.anim === 'none', state.mark.anim);
+          ok('ولا على الاسم ولا الوصف',
+             state.name.anim === 'none' && state.sub.anim === 'none',
+             `${state.name.anim} / ${state.sub.anim}`);
+          ok('ولا خيط يُرسم', state.rule.anim === 'none', state.rule.anim);
+          ok('ومع ذلك الصورة النهائية كاملة — لا عنصر شفّاف عالق',
+             state.mark.opacity === 1 && state.name.opacity === 1 && state.sub.opacity === 1,
+             `${state.mark.opacity}/${state.name.opacity}/${state.sub.opacity}`);
         } else {
-          ok('بلا تقليل الحركة: الشريط يتحرّك', state.barVisible && state.barAnim !== 'none', state.barAnim);
-          ok('بلا تقليل الحركة: الشعار يظهر بحركة لطيفة', state.markAnim !== 'none', state.markAnim);
+          ok('بلا تقليل الحركة: العلامة تظهر بحركة', state.mark.anim !== 'none', state.mark.anim);
+          ok('ثم الاسم بعدها', state.name.anim !== 'none' && ms(state.name.delay) > ms(state.mark.delay),
+             `${state.name.delay} بعد ${state.mark.delay}`);
+          ok('ثم الوصف بعده', ms(state.sub.delay) > ms(state.name.delay),
+             `${state.sub.delay} بعد ${state.name.delay}`);
+          ok('ثم الخيط آخراً', ms(state.rule.delay) > ms(state.sub.delay),
+             `${state.rule.delay} بعد ${state.sub.delay}`);
+          /* القاعدة التي سقطت سابقاً: المقدّمة تكتمل قبل أن يكشف الغلاف
+             النافذة الرئيسية. آخر ما ينتهي = تأخيره + مدّته. */
+          const last = Math.max(ms(state.mark.delay) + ms(state.mark.dur),
+                                ms(state.name.delay) + ms(state.name.dur),
+                                ms(state.sub.delay) + ms(state.sub.dur),
+                                ms(state.rule.delay) + ms(state.rule.dur));
+          ok('والمقدّمة كلّها تنتهي داخل --intro — فلا تُقتل في منتصفها',
+             last <= state.introMs + 1, `${Math.round(last)}ms ضمن ${state.introMs}ms`);
+          ok('و--intro في المدى المقصود (0.8–1.5 ثانية)',
+             state.introMs >= 800 && state.introMs <= 1500, `${state.introMs}ms`);
+          /* كلمة الانتظار لا تظهر على جهاز سريع: تأخيرها أطول من المقدّمة */
+          ok('ولا كلمة انتظار تظهر لمن لا ينتظر', ms(state.wait.delay) > state.introMs,
+             `${state.wait.delay} > ${state.introMs}ms`);
+          ok('وإن طال الإقلاع قيلت الكلمة بالعربية',
+             /جارٍ|جار/.test(state.waitText), state.waitText);
         }
         await ctx.close();
       }
+
+      /* الرقم واحد في ثلاثة مواضع: الصفحة، وطرف الصدأ، والبوّابة التي تفحصهما.
+         تفرّقُها هو العيب نفسه الذي أُصلح — فيُقاس هنا كذلك لا في CI وحدها. */
+      const rustMain = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'main.rs'), 'utf8');
+      const spSrc = fs.readFileSync(path.join(ROOT, 'desktop', 'splash.html'), 'utf8');
+      const cssIntro = Number((spSrc.match(/--intro:\s*(\d+)ms/) || [])[1]);
+      const rsIntro = Number((rustMain.match(/SPLASH_INTRO_MS: u128 = (\d+)/) || [])[1]);
+      ok('طول المقدّمة رقم واحد في الصفحة وفي الغلاف', !!cssIntro && cssIntro === rsIntro,
+         `css=${cssIntro} rust=${rsIntro}`);
+      ok('والحارس الزمني يأتي بعد المقدّمة لا قبلها',
+         Number((rustMain.match(/SPLASH_WATCHDOG_MS: u64 = ([\d_]+)/) || [])[1].replace(/_/g, '')) > rsIntro);
+      ok('وتقليل الحركة لا ينتظر مقدّمةً لا تعمل',
+         /SPLASH_STILL_MS: u128 = (\d+)/.test(rustMain) &&
+         Number(rustMain.match(/SPLASH_STILL_MS: u128 = (\d+)/)[1]) < rsIntro);
+      ok('والواجهة هي من تُبلّغ بتفضيل الحركة',
+         /reducedMotion:this\.reducedMotion\(\)/.test(fs.readFileSync(DIST, 'utf8')));
       /* شاشة التطبيق نفسها: سياسة الحركة العامّة لم تُمسّ */
       const appUrl = `http://127.0.0.1:${srv.address().port}/`;
       const ctx2 = await browser.newContext({ reducedMotion: 'reduce' });
@@ -390,8 +452,12 @@ module.exports = function register({ group, record, TESTS_JS }) {
                  settings: document.getElementById('viewRoot').innerText,
                  info: window.TG.Build.info };
       });
+      /* الرقم يُقرأ من `package.json` لا يُكتب هنا: رقمٌ مكتوب في الاختبار
+         يسقط مع كل ترقية نسخة ولا يُثبت شيئاً عن الاتّفاق. والاتّفاق نفسه
+         مقيس أدناه. */
       ok('الشريط الجانبي يعرض النسخة ومعرّف البناء',
-         /الإصدار 7\.6\.1/.test(shown.ver) && /Build a1b2c3d-ci42/.test(shown.ver), shown.ver);
+         new RegExp('الإصدار ' + VER.replace(/\./g, '\\.')).test(shown.ver)
+         && /Build a1b2c3d-ci42/.test(shown.ver), shown.ver);
       ok('والمعرّف هو الذي جاء من الجسر بالحرف',
          shown.label === 'Build a1b2c3d-ci42', shown.label);
       ok('والتفصيل يحمل البصمة المختصرة وتاريخ البناء',
@@ -425,7 +491,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('المتصفح بلا هويّة بناء — ولا بديل مخترَع',
          bare.info === null && bare.label === '' && bare.details === '',
          JSON.stringify(bare.label));
-      ok('ويكتفي برقم النسخة', /^الإصدار 7\.6\.1$/.test(bare.ver.trim()), bare.ver);
+      ok('ويكتفي برقم النسخة', bare.ver.trim() === `الإصدار ${VER}`, bare.ver);
       await b.ctx.close();
 
       /* ---------- سلسلة الإثبات في المستودع نفسه ---------- */
@@ -434,9 +500,11 @@ module.exports = function register({ group, record, TESTS_JS }) {
       const cargo = fs.readFileSync(path.join(ROOT, 'src-tauri', 'Cargo.toml'), 'utf8');
       const appHtml = fs.readFileSync(path.join(ROOT, 'tabarak-gym 3.0.html'), 'utf8');
       const appVer = (appHtml.match(/const APP = \{[^}]*version:'([^']+)'/) || [])[1];
-      ok('النسخة 7.6.1 — لا تلتبس بما سبق', conf.version === '7.6.1', conf.version);
+      ok('النسخة معلَنة ومرقَّمة لا فارغة', /^\d+\.\d+\.\d+$/.test(conf.version), conf.version);
       ok('ومتّفقة في المواضع الأربعة',
-         pkg.version === conf.version && /^version = "7\.6\.1"/m.test(cargo) && appVer === conf.version,
+         pkg.version === conf.version
+         && new RegExp('^version = "' + VER.replace(/\./g, '\\.') + '"', 'm').test(cargo)
+         && appVer === conf.version,
          `pkg=${pkg.version} cargo=${(cargo.match(/^version = "([^"]+)"/m)||[])[1]} app=${appVer}`);
       ok('والمخطّط ما زال 8', /schema:8/.test(appHtml));
 
@@ -535,21 +603,25 @@ module.exports = function register({ group, record, TESTS_JS }) {
         await new Promise(r => setTimeout(r, 250));
         const box = el => { if (!el) return null; const r = el.getBoundingClientRect();
           return { w: Math.round(r.width), h: Math.round(r.height) }; };
-        /* شاشة الدخول تُركَّب مؤقّتاً لقياس شعارها ثم تُزال */
-        const g = document.createElement('div');
-        g.innerHTML = '<div class="gate-card">' + window.TG.Brand.logoHtml(52) + '</div>';
-        document.body.appendChild(g);
-        const gate = box(g.querySelector('.brand-logo, .brand-mark'));
-        g.remove();
         const info = window.TG.Brand.info('logo');
-        return {
+        /* أسطح مساحة العمل تُقاس أوّلاً، فالبوّابة تُخفيها حين تُقفل */
+        const surfaces = {
           stored: info.width + '×' + info.height,
           sidebar: box(document.querySelector('.brand .brand-logo, .brand .brand-mark')),
           prevBox: box(document.querySelector('.media-drop .brand-prev')),
           prevImg: box(document.querySelector('[data-brand-prev="logo"]')),
-          gate,
           print: box(document.querySelector('.doc-head-brand .brand-logo')),
         };
+        /* ثم شاشة الدخول **الحقيقية** — لا نسخة يبنيها الاختبار: نسخةُ
+           الاختبار تُثبت ما كتبه الاختبار لا ما تراه المستخدمة. */
+        window.TG.Gate.login();
+        await new Promise(r => setTimeout(r, 120));
+        surfaces.gate = box(document.querySelector('.gate .gate-head .brand-logo, .gate .gate-head .brand-mark'));
+        surfaces.gateWrap = box(document.querySelector('.gate .gate-head .brand-box'));
+        window.TG.Gate.close(); window.TG.Gate.unlock();
+        window.TG.renderRoute();
+        await new Promise(r => setTimeout(r, 150));
+        return surfaces;
       }, [w, h, MAKE_IMAGE]);
 
       /* ---- مربّعات بأحجام متباعدة: كل الأبعاد المرسومة متطابقة ---- */
@@ -559,7 +631,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('المصادر المربّعة الأربعة رُفعت وسُجّلت بأبعادها',
          [128, 512, 1024, 2400].every(d => squares[d].stored === `${d}×${d}`),
          Object.values(squares).map(x => x.stored).join('، '));
-      ['sidebar', 'prevBox', 'gate', 'print'].forEach(surface => {
+      ['sidebar', 'prevBox', 'gate', 'gateWrap', 'print'].forEach(surface => {
         const all = [128, 512, 1024, 2400].map(d => squares[d][surface]);
         const same = all.every(x => x && x.w === all[0].w && x.h === all[0].h);
         ok(`${surface}: الحجم المرسوم واحد من 128 إلى 2400`, same,
@@ -569,7 +641,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
          `${ref.sidebar.w}×${ref.sidebar.h}`);
       ok('معاينة الإعدادات صندوق 120×120', ref.prevBox.w === 120 && ref.prevBox.h === 120,
          `${ref.prevBox.w}×${ref.prevBox.h}`);
-      ok('شاشة الدخول 52×52', ref.gate.w === 52 && ref.gate.h === 52, `${ref.gate.w}×${ref.gate.h}`);
+      ok('شاشة الدخول 64×64 — ومقاسها من Brand.BOX لا من رقم في مكانها',
+         ref.gate.w === 64 && ref.gate.h === 64, `${ref.gate.w}×${ref.gate.h}`);
+      ok('وغلافه صندوق بالمقاس نفسه — المكان محجوز ولو لم تُحمَّل الصورة',
+         ref.gateWrap.w === 64 && ref.gateWrap.h === 64, `${ref.gateWrap.w}×${ref.gateWrap.h}`);
       ok('أبعاد الطباعة لم تُمسّ — 54×54', ref.print.w === 54 && ref.print.h === 54,
          `${ref.print.w}×${ref.print.h}`);
 
@@ -588,6 +663,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
          wide.sidebar.w === 38 && wide.sidebar.h === 38, `${wide.sidebar.w}×${wide.sidebar.h}`);
       ok('ولا لشعار طويل', tall.sidebar.w === 38 && tall.sidebar.h === 38,
          `${tall.sidebar.w}×${tall.sidebar.h}`);
+      ok('وشاشة الدخول لا تتمدّد لشعار عريض ولا طويل',
+         wide.gateWrap.w === 64 && wide.gateWrap.h === 64 &&
+         tall.gateWrap.w === 64 && tall.gateWrap.h === 64,
+         `عريض ${wide.gateWrap.w}×${wide.gateWrap.h} · طويل ${tall.gateWrap.w}×${tall.gateWrap.h}`);
       /* النسبة محفوظة داخل الصندوق: contain لا تمطّ الصورة */
       const ratio = wide.prevImg.w / Math.max(1, wide.prevImg.h);
       ok('ونسبة الصورة محفوظة داخله (لا تمطيط)', ratio > 3.4 && ratio < 4.6, ratio.toFixed(2));
@@ -618,15 +697,352 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('وفي الشريط الجانبي 38×38', gif.sidebar.w === 38 && gif.sidebar.h === 38,
          `${gif.sidebar.w}×${gif.sidebar.h}`);
 
+      /* ---- آخر سطح كان بلا صندوق: نافذة «اختبار الحركة» ----
+         §6 يطلب تدقيق **كل** سطح يعرض الشعار على حدة. وهذا كان يعرض الملف
+         الأصلي بسقفٍ (`max-height`) لا بصندوق، فمصدر 2400×600 يُرسم بعرض
+         النافذة كاملاً. يُقاس هنا كما تُقاس بقيّة الأسطح. */
+      const diag = await a.page.evaluate(async ([W, H, b64]) => {
+        /* الزرّ لا يظهر إلا مع أصلٍ متحرّك — فاللافتة متحرّكة والشعار
+           مصدرٌ عملاق بنسبة متطرّفة: هو المقيس هنا. */
+        const bin = atob(b64); const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        await window.TG.Brand.setMedia('banner', new File([arr], 'anim.gif', { type: 'image/gif' }));
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const x = c.getContext('2d');
+        x.fillStyle = '#C43E6B'; x.fillRect(0, 0, W, H);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        const file = new File([blob], `logo-${W}x${H}.png`, { type: 'image/png' });
+        await window.TG.Brand.setMedia('logo', file);
+        window.TG.go('settings', { sec: 'brand' });
+        window.TG.renderRoute();
+        await new Promise(r => setTimeout(r, 250));
+        const btn = document.getElementById('bMotionTest');
+        if (!btn) return { missing: true };
+        btn.click();
+        await new Promise(r => setTimeout(r, 250));
+        const ov = document.querySelector('.overlay');
+        const box = el => { if (!el) return null; const r = el.getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) }; };
+        /* الشعار أوّل صندوق في النافذة (`shot('logo')` قبل `shot('banner')`) */
+        const wrap = box(ov.querySelector('.brand-box'));
+        const img = box(ov.querySelector('.brand-box img'));
+        const boxes = ov.querySelectorAll('.brand-box').length;
+        const h = window.TG.UI.stack[window.TG.UI.stack.length - 1];
+        if (h) h.close();
+        await window.TG.Brand.clearMedia('banner');
+        return { wrap, img, boxes };
+      }, [2400, 600, gifBytes]);
+      ok('نافذة اختبار الحركة: الشعار في صندوق ثابت 150×150',
+         diag.wrap && diag.wrap.w === 150 && diag.wrap.h === 150, JSON.stringify(diag.wrap));
+      ok('والصورة داخله لا تتجاوزه مهما كان المصدر',
+         diag.img && diag.img.w <= 150 && diag.img.h <= 150, JSON.stringify(diag.img));
+      ok('والأصلان معاً في صندوقيهما', diag.boxes === 2, diag.boxes);
+
       /* ---- الإرشاد المكتوب: مقاسات مقترحة لا شروط ---- */
-      const guide = await a.page.evaluate(() => document.body.innerText);
+      const guide = await a.page.evaluate(async () => {
+        window.TG.go('settings', { sec: 'brand' }); window.TG.renderRoute();
+        await new Promise(r => setTimeout(r, 200));
+        return document.body.innerText;
+      });
       ok('الإعدادات تقترح 512 × 512 للشعار', /512\s*×\s*512/.test(guide));
       ok('وتقترح 1600 × 400 للّافتة', /1600\s*×\s*400/.test(guide));
       ok('وتقول إن المقاس اقتراح لا شرط', /اقتراح لا شرط/.test(guide));
+      ok('وتقولها صراحةً: «المقاسات مقترحة وليست إلزامية»',
+         /المقاسات مقترحة وليست إلزامية/.test(guide));
       await a.ctx.close();
       srv.close();
     } catch (e) { srv.close(); throw e; }
     record('الهوية — صندوق الشعار ثابت', rows, errors);
+  });
+
+  /* ===================================================================== *
+   * 3ب) بوّابة الدخول — لا مساحة عمل قبل الدخول                            *
+   * ===================================================================== *
+   * هذه أهمّ مجموعة في المرحلة، ومعيارها من §16 حرفيّاً:
+   *
+   *     «لا ترى المستخدمة لوحة التحكّم ولا الشريط الجانبي ولا بيانات ولا
+   *      اسم مشتركة قبل الدخول — ولا للحظة.»
+   *
+   * وهي لا تُقاس بالنظر إلى الشاشة بعد استقرارها: طبقةٌ تغطّي ما تحتها
+   * تنجح في ذلك الفحص وهي تحمل لوحة التحكّم كاملةً في الـDOM. فالمقيس
+   * هنا شيئان:
+   *   · **ما بُني**: لا تنقّل ولا شاشة ولا اسم مشتركة في الصفحة أصلاً.
+   *   · **ما مرّ**: مراقبٌ يُركَّب قبل أوّل سطر من الواجهة ويسجّل كل لحظة
+   *     ظهرت فيها مساحة العمل. فالومضة تُلتقط ولو دامت إطاراً واحداً.
+   * ===================================================================== */
+  group('البوّابة — لا مساحة عمل قبل الدخول', async (browser) => {
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/`;
+    let errors = [];
+    const CRED = { name: 'أم تبارك', username: 'owner', password: 'tabarak-2026' };
+    try {
+      /* ---- 1) تهيئة: تفعيل الدخول وإنشاء حساب المالكة ---- */
+      const a = await openDesktop(browser, url);
+      errors = a.errors;
+      const state = await a.page.evaluate(async (cred) => {
+        const { Settings, Auth, Svc, D } = window.TG;
+        await window.TG.Seed.loadDemo(6).catch(() => {});
+        const m = await Svc.members.create({ name: 'سارة الاختبار', phone: '07700001122' });
+        await Settings.set({ authEnabled: true });
+        await Auth.setupFirstAdmin(cred);
+        /* حساب ثانٍ موقوف — لاختبار أن الإيقاف لا يُكشف بلا كلمة مرور */
+        const u2 = await Svc.users.create({ username: 'reem', name: 'ريم', password: 'reem-12345',
+                                            roleKey: 'reception' });
+        await Svc.users.setDisabled((u2.rec || u2).id, true);
+        /* التهيئة تفتح جلسة. وتشغيلُ الغد يبدأ بلا جلسة — وهذا ما يُقاس:
+           `sessionStorage` تزول بإغلاق التطبيق، فتُزال هنا صراحةً. */
+        await Auth.logout();
+        return { member: (m.rec || m).name, today: D.today() };
+      }, CRED);
+
+      /* ---- 2) إقلاع جديد في **السياق نفسه**: البيانات على القرص هي هي ----
+         سياقٌ جديد يعني تخزيناً جديداً، أي قاعدةً بلا حسابات — فلا بوّابة
+         ولا شيء يُقاس. فيُعاد تحميل الصفحة نفسها بعد تركيب المراقب. */
+      const ctx = a.ctx;
+      const p = a.page;
+      const perrs = [];
+      p.on('pageerror', e => perrs.push(String(e.message)));
+      /* المراقب يُركَّب قبل أي سطر من سطور الواجهة في التحميل القادم: يسجّل
+         كل تغيّر في الصفحة، ويقول عند كل لقطة هل كانت مساحة العمل مرئيّة. */
+      await p.addInitScript(() => {
+        window.__FLASH__ = { samples: 0, workspaceSeen: 0, navSeen: 0, firstGateAt: null, start: Date.now() };
+        const look = () => {
+          const f = window.__FLASH__;
+          const app = document.querySelector('.app');
+          if (!app) return;
+          f.samples++;
+          const vis = getComputedStyle(app).display !== 'none' && app.getClientRects().length > 0;
+          const nav = document.querySelectorAll('.nav-item').length;
+          const view = (document.getElementById('viewRoot') || {}).innerHTML || '';
+          /* «مساحة عمل مرئيّة» = هيكل ظاهر وفيه تنقّل أو شاشة مرسومة */
+          if (vis && (nav > 0 || view.length > 200)) f.workspaceSeen++;
+          if (vis && nav > 0) f.navSeen++;
+          if (!f.firstGateAt && document.querySelector('.gate')) f.firstGateAt = Date.now() - f.start;
+        };
+        const start = () => {
+          look();
+          new MutationObserver(look).observe(document.documentElement,
+            { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+          const t = setInterval(look, 8);
+          setTimeout(() => clearInterval(t), 15000);
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+        else start();
+      });
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+      await p.evaluate(() => window.TG.ready);
+      await p.waitForSelector('.gate', { timeout: 10000 });
+
+      const gated = await p.evaluate((memberName) => {
+        const app = document.querySelector('.app');
+        return {
+          gate: !!document.querySelector('.gate'),
+          locked: document.body.classList.contains('locked'),
+          appDisplay: app ? getComputedStyle(app).display : 'missing',
+          navItems: document.querySelectorAll('.nav-item').length,
+          viewHtml: ((document.getElementById('viewRoot') || {}).innerHTML || '').length,
+          whoami: (document.getElementById('whoami') || {}).innerHTML || '',
+          bodyText: document.body.innerText,
+          hasMember: document.body.innerHTML.includes(memberName),
+          flash: window.__FLASH__,
+          ready: !!(window.__TG_FS__ && window.__TG_FS__.revealed),
+          readyCalls: (window.__TG_FS__.calls || []).filter(c => c.cmd === 'tg_ready'),
+        };
+      }, state.member);
+
+      ok('بعد الإقلاع: شاشة الدخول معروضة', gated.gate);
+      ok('والهيكل مقفل — `body.locked`', gated.locked);
+      ok('ومساحة العمل خارج التخطيط أصلاً', gated.appDisplay === 'none', gated.appDisplay);
+      ok('ولم يُبنَ تنقّل', gated.navItems === 0, gated.navItems);
+      ok('ولم تُرسم شاشة', gated.viewHtml === 0, gated.viewHtml);
+      ok('ولا هويّة مستخدمة في الشريط العلوي', gated.whoami === '', gated.whoami);
+      ok('ولا اسم مشتركة في الصفحة كلّها', !gated.hasMember, state.member);
+      ok('ولا لوحة تحكّم ولا تنبيهات',
+         !/لوحة التحكم|الاستقبال اليوم|التنبيهات/.test(gated.bodyText), gated.bodyText.slice(0, 120));
+
+      /* الومضة: لا لقطة واحدة من مئات اللقطات رأت مساحة العمل */
+      ok('المراقب أخذ لقطات متتابعة أثناء الإقلاع', gated.flash.samples >= 8, gated.flash.samples);
+      ok('ولم تُرَ مساحة العمل في أيّ منها — ولا إطاراً واحداً',
+         gated.flash.workspaceSeen === 0, `${gated.flash.workspaceSeen} من ${gated.flash.samples}`);
+      ok('ولا شريط تنقّل مبنيّ في أيّ منها', gated.flash.navSeen === 0, gated.flash.navSeen);
+
+      /* الغلاف: الجاهزية تُعلَن مرّة واحدة، ومعها تفضيل الحركة */
+      ok('والغلاف أُعلم بالجاهزية مرّة واحدة', gated.readyCalls.length === 1, gated.readyCalls.length);
+      ok('ومعها تفضيل الحركة ليُقرّر طول نافذة البدء',
+         gated.readyCalls[0] && typeof gated.readyCalls[0].args.reducedMotion === 'boolean',
+         JSON.stringify(gated.readyCalls[0] && gated.readyCalls[0].args));
+      ok('وما كُشف هو شاشة الدخول لا مساحة العمل',
+         gated.ready && gated.flash.firstGateAt !== null, JSON.stringify(gated.flash.firstGateAt));
+
+      /* ---- 3) شكل الشاشة وتفاعلها ---- */
+      const form = await p.evaluate(async () => {
+        const g = document.querySelector('.gate');
+        /* التركيز يُوضع بعد التركيب بلحظة (انظري `Gate.mount`) — فيُنتظر
+           استقراره بدل قياسه في منتصف التركيب. */
+        for (let i = 0; i < 40 && document.activeElement !== g.querySelector('#gUser'); i++)
+          await new Promise(r => setTimeout(r, 50));
+        const focus = document.activeElement;
+        const eye = g.querySelector('[data-eye="gPass"]');
+        const pass = g.querySelector('#gPass');
+        const before = pass.type;
+        eye.click();
+        const after = pass.type;
+        const pressed = eye.getAttribute('aria-pressed');
+        eye.click();
+        return {
+          focusId: focus ? focus.id : '',
+          hasUser: !!g.querySelector('#gUser'), hasPass: !!pass,
+          before, after, pressed, back: pass.type,
+          eyeTab: eye.getAttribute('tabindex'),
+          title: (g.querySelector('.gate-head h1') || {}).textContent || '',
+          sub: (g.querySelector('.gate-head p') || {}).textContent || '',
+          logo: !!g.querySelector('.gate-head .brand-box'),
+          btn: (g.querySelector('#gGo') || {}).textContent || '',
+          anim: getComputedStyle(g.querySelector('.gate-wrap')).animationDuration,
+          role: g.getAttribute('role'),
+          latin: /[A-Za-z]{3,}/.test(g.innerText),
+        };
+      });
+      ok('التركيز يبدأ على اسم المستخدمة', form.focusId === 'gUser', form.focusId);
+      ok('الحقلان موجودان', form.hasUser && form.hasPass);
+      ok('زرّ إظهار كلمة المرور يكشفها ويعيدها',
+         form.before === 'password' && form.after === 'text' && form.back === 'password',
+         `${form.before} ⟵ ${form.after} ⟵ ${form.back}`);
+      ok('ويقول حالته لقارئ الشاشة', form.pressed === 'true', form.pressed);
+      ok('وهو خارج تسلسل Tab — بعد كلمة المرور يأتي زرّ الدخول',
+         form.eyeTab === '-1', form.eyeTab);
+      ok('الهوية على الشاشة: الشعار والاسم والوصف',
+         form.logo && /تبارك جيم/.test(form.title) && form.sub.length > 3,
+         `${form.title} / ${form.sub}`);
+      ok('والشاشة عربية بلا مصطلح إنجليزي', !form.latin);
+      ok('وانتقالها قصير (≤ 350ms)',
+         Number(form.anim.replace('s', '')) * 1000 <= 350, form.anim);
+      ok('ومعلَّمة كحوار لقارئ الشاشة', form.role === 'dialog', form.role);
+
+      /* ---- 4) الأخطاء: عربية، ولا تكشف وجود الحساب ---- */
+      const tryLogin = (u, pw) => p.evaluate(async ([user, pass]) => {
+        const g = document.querySelector('.gate');
+        g.querySelector('#gUser').value = user;
+        g.querySelector('#gPass').value = pass;
+        g.querySelector('#gGo').click();
+        await new Promise(r => setTimeout(r, 700));
+        const err = document.querySelector('#gErr');
+        return { msg: err ? err.textContent : '', shown: err ? err.style.display : '',
+                 still: !!document.querySelector('.gate'),
+                 passCleared: (document.querySelector('#gPass') || {}).value === '' };
+      }, [u, pw]);
+
+      const empty = await p.evaluate(async () => {
+        const g = document.querySelector('.gate');
+        g.querySelector('#gUser').value = ''; g.querySelector('#gPass').value = '';
+        g.querySelector('#gGo').click();
+        await new Promise(r => setTimeout(r, 200));
+        return (document.querySelector('#gErr') || {}).textContent || '';
+      });
+      ok('حقلان فارغان: رسالة عربية واضحة', /اكتبي اسم المستخدمة وكلمة المرور/.test(empty), empty);
+
+      const unknown = await tryLogin('لا-أحد', 'أي-كلمة-مرور');
+      const wrongPw = await tryLogin(CRED.username, 'كلمة-خاطئة-تماماً');
+      ok('اسم غير موجود: رسالة عربية', /اسم المستخدمة أو كلمة المرور غير صحيحة/.test(unknown.msg), unknown.msg);
+      ok('كلمة مرور خاطئة: **الرسالة نفسها حرفاً بحرف**',
+         unknown.msg === wrongPw.msg, `${unknown.msg} ⟵ ${wrongPw.msg}`);
+      ok('ولا تُذكر تفاصيل تقنية', !/(Error|undefined|null|BAD_|\bAuth\b)/.test(wrongPw.msg), wrongPw.msg);
+      ok('وكلمة المرور تُمسح بعد الفشل', wrongPw.passCleared);
+      ok('والبوّابة تبقى مقفلة بعد الفشل', wrongPw.still);
+
+      /* الحساب الموقوف: لا يُكشف لمن لا يعرف كلمة المرور */
+      const disabledWrong = await tryLogin('reem', 'كلمة-ليست-كلمتها');
+      ok('حساب موقوف بكلمة مرور خاطئة: الرسالة العامّة — لا تعداد للأسماء',
+         disabledWrong.msg === unknown.msg, disabledWrong.msg);
+      const disabledRight = await tryLogin('reem', 'reem-12345');
+      ok('وبكلمة المرور الصحيحة يُقال السبب كاملاً',
+         /موقوف/.test(disabledRight.msg), disabledRight.msg);
+      ok('ولا يدخل على كل حال', disabledRight.still);
+
+      /* ---- 5) الدخول الناجح: Enter وحده يكفي ---- */
+      const signed = await p.evaluate(async (cred) => {
+        const g = document.querySelector('.gate');
+        g.querySelector('#gUser').value = cred.username;
+        g.querySelector('#gPass').value = cred.password;
+        g.querySelector('#gPass').dispatchEvent(new KeyboardEvent('keydown',
+          { key: 'Enter', bubbles: true, cancelable: true }));
+        for (let i = 0; i < 60 && document.querySelector('.gate'); i++)
+          await new Promise(r => setTimeout(r, 100));
+        const app = document.querySelector('.app');
+        return {
+          gate: !!document.querySelector('.gate'),
+          locked: document.body.classList.contains('locked'),
+          appDisplay: app ? getComputedStyle(app).display : 'missing',
+          nav: document.querySelectorAll('.nav-item').length,
+          view: ((document.getElementById('viewRoot') || {}).innerHTML || '').length,
+          who: (document.getElementById('whoami') || {}).innerText || '',
+          actor: window.TG.Auth.session.actorName,
+        };
+      }, CRED);
+      ok('Enter وحده يُسجّل الدخول — لا بحث عن الزر', !signed.gate);
+      ok('والقفل يُفكّ', !signed.locked && signed.appDisplay !== 'none', signed.appDisplay);
+      ok('والتنقّل يُبنى الآن لا قبل الدخول', signed.nav > 5, signed.nav);
+      ok('والشاشة تُرسم', signed.view > 200, signed.view);
+      ok('واسم الداخلة في الشريط العلوي', /أم تبارك/.test(signed.who), signed.who);
+
+      /* ---- 6) الخروج: يعود القفل ولا تبقى بيانات مرسومة ---- */
+      const out = await p.evaluate(async (memberName) => {
+        await window.TG.Auth.logout();
+        window.TG.Gate.login();
+        await new Promise(r => setTimeout(r, 150));
+        const app = document.querySelector('.app');
+        return { gate: !!document.querySelector('.gate'),
+                 locked: document.body.classList.contains('locked'),
+                 appDisplay: app ? getComputedStyle(app).display : 'missing',
+                 nav: document.querySelectorAll('.nav-item').length,
+                 view: ((document.getElementById('viewRoot') || {}).innerHTML || '').length,
+                 hasMember: document.body.innerHTML.includes(memberName) };
+      }, state.member);
+      ok('الخروج يعيد شاشة الدخول', out.gate);
+      ok('ويقفل الهيكل من جديد', out.locked && out.appDisplay === 'none', out.appDisplay);
+      ok('ويمسح ما كان مرسوماً — لا تبقى بيانات خلف البوّابة',
+         out.nav === 0 && out.view === 0 && !out.hasMember,
+         `nav=${out.nav} view=${out.view} member=${out.hasMember}`);
+
+      /* ---- 7) إعادة التحميل بعد الخروج: بوّابة لا مساحة عمل ---- */
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+      await p.evaluate(() => window.TG.ready);
+      const again = await p.evaluate(() => ({
+        gate: !!document.querySelector('.gate'),
+        nav: document.querySelectorAll('.nav-item').length,
+        locked: document.body.classList.contains('locked'),
+      }));
+      ok('وبعد إعادة التحميل: بوّابة من جديد', again.gate && again.locked);
+      ok('ولا تنقّل مبنيّ خلفها', again.nav === 0, again.nav);
+
+      /* ---- 8) تقليل الحركة: الشاشة تظهر مكتملة بلا انتقال ----
+         التفضيل يُبدَّل على الصفحة نفسها لا في سياق جديد: سياقٌ جديد يعني
+         تخزيناً جديداً، أي قاعدةً بلا حسابات ولا بوّابة تُقاس أصلاً. */
+      await p.emulateMedia({ reducedMotion: 'reduce' });
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
+      await p.evaluate(() => window.TG.ready);
+      await p.waitForSelector('.gate', { timeout: 10000 });
+      const red = await p.evaluate(() => ({
+        wrap: getComputedStyle(document.querySelector('.gate-wrap')).animationName,
+        gate: getComputedStyle(document.querySelector('.gate')).animationName,
+        visible: getComputedStyle(document.querySelector('.gate-wrap')).opacity,
+        readyArg: (window.__TG_FS__.calls.find(c => c.cmd === 'tg_ready') || { args: {} }).args.reducedMotion,
+      }));
+      ok('تقليل الحركة: لا انتقال على شاشة الدخول',
+         red.wrap === 'none' && red.gate === 'none', `${red.wrap} / ${red.gate}`);
+      ok('ومع ذلك الشاشة مكتملة الظهور', Number(red.visible) === 1, red.visible);
+      ok('والغلاف أُبلغ بالتفضيل فلا ينتظر مقدّمةً لا تعمل',
+         red.readyArg === true, String(red.readyArg));
+      errors = errors.concat(perrs);
+      await ctx.close();
+      srv.close();
+    } catch (e) { srv.close(); throw e; }
+    record('البوّابة — لا مساحة عمل قبل الدخول', rows, errors);
   });
 
   /* ===================================================================== *
@@ -1006,6 +1422,59 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('ولا يُنادي window.print()', ctrlP.printCalls === 0, ctrlP.printCalls);
       ok('ولا يفتح نافذة متصفّح', ctrlP.openCalls === 0, ctrlP.openCalls);
       ok('بل يذهب إلى واجهة طباعة ويندوز', ctrlP.native === 1, ctrlP.native);
+
+      /* ---- Ctrl+P على **لوحة مفاتيح عربية** ----
+         هذا هو العيب الذي بقي بعد المرحلة 4.2، وهو سبب العبارة الإنجليزية
+         التي كانت تظهر للمستخدمة: `e.key` يحمل الحرف الذي يُنتجه التخطيط،
+         فعلى لوحة عربية يكون `'ح'` لا `'p'`. والمحرّك يفتح اختصار الطباعة
+         مع ذلك، لأنه يقابل الاختصارات بمفاتيحها اللاتينية. فكان الشرط
+         يسقط، وتمضي الضغطة إلى WebView2.
+
+         ونادي تبارك جيم نادٍ عربيّ — فهذا ليس طرفاً نادراً بل الحالة
+         الغالبة على جهازه. */
+      const arabicLayout = await a.page.evaluate(async () => {
+        window.TG.go('members'); window.TG.renderRoute();
+        await new Promise(r => setTimeout(r, 250));
+        window.dispatchEvent(new Event('afterprint'));
+        for (let i = 0; i < 40 && window.TG.UI._printing; i++) await new Promise(r => setTimeout(r, 100));
+        const before = window.__TG_FS__.calls.filter(c => c.cmd === 'tg_print').length;
+        /* ما يرسله كروميوم فعلاً على تخطيط عربي: الحرف عربيّ والمفتاح KeyP */
+        const ev = new KeyboardEvent('keydown',
+          { key: 'ح', code: 'KeyP', ctrlKey: true, bubbles: true, cancelable: true });
+        document.dispatchEvent(ev);
+        await new Promise(r => setTimeout(r, 400));
+        return { prevented: ev.defaultPrevented,
+                 printCalls: window.__PRINT_CALLS__,
+                 native: window.__TG_FS__.calls.filter(c => c.cmd === 'tg_print').length - before };
+      });
+      ok('لوحة عربية: Ctrl+P يُعترض كذلك — المفتاح الماديّ لا الحرف',
+         arabicLayout.prevented, arabicLayout.prevented);
+      ok('ولا يصل إلى معاينة WebView2', arabicLayout.printCalls === 0, arabicLayout.printCalls);
+      ok('بل إلى حوار ويندوز نفسه', arabicLayout.native === 1, arabicLayout.native);
+
+      /* ---- ضغطة حقيقية من لوحة المفاتيح، لا حدثٌ مُركَّب ----
+         الحدث المركَّب يُثبت أن المستمع يعمل؛ وهذا يُثبت أن **الاختصار
+         نفسه** لا يصل إلى المحرّك. وهو الفرق بين اختبارٍ يمرّ وعيبٍ يُصلَح. */
+      const realKey = await (async () => {
+        await a.page.evaluate(async () => {
+          window.TG.go('members'); window.TG.renderRoute();
+          window.dispatchEvent(new Event('afterprint'));
+          for (let i = 0; i < 40 && window.TG.UI._printing; i++) await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, 300));
+          window.__BEFORE__ = window.__TG_FS__.calls.filter(c => c.cmd === 'tg_print').length;
+        });
+        await a.page.keyboard.press('Control+KeyP');
+        await a.page.waitForTimeout(500);
+        return a.page.evaluate(() => ({
+          printCalls: window.__PRINT_CALLS__,
+          openCalls: window.__OPEN_CALLS__,
+          native: window.__TG_FS__.calls.filter(c => c.cmd === 'tg_print').length - window.__BEFORE__,
+        }));
+      })();
+      ok('ضغطة Ctrl+P حقيقية: لا نداء إلى window.print()',
+         realKey.printCalls === 0, realKey.printCalls);
+      ok('ولا نافذة متصفّح', realKey.openCalls === 0, realKey.openCalls);
+      ok('بل حوار ويندوز — مرّة واحدة', realKey.native === 1, realKey.native);
 
       /* ---- شاشة بلا مستند: يُقال ذلك بالعربية لا بصمت ---- */
       const empty = await a.page.evaluate(async () => {

@@ -8,41 +8,73 @@
      نافذة البدء.
 
      هذه الصفحة **ليست تطبيقاً ثانياً**: لا قاعدة بيانات، ولا إعدادات، ولا
-     منطق عمل، ولا نداء واحد إلى الجسر الأصليّ. صورة ثابتة واسم ومؤشّر انتظار،
-     تُغلقها الواجهة الحقيقية حين تجهز (`tg_ready`) أو يُغلقها حارس زمنيّ في
-     `src-tauri/src/main.rs`. فما تراه المستخدمة أول ثانية هو هوية النظام لا
-     نافذة بيضاء تُرسم أمامها.
+     منطق عمل، ولا نداء واحد إلى الجسر الأصليّ. ولا سكربت فيها أصلاً — فلا
+     شيء يمكن أن يعلق أو يفشل هنا. تُغلقها الواجهة الحقيقية حين تجهز
+     (`tg_ready`) أو يُغلقها حارس زمنيّ في `src-tauri/src/main.rs`.
 
-     ولا سكربت فيها أصلاً — فلا شيء يمكن أن يعلق أو يفشل هنا.
+     ----------------------------------------------------------------------
+     لماذا أُعيدت كتابتها في المرحلة 4.3؟
+
+     لأن المستخدمة قالت: «لا أرى شاشة بدء». والسبب كان مقيساً لا مُخمَّناً:
+     مقدّمة هذه الصفحة تستغرق 900ms لتكتمل (العلامة ثم الاسم ثم الوصف)،
+     بينما كان الغلاف يكشف النافذة الرئيسية بعد 350ms. فكانت النافذة تُقتل
+     في منتصف حركتها: وميضٌ داكن لا «شاشة بدء».
+
+     فالآن: طول المقدّمة رقمٌ واحد معلن هنا (--intro: 900ms)، ونظيره في
+     `main.rs` هو `SPLASH_INTRO_MS`، واختبارٌ يقارن الرقمين ويسقط إن تفرّقا.
+     وليست هذه حشوةً لبلوغ رقم: هو الزمن الذي **ترسم** فيه هذه الصفحة
+     نفسها. وإن كان الإقلاع أبطأ منه فالمقدّمة تنتهي وتنتظر الإقلاع، وإن
+     طُلب تقليل الحركة فلا مقدّمة أصلاً ولا انتظار (انظري `tg_ready`).
      ============================================================================ -->
 <style>
-  :root{ --plum-900:#31203A; --plum-700:#4A3357; --rose-100:#FDF4F7; --rose-300:#E7BACB; }
+  :root{
+    --plum-900:#31203A; --plum-700:#4A3357; --rose-100:#FDF4F7; --rose-300:#E7BACB;
+    --rose-500:#DB5C86;
+    /* طول المقدّمة — الرقم الوحيد. نظيره SPLASH_INTRO_MS في main.rs. */
+    --intro:900ms;
+  }
   *{ box-sizing:border-box; margin:0; padding:0 }
   html,body{ height:100%; overflow:hidden }
   body{
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
-    background:linear-gradient(160deg,var(--plum-900) 0%,#1C1220 100%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:radial-gradient(120% 90% at 50% 18%, var(--plum-700) 0%, var(--plum-900) 52%, #1C1220 100%);
     color:var(--rose-100); user-select:none; -webkit-user-select:none;
     font-family:"Segoe UI",Tahoma,system-ui,sans-serif;
   }
-  .mark{ width:104px; height:104px; display:block; animation:rise .5s ease-out both }
-  .name{ font-size:22px; font-weight:700; letter-spacing:.3px; animation:rise .5s ease-out .06s both }
-  .sub{ font-size:12.5px; color:var(--rose-300); animation:rise .5s ease-out .12s both }
-  /* شريط انتظار غير محدَّد: يقول «يجري التحميل» ولا يكذب بنسبة مئوية
-     لا أحد يقيسها. */
-  .bar{ width:168px; height:3px; border-radius:99px; background:rgba(253,244,247,.16); overflow:hidden; margin-top:6px }
-  .bar i{ display:block; width:40%; height:100%; border-radius:99px; background:var(--rose-300);
-          animation:slide 1.15s ease-in-out infinite }
-  @keyframes rise{ from{ opacity:0; transform:translateY(7px) } to{ opacity:1; transform:none } }
-  @keyframes slide{ 0%{ transform:translateX(160%) } 100%{ transform:translateX(-260%) } }
+  /* صندوق العلامة: قياس ثابت لا تقرّره الصورة. القاعدة نفسها التي تحكم شعار
+     النادي في التطبيق (انظري Brand.BOX) — وهنا العلامة مرسومة في الملف
+     فلا مصدر خارجيّ يستطيع أن يغيّر حجمها أصلاً. */
+  .mark{ width:96px; height:96px; display:block; object-fit:contain }
+  .name{ margin-top:20px; font-size:25px; font-weight:700; letter-spacing:.4px; line-height:1 }
+  .sub{ margin-top:9px; font-size:12.5px; color:var(--rose-300); letter-spacing:.2px }
+  /* خيط رفيع يُرسم مرّة واحدة تحت الاسم: علامةُ اكتمالٍ هادئة لا مؤشّر
+     انتظار يدور. لا شيء هنا يدّعي نسبةً مئويّة لا أحد يقيسها. */
+  .rule{ margin-top:18px; width:0; height:2px; border-radius:2px;
+         background:linear-gradient(90deg,transparent,var(--rose-500),transparent) }
 
-  /* تقليل الحركة: شعار ثابت، بلا صعود ولا شريط متحرّك. الانتظار يُقال
-     بكلمة لا بحركة. */
+  /* المقدّمة: ثلاث خطوات متتابعة داخل --intro، بلا قفز ولا تكبير مبالغ.
+     العلامة تصعد وتكبر قليلاً (0.94 ⇐ 1)، ثم الاسم، ثم الوصف، ثم الخيط. */
+  .mark{ animation:mark calc(var(--intro) * .62) cubic-bezier(.22,.7,.3,1) both }
+  .name{ animation:rise calc(var(--intro) * .45) cubic-bezier(.22,.7,.3,1) calc(var(--intro) * .24) both }
+  .sub { animation:rise calc(var(--intro) * .45) cubic-bezier(.22,.7,.3,1) calc(var(--intro) * .40) both }
+  .rule{ animation:draw calc(var(--intro) * .40) cubic-bezier(.4,0,.2,1) calc(var(--intro) * .52) both }
+  @keyframes mark{ from{ opacity:0; transform:scale(.94) translateY(6px) } to{ opacity:1; transform:none } }
+  @keyframes rise{ from{ opacity:0; transform:translateY(6px) }          to{ opacity:1; transform:none } }
+  @keyframes draw{ from{ width:0; opacity:0 }                            to{ width:112px; opacity:1 } }
+
+  /* إقلاعٌ أطول من المعتاد: تُقال كلمةٌ بعد ثانيتين ونصف. لا تظهر أبداً على
+     جهاز سريع — فلا «مؤشّر تحميل» يراه من لا ينتظر شيئاً. */
+  .wait{ position:absolute; bottom:26px; font-size:11.5px; color:var(--rose-300); opacity:0;
+         animation:say .5s ease-out 2.5s both }
+  @keyframes say{ from{ opacity:0 } to{ opacity:.85 } }
+
+  /* تقليل الحركة: لا صعود ولا تكبير ولا خيط يُرسم. الصورة النهائية نفسها
+     تظهر فوراً — والتجربة تبقى مرتّبة، والغلاف لا ينتظر مقدّمةً لا تعمل. */
   @media (prefers-reduced-motion:reduce){
-    .mark,.name,.sub{ animation:none }
-    .bar{ background:none; height:auto; width:auto; margin-top:2px }
-    .bar i{ display:none }
-    .bar::after{ content:"جارٍ التحميل…"; font-size:12px; color:var(--rose-300) }
+    .mark,.name,.sub,.rule,.wait{ animation:none }
+    .mark,.name,.sub{ opacity:1; transform:none }
+    .rule{ width:112px; opacity:1 }
+    .wait{ opacity:.85 }
   }
 </style>
 </head>
@@ -67,6 +99,7 @@
   </svg>
   <div class="name">تبارك جيم</div>
   <div class="sub">نظام إدارة النادي</div>
-  <div class="bar" role="status" aria-label="جارٍ التحميل"><i></i></div>
+  <div class="rule" aria-hidden="true"></div>
+  <div class="wait" role="status">جارٍ التحضير…</div>
 </body>
 </html>
