@@ -239,6 +239,74 @@ pub fn assert_inside(dir: &Path, file: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// لاحقة الملف المؤقّت أثناء الكتابة. ليست من لواحق أيّ فئة، فلا يعرضها مركز
+/// الملفات ولا تُعدّ نسخةً ولا يصلها التقليم.
+pub const PART_SUFFIX: &str = ".tg-part";
+
+/// كتابة ذرّية: ملف مؤقّت بجوار الهدف ⟵ تثبيته على القرص (`sync_all`) ⟵ نقله
+/// إلى اسمه النهائي.
+///
+/// لماذا التثبيت قبل النقل؟ لأن النقل وحده يَعِد بالاسم لا بالمحتوى: نظام
+/// الملفات قد يُثبّت إعادة التسمية قبل البيانات، فانقطاع الكهرباء بعدها يترك
+/// ملفاً **باسمه النهائي وطوله صفر** — نسخةً احتياطية تبدو موجودة وهي فارغة.
+/// وبعد `sync_all` لا يُنقل إلا ما صار على القرص فعلاً.
+///
+/// وإن فشل شيء حُذف المؤقّت ولم يُلمس الهدف. والهدف هنا دائماً اسمٌ جديد
+/// (`unique_path`)، فلا تُكتب نسخة فوق نسخة سليمة أبداً.
+pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let file_name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("اسم ملف غير صالح")?;
+    let tmp = target.with_file_name(format!("{file_name}{PART_SUFFIX}"));
+    let result = (|| -> Result<(), String> {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| format!("تعذّرت الكتابة: {e}"))?;
+        f.write_all(bytes).map_err(|e| format!("تعذّرت الكتابة: {e}"))?;
+        f.sync_all().map_err(|e| format!("تعذّر تثبيت الملف على القرص: {e}"))?;
+        drop(f);
+        std::fs::rename(&tmp, target).map_err(|e| format!("تعذّر إتمام الحفظ: {e}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// يحذف بقايا كتابةٍ قُطعت (`*.tg-part`) أقدم من `min_age`.
+///
+/// ملف مؤقّت يبقى فقط إن أُغلق التطبيق أو انقطعت الكهرباء في منتصف الحفظ.
+/// لا يُعرض ولا يُستعاد، لكنه يأخذ مساحة. والحدّ الزمني يمنع حذف ما تكتبه
+/// نسخةٌ أخرى من التطبيق الآن. لا يمسّ إلا ما ينتهي بلاحقة المؤقّت.
+pub fn sweep_stale_parts(dir: &Path, min_age: std::time::Duration) -> Vec<String> {
+    let mut removed = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return removed;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in rd.flatten().take(4000) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(PART_SUFFIX) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let old_enough = meta
+            .modified()
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .map(|age| age >= min_age)
+            .unwrap_or(false);
+        if old_enough && std::fs::remove_file(entry.path()).is_ok() {
+            removed.push(name);
+        }
+    }
+    removed
+}
+
 /// أي النسخ تُحذف عند التقليم.
 ///
 /// مفصولة عن نظام الملفات عمداً حتى تُختبر السياسة وحدها: تُعطى الأسماء
@@ -368,6 +436,52 @@ mod tests {
             resolve_existing(&tmp, Category::Csv, "ذهب.csv").unwrap_err(),
             "الملف لم يعد موجوداً"
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn atomic_write_lands_whole_and_leaves_no_part() {
+        let tmp = std::env::temp_dir().join(format!("tg-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let target = tmp.join("نسخة.json");
+        write_atomic(&target, b"{\"format\":\"tabarak-gym-backup\"}").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"{\"format\":\"tabarak-gym-backup\"}");
+        assert!(!tmp.join(format!("نسخة.json{PART_SUFFIX}")).exists(), "بقي ملف مؤقّت");
+        // المؤقّت ليس من لواحق أي فئة: لا يعرضه مركز الملفات ولا يعدّه التقليم
+        for cat in Category::ALL {
+            assert!(!has_category_extension(&format!("نسخة.json{PART_SUFFIX}"), cat));
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn failed_atomic_write_does_not_touch_the_target() {
+        let tmp = std::env::temp_dir().join(format!("tg-atomic-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        // الهدف في مجلّد غير موجود: يفشل الإنشاء، ولا يُترك شيء خلفه
+        let target = tmp.join("لا-مجلد").join("نسخة.json");
+        assert!(write_atomic(&target, b"x").is_err());
+        assert!(!target.exists());
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sweep_removes_only_stale_parts() {
+        let tmp = std::env::temp_dir().join(format!("tg-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("سليمة.json"), b"{}").unwrap();
+        std::fs::write(tmp.join(format!("مقطوعة.json{PART_SUFFIX}")), b"{").unwrap();
+        // حدٌّ زمنيّ كبير: المؤقّت حديث فلا يُحذف (قد تكون كتابةً جارية)
+        assert!(sweep_stale_parts(&tmp, std::time::Duration::from_secs(3600)).is_empty());
+        // حدّ صفر: يُحذف المؤقّت وحده، والنسخة السليمة لا تُمسّ
+        let gone = sweep_stale_parts(&tmp, std::time::Duration::from_secs(0));
+        assert_eq!(gone, vec![format!("مقطوعة.json{PART_SUFFIX}")]);
+        assert!(tmp.join("سليمة.json").exists());
+        assert!(sweep_stale_parts(&tmp.join("لا-يوجد"), std::time::Duration::ZERO).is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

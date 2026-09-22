@@ -18,7 +18,8 @@ mod paths;
 use base64::Engine;
 use paths::{
     assert_inside, category_dir, existing_category_dir, has_category_extension, plan_prune,
-    resolve_existing, safe_file_name, unique_path, Category, ROOT_DIR,
+    resolve_existing, safe_file_name, sweep_stale_parts, unique_path, write_atomic, Category,
+    ROOT_DIR,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -122,17 +123,9 @@ fn tg_save(
         return Err("الملف فارغ — لم يُحفظ".into());
     }
 
-    // يُكتب إلى ملف مؤقّت ثم يُنقل: انقطاع في المنتصف لا يترك ملفاً ناقصاً
-    // يبدو سليماً. والنقل داخل المجلّد نفسه ذرّيّ عملياً على ويندوز.
-    let tmp = target.with_file_name(format!(
-        "{}.tg-part",
-        target.file_name().and_then(|s| s.to_str()).unwrap_or(&name)
-    ));
-    std::fs::write(&tmp, &bytes).map_err(|e| format!("تعذّرت الكتابة: {e}"))?;
-    if let Err(e) = std::fs::rename(&tmp, &target) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("تعذّر إتمام الحفظ: {e}"));
-    }
+    // مؤقّت ⟵ تثبيت على القرص ⟵ نقل: انقطاع في المنتصف لا يترك ملفاً ناقصاً
+    // (ولا فارغاً) يبدو سليماً باسمه النهائي. انظري `paths::write_atomic`.
+    write_atomic(&target, &bytes)?;
 
     Ok(Saved {
         name: target
@@ -235,6 +228,9 @@ fn tg_read_backup(app: tauri::AppHandle, kind: String, name: String) -> Result<S
     std::fs::read_to_string(&file).map_err(|e| format!("تعذّرت قراءة النسخة: {e}"))
 }
 
+/// عمر المؤقّت الذي يُعدّ بعده بقيةَ كتابةٍ قُطعت لا كتابةً جارية.
+const STALE_PART_AGE: Duration = Duration::from_secs(3600);
+
 /// تقليم النسخ التلقائية: يُبقي أحدث `keep` ويحذف ما دونها.
 /// لا يمسّ النسخ اليدوية، ولا يحذف الأحدث مهما كانت القيمة.
 #[tauri::command]
@@ -247,6 +243,8 @@ fn tg_prune_backups(app: tauri::AppHandle, keep: usize) -> Result<Vec<String>, S
         return Ok(Vec::new());
     }
     let dir = category_dir(&documents(&app)?, Category::BackupAuto)?;
+    // بقايا كتابةٍ قُطعت منذ أكثر من ساعة: لا تُعدّ نسخاً، فتُزال مع التقليم
+    let _ = sweep_stale_parts(&dir, STALE_PART_AGE);
     let mut removed = Vec::new();
     for name in doomed {
         let target = dir.join(&name);
@@ -443,6 +441,15 @@ fn tg_print(app: tauri::AppHandle) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            // بقايا حفظٍ قُطع في تشغيلٍ سابق (إغلاق مفاجئ، انقطاع كهرباء):
+            // تُزال من مجلّدات النظام القائمة وحدها — لا يُنشأ مجلّد لأجلها.
+            if let Ok(docs) = app.path().document_dir() {
+                for cat in Category::ALL {
+                    if let Some(dir) = existing_category_dir(&docs, cat) {
+                        let _ = sweep_stale_parts(&dir, STALE_PART_AGE);
+                    }
+                }
+            }
             // حارس الإظهار: يعمل حتى لو لم تُقلع الواجهة أصلاً
             let handle = app.handle().clone();
             std::thread::spawn(move || {

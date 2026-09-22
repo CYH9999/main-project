@@ -683,6 +683,14 @@ module.exports = function register({ group, record, TESTS_JS }) {
           prevImg: box(document.querySelector('[data-brand-prev="logo"]')),
           print: box(document.querySelector('.doc-head-brand .brand-logo')),
         };
+        /* ما يُرسم فعلاً من الصورة داخل عنصرها: `object-fit:contain` يحفظ النسبة
+           فيرسم أصغر من العنصر في أحد البُعدين. يُقاس المرسوم لا العنصر. */
+        const pi = document.querySelector('[data-brand-prev="logo"]');
+        if (pi && pi.naturalWidth){
+          const r = pi.getBoundingClientRect(), k = Math.min(r.width / pi.naturalWidth, r.height / pi.naturalHeight);
+          surfaces.prevPaint = { w: Math.round(pi.naturalWidth * k), h: Math.round(pi.naturalHeight * k),
+                                 fit: getComputedStyle(pi).objectFit };
+        }
         /* ثم شاشة الدخول **الحقيقية** — لا نسخة يبنيها الاختبار: نسخةُ
            الاختبار تُثبت ما كتبه الاختبار لا ما تراه المستخدمة. */
         window.TG.Gate.login();
@@ -739,8 +747,12 @@ module.exports = function register({ group, record, TESTS_JS }) {
          tall.gateWrap.w === 64 && tall.gateWrap.h === 64,
          `عريض ${wide.gateWrap.w}×${wide.gateWrap.h} · طويل ${tall.gateWrap.w}×${tall.gateWrap.h}`);
       /* النسبة محفوظة داخل الصندوق: contain لا تمطّ الصورة */
-      const ratio = wide.prevImg.w / Math.max(1, wide.prevImg.h);
-      ok('ونسبة الصورة محفوظة داخله (لا تمطيط)', ratio > 3.4 && ratio < 4.6, ratio.toFixed(2));
+      const ratio = wide.prevPaint.w / Math.max(1, wide.prevPaint.h);
+      ok('ونسبة الصورة محفوظة داخله (لا تمطيط)',
+         wide.prevPaint.fit === 'contain' && ratio > 3.4 && ratio < 4.6, `${ratio.toFixed(2)} ${wide.prevPaint.fit}`);
+      ok('والمرسوم من الصورة داخل صندوقه بهامشه',
+         wide.prevPaint.w <= 120 - 2 * 12 && tall.prevPaint.h <= 120 - 2 * 12,
+         `عريض ${wide.prevPaint.w}×${wide.prevPaint.h} · طويل ${tall.prevPaint.w}×${tall.prevPaint.h}`);
 
       /* ---- صورة متحرّكة: تُعرض حيّة على الشاشة وثابتة في الطباعة ---- */
       const gifBytes = fs.readFileSync(path.join(__dirname, 'fixtures-anim.gif')).toString('base64');
@@ -1724,7 +1736,11 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('اللافتة المتحرّكة تمرّ بالمحرّر كذلك', out.bannerEditorOpened === true);
       ok('وتبقى متحرّكة بعد الحفظ', out.bannerAnimated === true && out.bannerSrcIsGif === true);
       ok('ولها وصف قصّ محفوظ', !!out.bannerCrop, JSON.stringify(out.bannerCrop));
-      ok('وصندوق اللافتة لم يتغيّر — 132 ارتفاعاً', out.bannerBox.h === 132, out.bannerBox.h);
+      /* 7.10: صندوق اللافتة بنسبة إطار المحرّر (4:1) في كل سطح — كان 132
+         ارتفاعاً بأيّ عرض، فكان القصّ يُمطّ بحسب عرض الشاشة. */
+      ok('وصندوق اللافتة بنسبة إطار المحرّر 4:1 وبسقفه',
+         Math.abs(out.bannerBox.w / out.bannerBox.h - 4) < 0.05 && out.bannerBox.h <= 240,
+         `${out.bannerBox.w}×${out.bannerBox.h}`);
       ok('النسخة الاحتياطية تحمل وصف القصّ', out.backupCarriesCrop === true);
       ok('والقصّ ينجو من الاستعادة — الشعار واللافتة',
          out.cropSurvived === true && out.bannerCropSurvived === true);

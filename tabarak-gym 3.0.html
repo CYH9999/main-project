@@ -544,13 +544,19 @@ body.locked{background:var(--plum-900)}
 .whoami .role{color:var(--muted)}
 
 /* ------------------------------ الهوية البصرية ------------------------------ */
-.brand-banner{height:132px;border-radius:var(--r-lg);background-size:cover;background-position:center;
-  border:1px solid var(--line);margin-bottom:16px;overflow:hidden;display:block}
+/* اللافتة: صندوقٌ بنسبة إطار المحرّر (4:1) في كل سطح — النسبة وسقف العرض
+   يكتبهما `Brand.bannerBoxStyle` سطريّاً من ثابتٍ واحد. و`container-type:size`
+   ليقيس المسرحُ داخله نفسه بوحدات الصندوق (cqw/cqh) — `Brand.bannerStageStyle`. */
+/* الخطّ حول اللافتة `outline` داخليّ لا `border`: الحدّ يقع داخل صندوق 4:1
+   فيجعل ما بداخله 4.05:1 في سطحٍ و4.02:1 في آخر — فيختلف التكوين بينهما. */
+.brand-banner{width:100%;border-radius:var(--r-lg);border:0;outline:1px solid var(--line);
+  outline-offset:-1px;margin:0 auto 16px;overflow:hidden;position:relative;container-type:size;
+  background:var(--surface-2);box-sizing:border-box}
 /* اللافتة صارت <img> حقيقية بدل خلفية CSS: المصدر المرسوم صار صريحاً يُقرأ
    من الـDOM ويُتحقَّق منه، بدل أن يكون مدفوناً في نصّ background-image.
    الأبعاد والقصّ والاستدارة كما كانت تماماً — object-fit:cover يفعل ما كان
    يفعله background-size:cover. */
-.brand-banner img{width:100%;height:100%;object-fit:cover;object-position:center;display:block}
+.brand-banner img{display:block}
 /* ------------------------------ صندوق الشعار ------------------------------
    الدرس: **أبعاد الملف المرفوع كانت تقرّر حجم الشعار على الشاشة.** معاينة
    الإعدادات كانت الصورة نفسها، فترسم `max-height` سقفاً لا صندوقاً: مصدر
@@ -600,9 +606,10 @@ body.locked{background:var(--plum-900)}
    يكون الصندوق هو الحاكم لا سقفٌ مكتوب لصورةٍ بلا صندوق. */
 .media-drop .brand-prev>img{max-width:100%;max-height:100%;width:auto;height:auto;
   object-fit:contain;display:block;margin:0}
-.media-drop.wide .brand-prev{width:100%;height:90px;padding:0}
-.media-drop.wide .brand-prev>img{width:100%;height:100%;max-width:100%;max-height:100%;
-  object-fit:cover;border-radius:var(--r-sm)}
+/* معاينة اللافتة بنسبة إطار المحرّر نفسها (4:1): ما يُرى هنا هو ما اختير. */
+.media-drop.wide .brand-prev{width:100%;height:auto;aspect-ratio:4/1;padding:0;border:0;
+  outline:1px solid var(--line);outline-offset:-1px;
+  position:relative;overflow:hidden;container-type:size;display:block}
 .media-drop{
   border:1.5px dashed var(--line);border-radius:var(--r-md);padding:16px;text-align:center;background:var(--surface-2);
 }
@@ -1225,13 +1232,47 @@ class IDBAdapter {
       rq.onblocked = () => Log.warn('IndexedDB blocked — نافذة أخرى تستعمل النظام');
     });
   }
-  _tx(store, mode){ return this.db.transaction(store, mode).objectStore(store); }
+  /* الكتابة `strict`: المتصفح لا يُبلغ بالنجاح حتى تُثبَّت المعاملة على القرص.
+     الافتراضي في Chromium قد يكون «مُرخًى» — يُعلن النجاح والبيانات ما زالت في
+     ذاكرة نظام التشغيل، فانقطاع الكهرباء بعد «تم الحفظ» يُضيع دفعةً قيل إنها
+     حُفظت. والكتابات هنا بإيقاع يد بشرية، فكلفة التثبيت لا تُرى. */
+  _tx(store, mode){
+    return (mode === 'readwrite' ? this.db.transaction(store, mode, { durability:'strict' })
+                                 : this.db.transaction(store, mode)).objectStore(store);
+  }
+  /* استبدال كل الجداول **في معاملة واحدة**: إمّا أن تُطبَّق كلّها أو لا شيء.
+     هذا ما يجعل الاستعادة وإعادة التهيئة آمنتين من الإغلاق المفاجئ: معاملة لم
+     تكتمل لا تُثبَّت، فيبقى على القرص ما كان قبلها بالضبط — لا جداول نصف فارغة.
+     `hooks.onQueued(tx)` للاختبار وحده: يُنادى بعد أن تُصفّ كل الكتابات وقبل
+     التثبيت، فيُحاكى به انقطاعٌ في أسوأ لحظة (`tx.abort()`). */
+  replaceAll(data, hooks){
+    return new Promise((res, rej) => {
+      let tx;
+      try { tx = this.db.transaction(STORE_NAMES, 'readwrite', { durability:'strict' }); }
+      catch(e){ return rej(new AppError('تعذّر بدء معاملة الاستبدال','IDB_TX', e)); }
+      let failed = null;
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => { failed = failed || tx.error; };
+      tx.onabort = () => rej(new AppError('لم تُطبَّق المعاملة — بقيت البيانات كما كانت','IDB_ABORT', failed || tx.error));
+      try {
+        STORE_NAMES.forEach(s => {
+          const os = tx.objectStore(s);
+          os.clear();
+          (data[s] || []).forEach(o => os.put(o));
+        });
+        if (hooks && typeof hooks.onQueued === 'function') hooks.onQueued(tx);
+      } catch(e){
+        failed = e;
+        try { tx.abort(); } catch(e2){}
+      }
+    });
+  }
   getAll(store){ return new Promise((res, rej) => { const r = this._tx(store,'readonly').getAll();
     r.onsuccess = () => res(r.result||[]); r.onerror = () => rej(new AppError('فشل قراءة '+store,'IDB_READ', r.error)); }); }
   put(store, obj){ return new Promise((res, rej) => { const r = this._tx(store,'readwrite').put(obj);
     r.onsuccess = () => res(obj); r.onerror = () => rej(new AppError('فشل حفظ سجل في '+store,'IDB_WRITE', r.error)); }); }
   putMany(store, arr){ return new Promise((res, rej) => { if(!arr.length) return res(0);
-    const tx = this.db.transaction(store,'readwrite'), os = tx.objectStore(store);
+    const tx = this.db.transaction(store,'readwrite', { durability:'strict' }), os = tx.objectStore(store);
     arr.forEach(o => os.put(o));
     tx.oncomplete = () => res(arr.length); tx.onerror = () => rej(new AppError('فشل حفظ دفعة في '+store,'IDB_WRITE', tx.error)); }); }
   remove(store, id){ return new Promise((res, rej) => { const r = this._tx(store,'readwrite').delete(id);
@@ -1260,6 +1301,19 @@ class LSAdapter {
     arr.forEach(o => m.set(o[k], o)); this._write(s, [...m.values()]); return Promise.resolve(arr.length); }
   remove(s, id){ const k = SCHEMA[s].key; this._write(s, this._read(s).filter(x => x[k] !== id)); return Promise.resolve(true); }
   clearStore(s){ this._write(s, []); return Promise.resolve(true); }
+  /* التخزين المحلي لا معاملات فيه. فأقرب ما يُمكن: يُسلسَل كل شيء **قبل**
+     أول كتابة (فلا يفشل التسلسل في المنتصف)، ويُحفظ القديم نصّاً، وإن فشلت
+     كتابة أُعيد القديم كلّه. */
+  replaceAll(data){
+    const next = STORE_NAMES.map(s => [this._k(s), JSON.stringify(data[s] || [])]);
+    const prev = STORE_NAMES.map(s => [this._k(s), localStorage.getItem(this._k(s))]);
+    try { next.forEach(([k, v]) => localStorage.setItem(k, v)); }
+    catch(e){
+      prev.forEach(([k, v]) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch(e2){} });
+      return Promise.reject(new AppError('امتلأت مساحة التخزين المحلي — لم يُطبَّق الاستبدال','LS_FULL', e));
+    }
+    return Promise.resolve(true);
+  }
 }
 /* احتياطي: إذا مُنع IndexedDB (وضع خاص) يعمل النظام في الذاكرة مع تحذير واضح */
 class MemAdapter {
@@ -1270,6 +1324,12 @@ class MemAdapter {
   putMany(s,a){ a.forEach(o=>this.m[s].set(o[SCHEMA[s].key], o)); return Promise.resolve(a.length); }
   remove(s,id){ this.m[s].delete(id); return Promise.resolve(true); }
   clearStore(s){ this.m[s].clear(); return Promise.resolve(true); }
+  replaceAll(data){
+    const m = {};
+    STORE_NAMES.forEach(s => { m[s] = new Map((data[s] || []).map(o => [o[SCHEMA[s].key], o])); });
+    this.m = m;
+    return Promise.resolve(true);
+  }
 }
 
 
@@ -1325,7 +1385,21 @@ const DB = {
     catch(e){ if (prev !== undefined) this.cache[store].set(id, prev); throw new AppError('تعذّر الحذف من القرص','DELETE_FAILED', e); }
     return true;
   },
-  async clearAll(){ for (const s of STORE_NAMES){ this.cache[s].clear(); await this.adapter.clearStore(s); } }
+  /* استبدال البيانات كلّها — المرحلة الأخيرة من الاستعادة وإعادة التهيئة.
+     القرص أوّلاً في معاملة واحدة، ثم الذاكرة. فإن فشل القرص لم تُمسّ الذاكرة
+     ولا القرص: لا لقطة تُرجَع ولا حالة نصفية يُقلع عليها النظام بعد انقطاع. */
+  async replaceAll(data, hooks){
+    if (!this.loaded) throw new AppError('لم يكتمل تحميل البيانات بعد','NOT_LOADED');
+    const src = data || {};
+    await this.adapter.replaceAll(src, hooks);
+    STORE_NAMES.forEach(s => {
+      const m = new Map();
+      (src[s] || []).forEach(r => m.set(r[SCHEMA[s].key], r));
+      this.cache[s] = m;
+    });
+    return true;
+  },
+  async clearAll(){ return this.replaceAll({}); }
 };
 
 /* Repo: طبقة رقيقة فوق DB تضيف الطوابع الزمنية والأرشفة والفهرسة */
@@ -1939,6 +2013,18 @@ const Auth = {
     if (!u || u.disabled){ try { sessionStorage.removeItem(this.SESSION_KEY); } catch(e){} return false; }
     this.session = { actorId:u.id, actorName:u.name, roleKey:u.roleKey };
     return true;
+  },
+  /* مطابقة الجلسة مع المستخدمات **بعد أن تغيّرت تحتها** (استعادة نسخة):
+     · الدخول غير مفعّل في البيانات الجديدة ⟵ المالكة كما عند الإقلاع.
+     · الداخلة ما زالت موجودة وغير موقوفة ⟵ تبقى، باسمها ودورها المستعادَين.
+     · لم تعد موجودة أو أُوقفت ⟵ تُخرَج، فلا تبقى صلاحيةٌ لحسابٍ لا وجود له. */
+  reconcile(){
+    if (!this.enabled()){ this.session = { actorId:null, actorName:'المالكة', roleKey:'owner' }; return true; }
+    const u = this.session.actorId ? Repos.users.get(this.session.actorId) : null;
+    if (u && !u.disabled){ this.session = { actorId:u.id, actorName:u.name, roleKey:u.roleKey }; return true; }
+    this.session = { actorId:null, actorName:'', roleKey:null };
+    try { sessionStorage.removeItem(this.SESSION_KEY); } catch(e){}
+    return false;
   },
 
   /* --------------------------- التهيئة والاسترجاع ---------------------------
@@ -3711,31 +3797,100 @@ Svc.media = {
       img.src = dataUrl;
     });
   },
-  /* الإطار الأول: يُرسم على canvas مرة واحدة عند الرفع. المتصفح يرسم أول
-     إطار الـGIF، فنحصل على صورة ثابتة بلا فكّ ترميز يدوي ولا اعتماد خارجي.
-     وإن تعذّر (canvas ممنوع، صورة تالفة) يعود null ويُستعمل الأصل — الوظيفة
-     لا تنكسر، وتُوثَّق الحالة في التقرير. */
-  poster(dataUrl, maxDim){
+  /* ------------------------- الإطار الثابت -------------------------
+     يُستخرج مرة واحدة عند الرفع، ويُستعمل في الطباعة وحين يُطلب تقليل الحركة.
+
+     العيب (7.9): كان **الإطار الأول** دائماً. وكثيرٌ من الشعارات المتحرّكة
+     تبدأ من إطار فارغ (ظهورٌ تدريجي). وويندوز يطلب «تقليل الحركة» بمجرّد
+     إطفاء «تأثيرات الحركة» — فيُرسم الإطار الثابت مكان الـGIF، فيختفي الشعار
+     من الإعدادات والشريط والطباعة معاً، والمستخدمة تظنّ أن الرفع فشل.
+
+     الآن: تُفكّ الإطارات (`ImageDecoder`) ويُختار **أكثرها امتلاءً** — مجموع
+     قناة الشفافية. للصورة المعتمة كلّ الإطارات متساوية فيبقى الأول كما كان.
+     وحيث لا تتوفّر الواجهة يُرسم الإطار الحالي كما كان — لكن إطاراً فارغاً
+     لا يُحفظ أبداً: يُعاد null فيُعرض الأصل المتحرّك بدل لا شيء. */
+  _alphaMass(source, w, h){
+    const c = document.createElement('canvas');
+    const k = Math.min(1, 64 / Math.max(w, h));
+    c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+    const ctx = c.getContext('2d');
+    if (!ctx) return 0;
+    ctx.drawImage(source, 0, 0, c.width, c.height);
+    const px = ctx.getImageData(0, 0, c.width, c.height).data;
+    let sum = 0;
+    for (let i = 3; i < px.length; i += 4) sum += px[i];
+    return sum / (c.width * c.height * 255);           /* 0 فارغ … 1 معتم كلّه */
+  },
+  /* الحدّ الذي دونه يُعدّ الإطار فارغاً: أقلّ من 1% من المساحة */
+  BLANK: 0.01,
+  _toCanvas(source, w0, h0, lim){
+    const k = Math.min(1, lim / Math.max(w0, h0));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w0 * k));
+    c.height = Math.max(1, Math.round(h0 * k));
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, c.width, c.height);
+    return c;
+  },
+  async _bestFrame(dataUrl, lim){
+    if (typeof ImageDecoder === 'undefined') return null;
+    const type = String(dataUrl).slice(5, String(dataUrl).indexOf(';'));
+    try { if (!(await ImageDecoder.isTypeSupported(type))) return null; } catch(e){ return null; }
+    const bin = atob(String(dataUrl).split(',')[1] || '');
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const dec = new ImageDecoder({ data:bytes, type });
+    try {
+      await dec.tracks.ready;
+      const n = Math.max(1, (dec.tracks.selectedTrack && dec.tracks.selectedTrack.frameCount) || 1);
+      const step = Math.max(1, Math.ceil(n / 48));      /* حدّ أعلى للفحص: 48 إطاراً */
+      let best = 0, bestMass = -1;
+      for (let i = 0; i < n; i += step){
+        const { image } = await dec.decode({ frameIndex:i });
+        const mass = this._alphaMass(image, image.displayWidth, image.displayHeight);
+        image.close();
+        if (mass > bestMass + 1e-6){ best = i; bestMass = mass; }
+        if (bestMass >= 0.999) break;                  /* معتم كلّه — لا أفضل منه */
+      }
+      if (bestMass < this.BLANK) return { url:null, frame:best, mass:bestMass };
+      const { image } = await dec.decode({ frameIndex:best });
+      const c = this._toCanvas(image, image.displayWidth, image.displayHeight, lim);
+      image.close();
+      return c ? { url:c.toDataURL('image/png'), frame:best, mass:bestMass } : null;
+    } finally { try { dec.close(); } catch(e){} }
+  },
+  async poster(dataUrl, maxDim){
+    const lim = maxDim || this.POSTER_DIM;
+    try {
+      const best = await this._bestFrame(dataUrl, lim);
+      if (best) return best.url;
+    } catch(e){ Log.warn('تعذّر فكّ إطارات الصورة المتحرّكة — يُستعمل الإطار الحالي', e); }
     return new Promise(res => {
       if (typeof Image === 'undefined' || typeof document === 'undefined') return res(null);
       const img = new Image();
       img.onload = () => {
         try {
-          const lim = maxDim || this.POSTER_DIM;
           const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
           if (!w0 || !h0) return res(null);
-          const k = Math.min(1, lim / Math.max(w0, h0));
-          const c = document.createElement('canvas');
-          c.width = Math.max(1, Math.round(w0 * k));
-          c.height = Math.max(1, Math.round(h0 * k));
-          const ctx = c.getContext('2d');
-          if (!ctx) return res(null);
-          ctx.drawImage(img, 0, 0, c.width, c.height);
-          res(c.toDataURL('image/png'));
+          if (this._alphaMass(img, w0, h0) < this.BLANK) return res(null);
+          const c = this._toCanvas(img, w0, h0, lim);
+          res(c ? c.toDataURL('image/png') : null);
         } catch(e){ Log.warn('تعذّر استخراج إطار ثابت من الصورة المتحرّكة', e); res(null); }
       };
       img.onerror = () => res(null);
       img.src = dataUrl;
+    });
+  },
+  /* هل الإطار الثابت المحفوظ فارغ؟ لإصلاح ما حُفظ قبل 7.10 (انظري Brand.repairPosters) */
+  posterIsBlank(posterUrl){
+    return new Promise(res => {
+      if (!posterUrl || typeof Image === 'undefined') return res(false);
+      const img = new Image();
+      img.onload = () => { try { res(this._alphaMass(img, img.naturalWidth, img.naturalHeight) < this.BLANK); }
+                           catch(e){ res(false); } };
+      img.onerror = () => res(true);
+      img.src = posterUrl;
     });
   },
   /* كل حقل في النظام يشير إلى وسائط. إضافة ميزة جديدة تحمل صورة = سطر هنا. */
@@ -6285,71 +6440,139 @@ const Backup = {
              exportedAt:new Date().toISOString(),
              counts:Object.fromEntries(STORE_NAMES.map(s=>[s, (data[s]||[]).length])), data };
   },
+  /* ------------------------------ البصمة ------------------------------
+     SHA-256 لنصّ `data` كما يُسلسَل. `JSON.stringify` بعد `JSON.parse` لما
+     سلسلته `JSON.stringify` يعطي النصّ نفسه حرفاً بحرف، فالبصمة تُعاد حسابها
+     عند الاستعادة وتُقارن. ملفٌّ تغيّر فيه بايت واحد بعد كتابته لا يُستعاد.
+     وحيث لا تتوفّر `crypto.subtle` لا تُخترع بصمة: تُترك، ويُكتفى بالبنية. */
+  async digest(data){
+    try {
+      if (!(window.crypto && crypto.subtle)) return null;
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(data)));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch(e){ return null; }
+  },
+  /* النسخة كما تُكتب على القرص: البناء + البصمة + النصّ. مصدرٌ واحد للنسخ
+     اليدوية والتلقائية ونسخة الأمان — فلا تفترق طريقة كتابة عن أخرى. */
+  async serialize(includeMedia=true){
+    const obj = this.build(includeMedia);
+    const hex = await this.digest(obj.data);
+    if (hex) obj.integrity = { algo:'sha256', of:'data', hex };
+    return { obj, text:JSON.stringify(obj, null, 1) };
+  },
   validate(obj){
-    const errs = [];
+    const errs = [], warnings = [];
     /* ملاحظة: النسخ الأقدم مقبولة وتُرقّى تلقائياً، والأحدث فقط تُرفض */
-    if (!obj || typeof obj !== 'object') errs.push('الملف ليس نسخة احتياطية صالحة');
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) errs.push('الملف ليس نسخة احتياطية صالحة');
     else {
       if (obj.format !== this.FORMAT) errs.push('الملف ليس نسخة من نظام تبارك جيم');
-      if (!obj.data || typeof obj.data !== 'object') errs.push('الملف لا يحتوي بيانات');
+      if (!obj.data || typeof obj.data !== 'object' || Array.isArray(obj.data)) errs.push('الملف لا يحتوي بيانات');
       if (obj.schema == null) errs.push('لا يوجد رقم إصدار للمخطط');
+      else if (!isFinite(Number(obj.schema))) errs.push('رقم إصدار المخطط غير صالح');
       else if (Number(obj.schema) > APP.schema) errs.push(`النسخة أحدث من البرنامج (مخطط ${obj.schema}) — حدّثي البرنامج أولاً`);
-      if (obj.data){
+      if (obj.data && typeof obj.data === 'object'){
         const unknown = Object.keys(obj.data).filter(k => !STORE_NAMES.includes(k));
         if (unknown.length) errs.push('يحتوي الملف جداول غير معروفة: ' + unknown.join('، '));
         STORE_NAMES.forEach(s => { if (obj.data[s] != null && !Array.isArray(obj.data[s])) errs.push(`الجدول ${s} تالف`); });
+        /* العدد المسجَّل وقت الإنشاء مقابل ما في الملف الآن. اختلافه يعني أن
+           الملف عُدّل أو قُصّ بعد كتابته. لا يُرفض لأجله — قد يكون آخر ما بقي —
+           لكن يُقال قبل الاستبدال لا بعده. */
+        if (obj.counts && typeof obj.counts === 'object')
+          STORE_NAMES.forEach(s => {
+            if (obj.counts[s] == null || !Array.isArray(obj.data[s] || [])) return;
+            const have = (obj.data[s] || []).length, said = Number(obj.counts[s]);
+            if (isFinite(said) && said !== have)
+              warnings.push(`${storeLabel(s)}: الملف يقول ${said} والموجود فيه ${have}`);
+          });
       }
     }
-    return { ok:errs.length === 0, errors:errs,
-             counts: obj && obj.data ? Object.fromEntries(STORE_NAMES.map(s => [s, (obj.data[s]||[]).length])) : {} };
+    return { ok:errs.length === 0, errors:errs, warnings,
+             counts: obj && obj.data && typeof obj.data === 'object'
+               ? Object.fromEntries(STORE_NAMES.map(s => [s, Array.isArray(obj.data[s]) ? obj.data[s].length : 0])) : {} };
   },
-  /* الاستعادة عملية "كل شيء أو لا شيء": نأخذ لقطة من البيانات الحالية،
-     وإذا فشل أي جدول في المنتصف نعيد اللقطة كما كانت بدل ترك النظام نصف ممتلئ. */
-  async restore(obj){
-    Auth.require('settings.danger');
+  /* التحقّق الكامل: البنية ثم البصمة إن وُجدت. البصمة المختلفة تلفٌ مؤكَّد
+     لا تحذير: الملف ليس ما كتبه النظام. */
+  async verify(obj){
     const v = this.validate(obj);
-    if (!v.ok) throw new AppError(v.errors[0],'BACKUP_INVALID', v.errors);
-    const snapshot = Object.fromEntries(STORE_NAMES.map(s => [s, DB.all(s)]));
-    /* سجلٌ بلا معرّف لا يمكن استعادته: لا مفتاح له يُخزَّن به، واختراع مفتاح
-       يخترع سجلاً. فيُستبعَد — لكن لا يُستبعَد صامتاً. يُعدّ ويُقال عدده،
-       لأن «تمت الاستعادة» فوق بيانات سقطت أسوأ من فشلٍ صريح. */
-    const skipped = {}, restored = {};
-    try {
-      await DB.clearAll();
-      for (const s of STORE_NAMES){
-        const all = obj.data[s] || [];
-        const rows = all.filter(r => r && r[SCHEMA[s].key] != null);
-        if (all.length !== rows.length) skipped[s] = all.length - rows.length;
-        restored[s] = rows.length;
-        if (rows.length) await DB.putMany(s, rows);
-      }
-    } catch(e){
-      Log.error('فشلت الاستعادة — إرجاع البيانات السابقة', e);
-      try {
-        await DB.clearAll();
-        for (const s of STORE_NAMES) if (snapshot[s].length) await DB.putMany(s, snapshot[s]);
-      } catch(e2){
-        /* القرص غير قابل للكتابة: على الأقل تبقى البيانات ظاهرة في الجلسة الحالية */
-        STORE_NAMES.forEach(s => { DB.cache[s].clear(); snapshot[s].forEach(r => DB.cache[s].set(r[SCHEMA[s].key], r)); });
-        Log.error('تعذّر إرجاع اللقطة إلى القرص — أُعيدت إلى الذاكرة فقط', e2);
-      }
-      await Settings.load();
-      throw new AppError('فشلت الاستعادة وأُعيدت بياناتك السابقة كما كانت','RESTORE_FAILED', e);
+    v.integrity = 'absent';
+    if (!v.ok) return v;
+    const want = obj.integrity && obj.integrity.hex;
+    if (want){
+      const got = await this.digest(obj.data);
+      if (got === null) v.integrity = 'unchecked';
+      else if (got === String(want).toLowerCase()) v.integrity = 'ok';
+      else { v.integrity = 'mismatch'; v.ok = false;
+        v.errors.push('بصمة الملف لا تطابق محتواه — الملف تلف أو عُدّل بعد إنشائه، ولن يُستعاد'); }
     }
-    /* نسخة من إصدار أقدم؟ تُرقّى بعد الاستعادة مباشرة قبل أن تراها الواجهة */
-    try { await Migrations.run(); } catch(e){ Log.error('فشلت ترقية النسخة المستعادة', e); }
+    return v;
+  },
+  /* التحضير — قبل أن يُمسّ شيء. يُعيد ما سيُكتب بالضبط، وما استُبعد ولماذا.
+     · سجلٌّ ليس كائناً أو بلا معرّف: لا مفتاح له يُخزَّن به، واختراع مفتاح
+       يخترع سجلاً. يُستبعد ويُعدّ.
+     · معرّفٌ مكرَّر في الجدول نفسه: القاعدة تحفظ واحداً فقط، فالآخر كان
+       سيسقط بلا أثر. يبقى الأخير (كما كانت الاستعادة تفعل)، ويُعدّ المكرَّر. */
+  prepare(obj){
+    const rows = {}, skipped = {}, duplicates = {}, restored = {};
+    STORE_NAMES.forEach(s => {
+      const key = SCHEMA[s].key;
+      const all = Array.isArray(obj.data[s]) ? obj.data[s] : [];
+      const byKey = new Map();
+      let bad = 0, dup = 0;
+      all.forEach(r => {
+        if (!r || typeof r !== 'object' || Array.isArray(r) || r[key] == null){ bad++; return; }
+        if (byKey.has(r[key])) dup++;
+        byKey.set(r[key], r);
+      });
+      rows[s] = [...byKey.values()];
+      restored[s] = rows[s].length;
+      if (bad) skipped[s] = bad;
+      if (dup) duplicates[s] = dup;
+    });
+    return { rows, skipped, duplicates, restored };
+  },
+  /* الاستعادة على مراحل: قراءة ⟵ تحقّق ⟵ تحضير ⟵ تثبيت.
+     لا يُمسّ القرص ولا الذاكرة قبل التثبيت. والتثبيت معاملة واحدة على كل
+     الجداول (`DB.replaceAll`): إن أُغلق التطبيق أو انقطعت الكهرباء في
+     منتصفها لم تُثبَّت، فيُقلع النظام على بياناته السابقة كاملةً. */
+  async restore(obj, hooks){
+    Auth.require('settings.danger');
+    const v = await this.verify(obj);
+    if (!v.ok) throw new AppError(v.errors[0],'BACKUP_INVALID', v.errors);
+    const plan = this.prepare(obj);
+    try { await DB.replaceAll(plan.rows, hooks); }
+    catch(e){
+      Log.error('فشلت الاستعادة قبل التثبيت — لم يتغيّر شيء', e);
+      await Settings.load();
+      throw new AppError('فشلت الاستعادة ولم يتغيّر شيء من بياناتك','RESTORE_FAILED', e);
+    }
+    /* نسخة من إصدار أقدم؟ تُرقّى بعد الاستعادة مباشرة قبل أن تراها الواجهة.
+       والترقية تُشغَّل عند كل إقلاع أيضاً، فإن تعثّرت هنا تُعاد غداً — لكن
+       لا يُقال «تمت» بصمت: يُعاد سببها مع النتيجة. */
+    let migrationError = null;
+    try { await Migrations.run(); } catch(e){ migrationError = e; Log.error('فشلت ترقية النسخة المستعادة', e); }
     await Settings.load();
     /* الهوية البصرية تُعاد إلى هيكل الصفحة فوراً: الشعار المستعاد يُرى بلا
        انتظار إعادة تحميل، ووضع الحركة المستعاد يسري من اللحظة نفسها. */
     try { Brand.applyToShell(); } catch(e){ Log.warn('تعذّر تطبيق الهوية بعد الاستعادة', e); }
-    const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0);
+    /* نسخةٌ من إصدارٍ أقدم قد تحمل إطاراً ثابتاً فارغاً — يُصلَح في الخلفية */
+    Brand.repairPosters().catch(e => Log.warn('إصلاح الإطار الثابت بعد الاستعادة', e));
+    const skippedTotal = Object.values(plan.skipped).reduce((a, b) => a + b, 0);
+    const dupTotal = Object.values(plan.duplicates).reduce((a, b) => a + b, 0);
     await Audit.log('system','restore',
       `استعادة نسخة احتياطية من ${String(obj.exportedAt||'').slice(0,10)} (مخطط ${obj.schema})`
       + (skippedTotal ? ` — استُبعد ${skippedTotal} سجلاً بلا معرّف: `
-          + Object.keys(skipped).map(k => `${storeLabel(k)} ${skipped[k]}`).join('، ') : ''));
-    if (skippedTotal) Log.warn('سجلات بلا معرّف استُبعدت من الاستعادة', skipped);
+          + Object.keys(plan.skipped).map(k => `${storeLabel(k)} ${plan.skipped[k]}`).join('، ') : '')
+      + (dupTotal ? ` — ${dupTotal} سجلاً بمعرّف مكرَّر أُبقي آخره: `
+          + Object.keys(plan.duplicates).map(k => `${storeLabel(k)} ${plan.duplicates[k]}`).join('، ') : '')
+      + (v.warnings.length ? ` — تنبيه: ${v.warnings.join('؛ ')}` : '')
+      + (migrationError ? ` — تعذّرت الترقية: ${migrationError.message || migrationError}` : ''));
+    if (skippedTotal) Log.warn('سجلات بلا معرّف استُبعدت من الاستعادة', plan.skipped);
+    /* الجلسة تُطابَق مع المستخدمات المستعادات: من لم تعد موجودة لا تبقى داخلة */
+    try { Auth.reconcile(); } catch(e){ Log.warn('تعذّرت مطابقة الجلسة بعد الاستعادة', e); }
     /* counts تبقى ما استُعيد فعلاً لا ما كان في الملف */
-    return Object.assign({}, restored, { _skipped:skipped, _skippedTotal:skippedTotal });
+    return Object.assign({}, plan.restored, { _skipped:plan.skipped, _skippedTotal:skippedTotal,
+      _duplicates:plan.duplicates, _duplicatesTotal:dupTotal, _warnings:v.warnings,
+      _integrity:v.integrity, _migrationError: migrationError ? String(migrationError.message || migrationError) : null });
   },
   async markExported(){ await Settings.set({ lastBackupAt:new Date().toISOString() }); },
 
@@ -6370,35 +6593,59 @@ const Backup = {
   AUTO_KEEP: 14,
   _busy: false,
   autoState(){ return Settings.get('autoBackup') || {}; },
-  /* مستحقّة إن لم تُؤخذ نسخة تلقائية اليوم، وفي سطح المكتب وحده */
-  autoDue(){ return Desktop.on() && !this._busy && this.autoState().lastDay !== D.today(); },
+  /* مستحقّة إن لم تُؤخذ نسخة تلقائية اليوم، وفي سطح المكتب وحده — وعلى قاعدة
+     البيانات الحقيقية وحدها: نسخةٌ من تخزين احتياطي فارغ تصير «أحدث نسخة»
+     وتدفع نسخةً حقيقية خارج نافذة الأربع عشرة. */
+  autoDue(){
+    return Desktop.on() && !this._busy && this.autoState().lastDay !== D.today()
+      && !!(DB.adapter && DB.adapter.kind === 'indexeddb');
+  },
+  /* يكتب النسخة ثم **يقرؤها من القرص** ويتحقّق منها قبل أن يُعلن شيئاً.
+     طرف الصدأ يكتب إلى ملف مؤقّت ويثبّته ثم ينقله، فلا يُرى ملف نصف مكتوب
+     باسمه النهائي. وهذه الخطوة تضيف ما لا يراه الكاتب: أن ما على القرص
+     يُقرأ ويُحلَّل وبصمته وأعداده كما كُتبت. */
+  async saveVerified(category, filename, includeMedia=true){
+    const { obj, text } = await this.serialize(includeMedia);
+    const r = await DesktopFiles.save(new Blob([text], { type:'application/json' }), filename, category);
+    const kind = category === 'backup-auto' ? 'automatic' : 'manual';
+    let back;
+    try { back = JSON.parse(await Desktop.call('tg_read_backup', { kind, name:r.name })); }
+    catch(e){ throw new AppError(`كُتبت النسخة ${r.name} لكن قراءتها من القرص فشلت — لا تعتمدي عليها`,'BACKUP_UNVERIFIED', e); }
+    const v = await this.verify(back);
+    const same = STORE_NAMES.every(st => (back.data[st] || []).length === (obj.data[st] || []).length);
+    if (!v.ok || !same || v.warnings.length)
+      throw new AppError(`كُتبت النسخة ${r.name} لكنها لم تجتز التحقّق — لا تعتمدي عليها`,'BACKUP_UNVERIFIED',
+                         { errors:v.errors, warnings:v.warnings });
+    return Object.assign({}, r, { verified:true, integrity:v.integrity,
+      records:STORE_NAMES.reduce((a, st) => a + (obj.data[st] || []).length, 0) });
+  },
   async runAuto(){
-    if (!Desktop.on() || this._busy) return null;
+    if (!this.autoDue()) return null;
     this._busy = true;
     try {
-      const obj = this.build(true);                     /* بالوسائط: نقطة رجوع لا فهرس */
-      const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
-      const r = await DesktopFiles.save(blob, `نسخة-تلقائية-${D.stamp()}.json`, 'backup-auto');
+      /* بالوسائط: نقطة رجوع لا فهرس */
+      const r = await this.saveVerified('backup-auto', `نسخة-تلقائية-${D.stamp()}.json`, true);
+      /* ختم اليوم والتقليم **بعد** التحقّق لا قبله: نسخة لم تُثبت سلامتها لا
+         تُحسب نسخة اليوم، ولا يُحذف لأجلها ما هو أقدم منها وسليم. */
       await Settings.set({ autoBackup:{ lastDay:D.today(), lastAt:new Date().toISOString(), lastName:r.name } });
       let pruned = [];
       try { pruned = await Desktop.call('tg_prune_backups', { keep:this.AUTO_KEEP }) || []; }
       catch(e){ Log.warn('تعذّر تقليم النسخ التلقائية', e); }
       await Audit.log('system','backup',
-        `نسخة تلقائية: ${r.name}` + (pruned.length ? ` — أُزيلت ${pruned.length} نسخة قديمة` : ''));
+        `نسخة تلقائية مُتحقَّق منها: ${r.name}` + (pruned.length ? ` — أُزيلت ${pruned.length} نسخة قديمة` : ''));
       return r;
     } catch(e){
-      Log.error('تعذّرت النسخة التلقائية', e);          /* ختم اليوم لا يُحدَّث */
+      Log.error('تعذّرت النسخة التلقائية', e);          /* ختم اليوم لا يُحدَّث ولا تقليم */
+      try { await Audit.log('system','backup-failed', `تعذّرت النسخة التلقائية: ${(e && e.message) || e}`); } catch(e2){}
       return null;
     } finally { this._busy = false; }
   },
-  /* نسخة الأمان قبل الاستعادة — تُحفظ حيث لا يصلها التقليم */
+  /* نسخة الأمان قبل الاستعادة — تُحفظ حيث لا يصلها التقليم، ولا تُعدّ نسخةً
+     إلا إن قُرئت من القرص سليمة. وإلا تُسأل المستخدمة صراحةً (انظري importBackup). */
   async safetyBackup(){
     if (!Desktop.on()) return null;
-    try {
-      const obj = this.build(true);
-      const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
-      return await DesktopFiles.save(blob, `قبل-الاستعادة-${D.stamp()}.json`, 'backup');
-    } catch(e){ Log.error('تعذّرت نسخة الأمان قبل الاستعادة', e); return null; }
+    try { return await this.saveVerified('backup', `قبل-الاستعادة-${D.stamp()}.json`, true); }
+    catch(e){ Log.error('تعذّرت نسخة الأمان قبل الاستعادة', e); return null; }
   },
   /* بعد استعادة: اليوم يُعلَّم منسوخاً. النسخة التي استُعيدت ما زالت على
      القرص، فنسخة تلقائية فورية تكرار لا حماية. */
@@ -7573,6 +7820,33 @@ const Desktop = {
   },
 };
 
+/* ============================ نسخة واحدة تعمل ============================
+   قفلٌ باسم ثابت يُمسك طوال عمر الصفحة (`navigator.locks`). نوافذ WebView2
+   التي تتشارك مجلّد البيانات تتشارك عملية المتصفّح نفسها، فالقفل يراه كل
+   من يفتح القاعدة نفسها. والانتظار القصير قبل الحكم لأجل إعادة التحميل:
+   الصفحة القديمة تُطلق القفل وهي تُغلق، وقد تسبقها الجديدة بلحظة.
+   في المتصفح لا يُطلب (سلوكه لم يتغيّر)، وحيث لا تتوفّر الواجهة يُسمح. */
+const InstanceLock = {
+  NAME:'tabarak-gym:database', held:false,
+  async acquire(opts){
+    if (!Desktop.on() || !(navigator.locks && navigator.locks.request)) return true;
+    const waitMs = opts && opts.waitMs != null ? opts.waitMs : 3000;
+    const t0 = Date.now();
+    for (;;){
+      const got = await new Promise(res => {
+        navigator.locks.request(this.NAME, { ifAvailable:true }, lock => {
+          if (!lock){ res(false); return undefined; }
+          res(true);
+          return new Promise(() => {});             /* يُمسك حتى تُغلق الصفحة */
+        }).catch(() => res(true));
+      });
+      if (got){ this.held = true; return true; }
+      if (Date.now() - t0 >= waitMs) return false;
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+};
+
 /* أسماء المجلّدات كما يبنيها طرف الصدأ — للعرض وحده، لا لبناء مسار. */
 const FOLDERS = { root:'تبارك جيم', exports:'Exports', backups:'Backups' };
 
@@ -8424,6 +8698,28 @@ const Brand = {
     return out;
   },
   isAnimated(kind){ return Svc.media.isAnimated(this.media(kind)); },
+  /* إصلاح الإطار الثابت الفارغ لما حُفظ قبل 7.10: شعارٌ متحرّك بإطارٍ أول
+     فارغ يختفي حين يُطلب تقليل الحركة وفي الطباعة. يُعاد استخراج إطارٍ ممتلئ
+     من الأصل (الذي لم يُمسّ قطّ)، أو يُزال الفارغ فيُعرض الأصل. لا يمسّ إلا
+     حقل `posterUrl` — بيانات مشتقّة من الملف نفسه — ويُسجَّل ما أُصلح. */
+  async repairPosters(){
+    const fixed = [];
+    for (const kind of ['logo', 'banner']){
+      const m = this.media(kind);
+      if (!m || !Svc.media.isAnimated(m)) continue;
+      if (m.posterUrl && !(await Svc.media.posterIsBlank(m.posterUrl))) continue;
+      const next = await Svc.media.poster(m.dataUrl);
+      if ((next || null) === (m.posterUrl || null)) continue;
+      try { await Repos.media.update(m.id, { posterUrl:next || null }); fixed.push(kind); }
+      catch(e){ Log.warn('تعذّر إصلاح الإطار الثابت', e); }
+    }
+    if (fixed.length){
+      this.applyToShell();
+      await Audit.log('settings','branding',
+        `إصلاح الإطار الثابت الفارغ: ${fixed.map(k => k === 'banner' ? 'اللافتة' : 'الشعار').join(' و')}`);
+    }
+    return fixed;
+  },
   /* ------------------------- قصٌّ بلا إتلاف -------------------------
      الصورة المتحرّكة لا تمرّ على canvas: أول ما يفعله القصّ على canvas أن
      يأخذ إطاراً واحداً ويرمي البقيّة — فتصير الحركة صورةً ساكنة. والمطلوب
@@ -8453,7 +8749,8 @@ const Brand = {
      العيوب الذي جاء هذا الملف كلّه ليقفله. */
   cropStyle(c){
     return `position:absolute;left:${c.x}%;top:${c.y}%;width:${c.w}%;height:${c.h}%;`
-         + 'max-width:none;max-height:none;object-fit:fill;display:block';
+         + 'max-width:none;max-height:none;min-width:0;min-height:0;margin:0;padding:0;border:0;'
+         + 'object-fit:fill;display:block';
   },
   /* الصورة الثابتة: الإطار المحفوظ وقت الرفع، وإلا الأصل */
   stillUrl(kind){ return Svc.media.stillUrl(this.media(kind)); },
@@ -8479,89 +8776,136 @@ const Brand = {
      العيب الذي أوجد هذا: **أبعاد الملف المرفوع كانت تقرّر حجم الشعار على
      الشاشة.** ملفٌ 2400×600 يمطّ الشريط الجانبي، وملفٌ 600×2400 يطيله.
 
-     والقاعدة المضادّة له ليست «نضع max-width هنا وهناك»: سقفٌ مكتوب في
-     سبعة مواضع يُنسى في الثامن، وهذا ما تُثبته الشاشة التالية التي تُضاف.
-     فالقاعدة أن يكون للشعار **مكانٌ واحد يقرّر حجمه**:
+     عقد العرض (7.10):
 
-         أبعاد الملف ⇢ BOX[surface] ⇢ object-fit:contain ⇢ حجم ثابت
+         الصندوق ⟵ مقاسٌ صريح بالبكسل، `overflow:hidden`، `contain:strict`
+         الإطار  ⟵ مربّعٌ داخله بهامشٍ ثابت (`pad`)، بإحداثيات صريحة
+         الصورة  ⟵ موضوعةٌ في الإطار بإحداثيات صريحة، `object-fit:contain`
 
-     `BOX` هي كل المقاسات في النظام، و`boxStyle` هي كل ما يُكتب من أنماط،
-     و`logoHtml` هي المُخرج الوحيد. كل سطح جديد (شاشة الدخول مثلاً) يأخذ
-     مقاسه من هنا — فلا يستطيع أن يُعيد العيب حتى لو أراد.
+     **لا شيء في هندسة الشعار يُترك للتخطيط التلقائي.** الإصدار السابق كان
+     يترك حجم الصورة لقواعد `max-width/max-height:100%` داخل صندوقٍ مرن —
+     أي للحجم الأدنى التلقائي لعنصرٍ مُستبدَل في flex، وهي منطقةٌ اختلفت فيها
+     محرّكات العرض ونسخها، ولا تُقاس على جهاز المستخدمة. وكان الشعار المقصوص
+     (GIF) يُوضع على حافّة صندوق المعاينة متجاهلاً هامشه، فيبدو أكبر من
+     الشعار نفسه لو رُفع PNG. الآن كل رقمٍ سطريّ، ولا قاعدة في ورقة الأنماط
+     — مهما ثقل وزنها — تستطيع أن تغيّره، والقصّ والثابت يقعان في الإطار نفسه.
 
-     وأبعاد الطباعة لم تُمسّ: 54 للترويسة و56/44 للوصل كما كانت منذ المرحلة
-     الثالثة، والاختبار يقيسها بالبكسل ويسقط إن تغيّرت. */
+     `BOX` هي كل المقاسات في النظام. وأبعاد الطباعة لم تُمسّ: 54 للترويسة
+     و56/44 للوصل كما كانت منذ المرحلة الثالثة. */
   BOX: {
     sidebar: 38,          /* الشريط الجانبي */
     gate:    64,          /* شاشة الدخول */
-    settings:120,         /* معاينة الإعدادات — تُكتب من هنا في الأنماط السطرية */
+    settings:120,         /* معاينة الإعدادات */
     print:   54,          /* ترويسة كل مستند مطبوع */
     receipt: 56,          /* وصل A4 */
     slip:    44,          /* وصل شريطي 80mm */
     motion:  150,         /* نافذة «اختبار الحركة» */
   },
-  /* الأنماط التي تصنع الصندوق — تُكتب هنا وحدها.
-     `flex:0 0 auto` حتى لا يمطّه صفٌّ مرن، و`max-*` إلى جانب `width/height`
-     حتى لا يكسره تنسيقٌ أعمّ منه في سياق لم نتوقّعه. */
-  boxStyle(size){
-    return `width:${size}px;height:${size}px;max-width:${size}px;max-height:${size}px;`
-         + 'object-fit:contain;display:block;flex:0 0 auto';
+  /* هامش الإطار داخل الصندوق. الأسطح العارية (الشريط، الطباعة) بلا هامش كما
+     كانت. ومعاينة الإعدادات صندوقٌ بإطار مرسوم، فيُترك فيه هامشٌ واضح حتى لا
+     يلامس الشعارُ حافّته — وهو ما كان يجعله يبدو «أكبر من مكانه». */
+  PAD: { settings:12 },
+  /* نسبة اللافتة — هي نسبة إطار المحرّر نفسه (`ImageEditor.PRESET.banner`)،
+     فالقصّ المحفوظ يصف صورةً بهذه النسبة، وكل سطحٍ يرسم تلك الصورة. */
+  BANNER_ASPECT: 4,
+  /* أقصى ارتفاعٍ للّافتة على الشاشة. الصندوق 4:1 دائماً، فهذا السقف يعني أقصى
+     عرض ${240×4}: على نافذةٍ أعرض تتوسّط اللافتة بتكوينها كاملاً بدل أن
+     تُقصّ أو تُمطّ. سطرٌ واحد يقرّر المقاس في كل الأسطح. */
+  BANNER_MAX_H: 240,
+  bannerBoxStyle(){
+    return `aspect-ratio:${this.BANNER_ASPECT}/1;max-width:${this.BANNER_MAX_H * this.BANNER_ASPECT}px`;
   },
-  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور. */
-  logoHtml(size=40, forPrint=false){
+  /* الأنماط التي تصنع صندوق الشعار — تُكتب هنا وحدها. */
+  slotStyle(size){
+    return `width:${size}px;height:${size}px;min-width:${size}px;min-height:${size}px;`
+         + `max-width:${size}px;max-height:${size}px;flex:0 0 ${size}px;position:relative;`
+         + 'overflow:hidden;display:block;padding:0;box-sizing:border-box;contain:strict';
+  },
+  /* الإطار داخل الصندوق: موضعه ومقاسه صريحان، نسبةً إلى الصندوق. */
+  frameStyle(pad){
+    const p = Math.max(0, Math.round(pad || 0));
+    return `position:absolute;left:${p}px;top:${p}px;width:calc(100% - ${2 * p}px);`
+         + `height:calc(100% - ${2 * p}px);overflow:hidden;display:block;margin:0;padding:0`;
+  },
+  /* الصورة غير المقصوصة تملأ إطارها بـcontain — لا تتجاوزه ولا تُمطّ. */
+  fitStyle(fit){
+    return 'position:absolute;left:0;top:0;width:100%;height:100%;max-width:none;max-height:none;'
+         + `min-width:0;min-height:0;margin:0;padding:0;border:0;object-fit:${fit || 'contain'};`
+         + 'object-position:center;display:block';
+  },
+  /* للتوافق: كانت الأسطح تطلب «أنماط صندوق» لصورة واحدة */
+  boxStyle(size){ return this.slotStyle(size); },
+  /* الشعار للشاشة أو للطباعة. بلا شعار: العلامة المرسومة المدمجة — لا مربع مكسور.
+     opts: { pad, prev } — `prev` يسمّ الصورة لمعاينة الإعدادات. */
+  logoHtml(size=40, forPrint=false, opts){
+    const o = opts || {};
     /* الطباعة تأخذ الإطار الثابت دائماً: الورقة لا تتحرّك ولا تنتظر إطاراً */
     const url = this.renderUrl('logo', forPrint);
-    const box = this.boxStyle(size);
-    /* `data-brand-img` ليست زينة: هي ما يربط الصورة بقاعدة CSS تمنع
-       تجاوزَ الصندوق مهما كان السطح — انظري الأنماط عند `[data-brand-img]`.
-       وبقصٍّ محفوظ يصير الغلافُ هو الصندوق، والصورة محتوىً فيه بإحداثياتها.
-       وبلا قصّ: الصورة نفسها بصندوقها السطريّ كما كانت تماماً — فلا يتغيّر
-       شيء لمن لم يقصّ شيئاً. */
-    const crop = url ? this.cropOf('logo') : null;
-    if (url && crop)
-      return `<span class="brand-logo" data-brand-slot style="${box}">`
-        + `<img data-brand-img="logo" data-brand-crop src="${U.esc(url)}" `
-        + `alt="${U.esc(this.name())}" style="${this.cropStyle(crop)}"></span>`;
-    if (url) return `<img class="brand-logo" data-brand-img="logo" src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${box}">`;
-    return `<svg class="brand-mark" data-brand-img="logo" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
+    const slot = this.slotStyle(size);
+    const frame = this.frameStyle(o.pad);
+    const cls = o.cls ? ' ' + o.cls : '';
+    if (!url)
+      return `<span class="brand-mark${cls}" data-brand-slot="logo" style="${slot}"><span data-brand-frame style="${frame}">`
+        + `<svg data-brand-img="logo" viewBox="0 0 40 40" aria-hidden="true" style="${this.fitStyle()}">
       <circle cx="20" cy="20" r="19" fill="${forPrint ? '#432C4C' : '#C43E6B'}"/>
       <rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/>
       <rect x="6" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/>
-      <rect x="29" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/></svg>`;
+      <rect x="29" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/></svg></span></span>`;
+    /* `data-brand-img` تربط الصورة بقواعد الحماية في الأنماط، و`data-brand-prev`
+       تسمّ معاينة الإعدادات. وبقصٍّ محفوظ (صورة متحرّكة) تُوضع الصورة في
+       الإطار بإحداثياتها النسبية — والإطار مربّع كإطار المحرّر، فلا تشوّه. */
+    const crop = this.cropOf('logo');
+    const prev = o.prev ? ' data-brand-prev="logo"' : '';
+    const img = crop
+      ? `<img data-brand-img="logo" data-brand-crop${prev} src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${this.cropStyle(crop)}">`
+      : `<img data-brand-img="logo"${prev} src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${this.fitStyle()}">`;
+    return `<span class="brand-logo${cls}" data-brand-slot="logo" style="${slot}"><span data-brand-frame style="${frame}">${img}</span></span>`;
   },
   /* الشعار داخل غلافٍ صريح — لسطحٍ يحتاج توسيطاً أو خلفية حوله.
-     الغلاف هو الصندوق، والشعار داخله محتوىً: فحتى لو فشل تحميل الصورة بقي
-     المكان محجوزاً ولم يقفز ما حولها. تستعمله شاشة الدخول. */
+     تستعمله شاشة الدخول. */
   logoBox(size){ return this.slot(size, size, this.logoHtml(size)); },
-  /* صندوقٌ عامّ: عرضٌ وارتفاعٌ صريحان، و`overflow:hidden`، وما بداخله محتوى.
-     كل سطحٍ يحتاج أن يضع صورة هوية في مكانٍ محجوز يستعمل هذا — فلا يكتب
-     أحدٌ مقاساً بيده مرّة أخرى. */
+  /* صندوقٌ عامّ: عرضٌ وارتفاعٌ صريحان، و`overflow:hidden`، وما بداخله محتوى. */
   slot(w, h, inner, extra){
     return `<span class="brand-box" data-brand-slot style="width:${w}px;height:${h}px;`
          + `max-width:${w}px;max-height:${h}px${extra ? ';' + extra : ''}">${inner}</span>`;
   },
-  /* معاينة الهوية في الإعدادات — المصدر الوحيد لها.
-     كانت الإعدادات تكتب `<span class="brand-prev"><img ...>` بلا مقاس،
-     فيتكفّل بالمقاس ملفُ الأنماط وحده: رقمٌ مكتوب في مكانين، وصورةٌ عارية
-     من السمة التي تحميها. صارت تُبنى هنا، فتأخذ مقاسها من `BOX` وسمتها
-     من `logoHtml`، وتبقى `.brand-prev` للشكل (الإطار والخلفية) لا للحجم. */
+  /* ------------------------ اللافتة — عقدٌ واحد ------------------------
+     العيب (7.9): القصّ يُحفظ نسباً مئوية من إطار المحرّر (4:1)، ثم كان يُطبَّق
+     بـ`width:w%;height:h%;object-fit:fill` على **صندوق السطح** أيّاً كانت نسبته.
+     فالعرض يتبع عرض الصندوق والارتفاع يتبع ارتفاعه كلٌّ على حدة: في الإعدادات
+     (453×90، أي 5:1) تُضغط الصورة قليلاً، وفي الاستقبال (1254×132، أي 9.5:1)
+     تُمطّ إلى أكثر من ضعف عرضها. صورةٌ واحدة بقصٍّ واحد، وتكوينان مختلفان.
+
+     العقد الآن: **القصّ يصف صورةً بنسبة 4:1** (ما رأته المستخدمة في الإطار).
+     وكل سطحٍ يرسم تلك الصورة كما يُرسم ملفٌّ ثابت 1600×400 — بتكبيرٍ واحد في
+     الاتجاهين (`cover`)، متوسّطةً. فالمسرح (`data-brand-stage`) بنسبة 4:1
+     دائماً ويغطّي الصندوق، والصورة فيه بإحداثيات القصّ. صندوقٌ بنسبة 4:1
+     (معاينة الإعدادات، والاستقبال على نافذةٍ معتادة) يُظهرها كما اختيرت
+     بالضبط؛ وصندوقٌ أعرض يُظهر وسطها بلا تشويه — كما تفعل اللافتة الثابتة
+     منذ البداية. لا مربّع، ولا مطّ، ولا تفسيرٌ ثانٍ للقصّ في أي سطح. */
+  bannerStageStyle(){
+    const a = this.BANNER_ASPECT;
+    return `position:absolute;left:50%;top:50%;width:max(100cqw, ${a * 100}cqh);`
+         + `height:max(100cqh, ${U.round2(100 / a)}cqw);transform:translate(-50%,-50%);overflow:hidden;display:block`;
+  },
+  bannerInner(url, crop, alt, prev){
+    const pv = prev ? ' data-brand-prev="banner"' : '';
+    if (!crop)
+      return `<img src="${U.esc(url)}" alt="${U.esc(alt)}" data-brand="banner" data-brand-img="banner"${pv} style="${this.fitStyle('cover')}">`;
+    return `<span data-brand-stage style="${this.bannerStageStyle()}">`
+      + `<img src="${U.esc(url)}" alt="${U.esc(alt)}" data-brand="banner" data-brand-img="banner" data-brand-crop${pv} style="${this.cropStyle(crop)}"></span>`;
+  },
+  /* معاينة الهوية في الإعدادات — المصدر الوحيد لها، ومن المُخرِج نفسه الذي
+     تستعمله بقيّة الأسطح. */
   previewHtml(kind){
     const m = this.media(kind);
     if (!m) return '';
     const url = this.renderUrl(kind);
     if (!url) return '';
-    const crop = this.cropOf(kind);
-    const cst = crop ? ` data-brand-crop style="${this.cropStyle(crop)}"` : '';
-    const img = `<img data-brand-img="${U.esc(kind)}" data-brand-prev="${U.esc(kind)}" `
-      + `src="${U.esc(url)}" alt=""${cst}>`;
-    /* الشعار: مربّعٌ مقاسه من `BOX` — الرقم يُكتب هنا لا في ملف الأنماط.
-       اللافتة: تبقى على قياسها العريض في `.media-drop.wide .brand-prev`
-       كما هي منذ المرحلة السابقة — وهي تعمل، فلا تُمسّ. الجديد فيهما
-       معاً هو الصندوق والسمة، لا المقاس. */
-    const size = kind === 'banner' ? ''
-      : ` style="width:${this.BOX.settings}px;height:${this.BOX.settings}px;`
-        + `max-width:${this.BOX.settings}px;max-height:${this.BOX.settings}px"`;
-    return `<span class="brand-prev" data-brand-slot${size}>${img}</span>`;
+    if (kind !== 'banner')
+      return this.logoHtml(this.BOX.settings, false, { pad:this.PAD.settings, prev:true, cls:'brand-prev' });
+    return `<span class="brand-prev brand-banner-prev" data-brand-slot="banner" style="aspect-ratio:${this.BANNER_ASPECT}/1">`
+      + this.bannerInner(url, this.cropOf('banner'), '', true) + '</span>';
   },
   /* اللافتة العريضة: تُقصّ ولا تُمطّ، ولا تظهر أصلاً إن لم تُرفع */
   bannerHtml(forPrint){
@@ -8571,10 +8915,8 @@ const Brand = {
     if (!url) return '';
     /* «حيّ» يعني: المرسوم هو الملف الأصلي. تُقرأ الحالة من العنصر نفسه. */
     const live = url === m.dataUrl && this.isAnimated('banner');
-    const crop = this.cropOf('banner');
-    const st = crop ? ` data-brand-crop style="${this.cropStyle(crop)}"` : '';
-    return `<div class="brand-banner" data-brand-slot data-motion="${live ? 'live' : 'still'}">
-      <img src="${U.esc(url)}" alt="لافتة ${U.esc(this.name())}" data-brand="banner" data-brand-img="banner"${st}></div>`;
+    return `<div class="brand-banner" data-brand-slot="banner" data-motion="${live ? 'live' : 'still'}" style="${this.bannerBoxStyle()}">`
+      + this.bannerInner(url, this.cropOf('banner'), `لافتة ${this.name()}`) + '</div>';
   },
   contactLine(){
     const b = this.get();
@@ -13512,7 +13854,7 @@ Views.settings = {
           ${i.animated ? `<span class="pill ${playing ? 'ok' : ''}">${playing ? 'الحركة مفعّلة' : 'الحركة متوقفة'}</span>` : ''}
           <span>${U.esc(kb)}</span>
           ${i.width && i.height ? `<span class="num">${i.width}×${i.height}</span>` : ''}
-          ${i.animated ? `<span>${i.hasPoster ? 'المطبوع يأخذ الإطار الأول' : 'بلا إطار ثابت — يُطبع الملف كما هو'}</span>` : ''}
+          ${i.animated ? `<span>${i.hasPoster ? 'المطبوع يأخذ منها إطاراً ثابتاً ممتلئاً' : 'بلا إطار ثابت — يُعرض الملف ويُطبع كما هو'}</span>` : ''}
         </div>`;
       };
       box.innerHTML = `
@@ -16965,20 +17307,20 @@ Object.assign(Actions, {
     UI.toast('تم حذف العرض'); renderRoute();
   },
   async exportBackup(includeMedia=true){
+    const name = `نسخة-تبارك-جيم-${D.stamp()}${includeMedia?'':'-بدون-وسائط'}.json`;
     try{
-      const obj = Backup.build(includeMedia);
-      const blob = new Blob([JSON.stringify(obj, null, 1)], { type:'application/json' });
-      const name = `نسخة-تبارك-جيم-${D.stamp()}${includeMedia?'':'-بدون-وسائط'}.json`;
-      /* في سطح المكتب تُكتب النسخة في مجلّدها وتُعلن مكانها؛ وفي المتصفح
-         تنزيل كما كان. الرسالة تُقال مرة واحدة لا مرتين. */
+      /* في سطح المكتب تُكتب النسخة في مجلّدها ثم تُقرأ منه ويُتحقَّق منها قبل
+         أن يُقال «حُفظت». وفي المتصفح تنزيل كما كان. الرسالة تُقال مرة واحدة. */
       if (Desktop.on()){
-        const r = await DesktopFiles.save(blob, name, 'backup');
+        const r = await Backup.saveVerified('backup', name, includeMedia);
         await Backup.markExported();
-        await Audit.log('system','backup',`نسخة احتياطية يدوية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل) — ${r.name}`);
-        UI.toast('تم حفظ النسخة الاحتياطية', 'ok', 9000,
+        await Audit.log('system','backup',`نسخة احتياطية يدوية مُتحقَّق منها (${r.records} سجل) — ${r.name}`);
+        UI.toast('تم حفظ النسخة الاحتياطية وتحقّقنا من سلامتها', 'ok', 9000,
           { where: `${r.name} — ${Desktop.pretty(r.folder)}`,
             actions: [{ label:'فتح المجلد', onClick:() => Desktop.openFolder('backup') }] });
       } else {
+        const { obj, text } = await Backup.serialize(includeMedia);
+        const blob = new Blob([text], { type:'application/json' });
         UI.download(blob, name);
         await Backup.markExported();
         await Audit.log('system','backup',`تصدير نسخة احتياطية (${Object.values(obj.counts).reduce((a,b)=>a+b,0)} سجل)`);
@@ -16991,12 +17333,16 @@ Object.assign(Actions, {
     let obj;
     try { obj = JSON.parse(await file.text()); }
     catch(e){ return UI.toast('الملف ليس JSON صالحاً — قد يكون تالفاً','err'); }
-    const v = Backup.validate(obj);
+    /* التحقّق كاملاً قبل أي سؤال: البنية والبصمة. ملفٌّ تالف لا يصل إلى زرّ «استبدال». */
+    const v = await Backup.verify(obj);
     if (!v.ok) return UI.modal({ title:'نسخة غير صالحة', size:'narrow',
-      body:`<p>تعذّر استيراد الملف للأسباب التالية:</p><ul>${v.errors.map(e=>`<li>${U.esc(e)}</li>`).join('')}</ul>` });
+      body:`<p>تعذّر استيراد الملف للأسباب التالية — ولم يُمسّ شيء من بياناتك:</p><ul>${v.errors.map(e=>`<li>${U.esc(e)}</li>`).join('')}</ul>` });
     const cur = Object.fromEntries(STORE_NAMES.map(s=>[s, DB.count(s)]));
     const table = STORE_NAMES.filter(s => v.counts[s] || cur[s]).map(s =>
-      `<tr><td>${U.esc(s)}</td><td class="num">${cur[s]}</td><td class="num">${v.counts[s]||0}</td></tr>`).join('');
+      `<tr><td>${U.esc(storeLabel(s))}</td><td class="num">${cur[s]}</td><td class="num">${v.counts[s]||0}</td></tr>`).join('');
+    const warnHtml = v.warnings.length
+      ? `<div class="err" style="margin-top:10px"><strong>تنبيه:</strong> أعداد السجلات في الملف لا تطابق ما سُجّل عند إنشائه — قد يكون عُدّل أو نقص:<ul>${v.warnings.map(w=>`<li>${U.esc(w)}</li>`).join('')}</ul></div>` : '';
+    const integ = v.integrity === 'ok' ? 'بصمة الملف سليمة' : v.integrity === 'absent' ? 'نسخة من إصدار لا يكتب بصمة' : 'تعذّر فحص البصمة';
     /* تحذير صريح إذا كانت النسخة بلا وسائط وهناك تمارين تعتمد عليها */
     const exWithMedia = Repos.exercises.list(true).filter(x => x.mediaId).length;
     const mediaWarn = (!v.counts.media && exWithMedia)
@@ -17004,8 +17350,8 @@ Object.assign(Actions, {
     const ok = await UI.confirm({ title:'استعادة نسخة احتياطية', danger:true, confirmText:'استبدال البيانات',
       message:`سيتم <strong>حذف كل البيانات الحالية</strong> واستبدالها ببيانات الملف. لا يمكن التراجع.`,
       extra:`<table class="tbl" style="margin-top:12px"><thead><tr><th>الجدول</th><th>الحالي</th><th>في الملف</th></tr></thead><tbody>${table}</tbody></table>
-        ${mediaWarn}
-        <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''}</p>` });
+        ${mediaWarn}${warnHtml}
+        <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''} — ${integ}</p>` });
     if (!ok) return;
 
     /* نقطة رجوع قبل فعل لا يُتراجع عنه: البيانات الحالية تُحفظ أولاً.
@@ -17027,13 +17373,26 @@ Object.assign(Actions, {
     try {
       Backup._busy = true;
       const counts = await Backup.restore(obj);
-      const skipped = counts._skippedTotal || 0;
+      const skipped = counts._skippedTotal || 0, dups = counts._duplicatesTotal || 0;
       const total = STORE_NAMES.reduce((a, s) => a + (Number(counts[s]) || 0), 0);
       /* الرقم المعروض هو ما دخل فعلاً. وإن سقط شيء يُقال بصوت مسموع لا في سجل لا يُقرأ. */
-      if (skipped) UI.toast(`تمت الاستعادة — ${total} سجل، واستُبعد ${skipped} سجلاً تالفاً بلا معرّف`, 'warn', 9000);
+      const notes = [];
+      if (skipped) notes.push(`استُبعد ${skipped} سجلاً تالفاً بلا معرّف`);
+      if (dups) notes.push(`${dups} سجلاً بمعرّف مكرَّر أُبقي آخره`);
+      if (counts._migrationError) notes.push(`تعذّرت ترقية البيانات وستُعاد عند التشغيل التالي: ${counts._migrationError}`);
+      if (notes.length) UI.toast(`تمت الاستعادة — ${total} سجل، و${notes.join('، و')}`, 'warn', 12000);
       else UI.toast(`تمت الاستعادة — ${total} سجل`);
       await Backup.markRestored();
       $('brandName').textContent = Settings.get('gymName');
+      /* المستخدمات المستعادات قد لا يشملن من كانت داخلة، أو قد تكون النسخة
+         بتسجيل دخول مفعّل: البوّابة تقرّر كما عند الإقلاع — لا مساحة عمل
+         مفتوحة لجلسة لم تعد صالحة. */
+      if (Auth.enabled() && !Auth.session.actorId){
+        paintWhoAmI();
+        if (Auth.needsSetup()) Gate.setup(); else Gate.login();
+        return;
+      }
+      buildNav(); paintWhoAmI();
       renderRoute();
     } catch(e){ Log.error('فشل الاستعادة', e); UI.toast('فشلت الاستعادة: ' + e.message,'err'); }
     finally { Backup._busy = false; }
@@ -18458,10 +18817,22 @@ async function boot(){
      على قاعدة كبيرة. وما يُظهَر الآن ليس شاشةً نصف مبنيّة بل صورة مكتملة. */
   if (Intro.started) Intro.painted().then(() => Desktop.ready()).catch(() => {});
 
+  /* نسخةٌ ثانية من التطبيق على القاعدة نفسها = ذاكرتان تتباعدان. كلٌّ منهما
+     يكتب لقطة الإعدادات كاملة، فيعود عدّاد الوصولات أو أكواد المشتركات إلى
+     رقمٍ استُعمل. فلا تُفتح القاعدة من نافذة ثانية أبداً (سطح المكتب). */
+  if (!await InstanceLock.acquire())
+    throw new AppError('تبارك جيم مفتوح في نافذة أخرى. أغلقي هذه النافذة واستعملي المفتوحة — لم تُفتح البيانات هنا حمايةً لها.','SECOND_INSTANCE');
+
   let adapter;
   try {
     adapter = await new IDBAdapter(APP.db, APP.schema).open();
   } catch(e){
+    /* في تطبيق سطح المكتب لا احتياطيّ: قاعدةٌ فارغة تُفتح مكان قاعدةٍ تعذّر
+       فتحها تُري المستخدمة نادياً بلا بيانات، فتبدأ تسجّل مالاً في مخزنٍ
+       آخر، وتصير النسخة التلقائية لذلك اليوم نسخةً فارغة. الفشل الصريح هنا
+       — مع «إعادة المحاولة» — هو ما يحمي البيانات. والمتصفح يبقى كما كان. */
+    if (Desktop.on())
+      throw new AppError('تعذّر فتح قاعدة البيانات. لم يُفتح النظام على قاعدة فارغة حمايةً لبياناتك — أعيدي تشغيل البرنامج، وإن تكرّر ذلك فاستعيدي آخر نسخة احتياطية.','IDB_OPEN', e);
     Log.error('تعذّر فتح IndexedDB — المحاولة على التخزين المحلي', e);
     try { adapter = await new LSAdapter(APP.db).open(); }
     catch(e2){ Log.error('تعذّر التخزين المحلي — التشغيل في الذاكرة', e2); adapter = await new MemAdapter().open(); }
@@ -18592,6 +18963,9 @@ async function boot(){
    التنبيهات تقرأ بيانات المشتركات، والنسخة التلقائية تكتبها إلى القرص:
    كلاهما عملٌ على بيانات لم يُصرَّح لأحدٍ برؤيتها ما دام الدخول مطلوباً. */
 function afterFirstPaint(){
+  /* إطارٌ ثابت فارغ حُفظ قبل 7.10 يُصلَح في الخلفية — ويُعاد رسم الشاشة إن تغيّر شيء */
+  Brand.repairPosters().then(f => { if (f.length) renderRoute(); })
+    .catch(e => Log.warn('إصلاح الإطار الثابت', e));
   const alerts = Svc.notify.build().filter(n => n.level === 'red');
   if (alerts.length) setTimeout(() => UI.toast(alerts[0].title, 'warn', 6000), 900);
   /* النسخة التلقائية آخر ما يحدث، ومؤجَّلة بعد أول رسم: الإقلاع لا ينتظرها،
@@ -18636,7 +19010,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor,
-              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro,
+              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,
               ready:AppReady };

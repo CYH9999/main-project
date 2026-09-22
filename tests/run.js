@@ -365,7 +365,9 @@ group('تقليل الحركة', async (browser, url) => {
       const { Brand } = window.TG;
       window.TG.go('desk'); window.TG.renderRoute();
       const banner = document.querySelector('.brand-banner');
-      const shell = document.querySelector('.brand-logo');
+      /* 7.10: `.brand-logo` صندوقٌ والصورة داخله — يُقرأ مصدر الصورة نفسها */
+      const shellSlot = document.querySelector('.brand-logo');
+      const shell = shellSlot && (shellSlot.tagName === 'IMG' ? shellSlot : shellSlot.querySelector('img'));
       /* اللافتة صارت <img> حقيقية: يُقرأ مصدرها من العنصر مباشرة بدل
          استخراجه من نصّ background-image — أوضح وأدقّ. */
       const bimg = banner ? banner.querySelector('img') : null;
@@ -433,7 +435,7 @@ group('الهوية المتحرّكة في الشاشة', async (browser, url) 
   const preview = await page.evaluate(() => {
     const t = document.getElementById('viewRoot').textContent.replace(/\s+/g, ' ');
     return { animated:/صورة متحرّكة/.test(t), size:/ك\.ب|م\.ب/.test(t), dims:/\d+×\d+/.test(t),
-             frame:/الإطار الأول/.test(t), canRemove:!!document.getElementById('bLogoDel') };
+             frame:/المطبوع يأخذ منها إطاراً ثابتاً/.test(t), canRemove:!!document.getElementById('bLogoDel') };
   });
   rows.push({ name:'المعاينة تقول إنها متحرّكة', pass:preview.animated, detail:'' });
   rows.push({ name:'المعاينة تعرض الحجم', pass:preview.size, detail:'' });
@@ -2694,6 +2696,9 @@ require('./desktop-io.js')({ group, record, TESTS_JS });
 /* المرحلة 4.2: تجربة سطح المكتب — الإقلاع، ونافذة البدء، وصندوق الشعار،
    وملف الموظفة، ومركز الملفات، ورسائل الحفظ، وطريق الطباعة الوحيد. */
 require('./desktop-ux.js')({ group, record, TESTS_JS });
+/* 7.10: سلامة البيانات على نادٍ ممثّل، وعقد الهوية الواحد، وتصدير Word،
+   والطباعة، والتنقّل المالي — انظري docs/QA-phase-4.6.md. */
+require('./hardening.js')({ group, record, TESTS_JS });
 
 
 /* -------------------------------- التشغيل -------------------------------- */
