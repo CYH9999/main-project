@@ -26,6 +26,9 @@ on:
       - 'intro/**'
       - 'src-tauri/**'
       - 'scripts/**'
+      # الاختبارات بوّابات البناء: تغييرٌ فيها يجب أن يُشغَّل ويُبنى معه مثبّت
+      # من الالتزام نفسه — وإلا صار آخر مثبّت من التزامٍ غير رأس الفرع.
+      - 'tests/**'
       - 'package.json'
       - '.gitattributes'
       - '.github/workflows/windows-desktop.yml'

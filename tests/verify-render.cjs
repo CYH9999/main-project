@@ -9,9 +9,11 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('playwright');
 const { installBridge } = require('./desktop-io.js');
 
-const ROOT = '/home/user/main-project';
+/* الجذر من موضع هذا الملف لا مسارٌ مكتوب: كان هنا مسار جهاز التطوير، فلم
+   تكن البوّابة تعمل إلا عليه — وعلى مشغّل CI لم تجد حتى ملفّ الاختبار. */
+const ROOT = path.join(__dirname, '..');
 const DIST = path.join(ROOT, 'app', 'index.html');
-const P = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const P = process.env.TG_CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const CHROME = fs.existsSync(P) ? P : undefined;
 
 function serve() {
@@ -34,6 +36,7 @@ function serve() {
   });
 }
 
+const VER = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const GIF_B64 = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures-anim.gif')).toString('base64');
 
 let fails = 0;
@@ -51,7 +54,7 @@ const ok = (name, pass, detail) => {
   for (const vp of [{ width: 1024, height: 600 }, { width: 1440, height: 900 }]) {
     const ctx = await browser.newContext({ viewport: vp });
     await ctx.addInitScript(() => { window.open = () => null; });
-    await ctx.addInitScript(installBridge, { fail: {}, version: '7.9.0' });
+    await ctx.addInitScript(installBridge, { fail: {}, version: VER });
     const page = await ctx.newPage();
     const errs = [];
     page.on('pageerror', e => errs.push(e.message));
@@ -163,7 +166,7 @@ const ok = (name, pass, detail) => {
   {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await ctx.addInitScript(() => { window.open = () => null; });
-    await ctx.addInitScript(installBridge, { fail: {}, version: '7.9.0' });
+    await ctx.addInitScript(installBridge, { fail: {}, version: VER });
     const page = await ctx.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
