@@ -907,6 +907,73 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('الطباعة 7.10 — ورقة مرتّبة: ترويسة بالشعار، صفوف مضغوطة، ترقيم', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 11) التنقّل المالي — طريقٌ واحد لكل وجهة                              *
+   * ===================================================================== */
+  group('التنقّل المالي — الشريط والتبويبات يتّفقان على كل وجهة', async (browser) => {
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    let errs = [];
+    try {
+      const a = await openBridged(browser, url);
+      errs = a.errors;
+      const r = await a.page.evaluate(async () => {
+        const TG = window.TG, sleep = ms => new Promise(r => setTimeout(r, ms));
+        await TG.Seed.loadDemo(10);
+        TG.buildNav();
+        /* علامة لا تظهر إلا في محتوى التبويب نفسه */
+        const MARK = { revenues:'#rTable', expenses:'#eTable', dues:'#duPrint', capital:'#cTable', partners:'#prTable', cash:'#cashDayPrint' };
+        const LABEL = Object.fromEntries(TG.FIN.TABS.map(x => [x.key, x.t]));
+        const OWNER = { revenues:'fin-acc', expenses:'fin-acc', dues:'fin-acc', capital:'fin-acc', partners:'fin-partners', cash:'fin-cash' };
+        const SECTION = { 'fin-acc':'الحسابات', 'fin-partners':'الشركاء والأرباح', 'fin-cash':'الصندوق اليومي' };
+        const state = () => {
+          const shown = Object.keys(MARK).filter(k => document.querySelector(MARK[k]));
+          const active = [...document.querySelectorAll('.nav-item.active')].map(b => b.dataset.nav);
+          const tabBtn = document.querySelector('.fin-tabs .tab.active');
+          return { hash: location.hash, shown, active, tab: tabBtn && tabBtn.dataset.tab,
+                   title: document.getElementById('pageTitle').textContent, sub: document.getElementById('pageSub').textContent };
+        };
+        const out = [];
+        for (const entry of ['fin-acc', 'fin-partners', 'fin-cash']) {
+          document.querySelector(`.nav-item[data-nav="${entry}"]`).click();
+          await sleep(200);
+          const s0 = state();
+          out.push({ how: `الشريط: ${SECTION[entry]}`, want: TG.NAV.find(n => n.id === entry).p.tab, s: s0 });
+          /* من هنا، كل تبويب في أعلى الصفحة */
+          for (const t of Object.keys(MARK)) {
+            document.querySelector(`.fin-tabs [data-tab="${t}"]`).click();
+            await sleep(200);
+            out.push({ how: `${SECTION[entry]} ⟵ تبويب ${LABEL[t]}`, want: t, s: state() });
+          }
+        }
+        /* المداخل الأخرى: لوحة التحكم، التنبيه، فتح المالية بلا تبويب، والضغط على المفتوح نفسه */
+        TG.FIN.open('dues'); await sleep(200);
+        out.push({ how: 'FIN.open(dues)', want: 'dues', s: state() });
+        TG.FIN.open('dues'); await sleep(200);
+        out.push({ how: 'الضغط على الوجهة المفتوحة نفسها', want: 'dues', s: state() });
+        TG.State.f.financeTab = 'capital'; location.hash = '#/finance'; await sleep(250);
+        out.push({ how: 'المالية بلا تبويب ⟵ آخر تبويب', want: 'capital', s: state() });
+        location.hash = '#/finance?tab=nonsense'; await sleep(250);
+        out.push({ how: 'تبويب غير معروف في الرابط', want: 'capital', s: state() });
+        return { out, OWNER, SECTION, LABEL, MARK: Object.keys(MARK) };
+      });
+      for (const c of r.out) {
+        const s = c.s, owner = r.OWNER[c.want];
+        const good = s.shown.length === 1 && s.shown[0] === c.want && s.tab === c.want
+          && new RegExp(`tab=${c.want}(&|$)`).test(s.hash)
+          && s.active.length === 1 && s.active[0] === owner
+          && s.title === r.SECTION[owner]
+          && s.sub.includes(r.LABEL[c.want]) && s.sub.includes('المالية');
+        ok(`${c.how}: يفتح «${r.LABEL[c.want]}» — المحتوى والتبويب والرابط والشريط والعنوان متّفقة`, good,
+           `shown=${s.shown} tab=${s.tab} hash=${s.hash} active=${s.active} title=${s.title} sub=${s.sub}`);
+      }
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('التنقّل المالي — الشريط والتبويبات يتّفقان على كل وجهة', rows, errs);
+  });
 };
 
 /* ---------------------------------------------------------------------------

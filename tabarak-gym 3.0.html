@@ -82,6 +82,10 @@ td.num,th.num{display:table-cell;text-align:end}
 .side-foot button{background:none;border:0;color:#C9B6CE;cursor:pointer;font-size:11px;text-decoration:underline}
 
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
+/* الشريط العلوي لاصق: التمرير إلى أوّل الشاشة عند الانتقال (`scrollIntoView`)
+   كان يضع أوّل 70 بكسلاً من المحتوى تحته — فتُفتح كل شاشة وصفُّ تبويباتها
+   مخفيّ. هامش التمرير يُبقي أوّل المحتوى تحت الشريط لا خلفه. */
+#viewRoot{scroll-margin-top:120px}
 .topbar{
   background:var(--surface);border-bottom:1px solid var(--line);
   padding:12px 22px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:40;
@@ -305,6 +309,10 @@ textarea.inp{min-height:74px;resize:vertical}
 .tab{background:none;border:0;padding:9px 15px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .tab:hover{color:var(--ink)}
 .tab.active{color:var(--rose-700);border-bottom-color:var(--rose-600)}
+/* تبويبات المالية: اسم القسم قبل تبويباته، وفاصلٌ قبل القسمين الآخرين */
+.fin-tabs{align-items:center}
+.tab-group{font-size:11.5px;font-weight:700;color:var(--muted);padding:9px 2px 9px 6px;letter-spacing:.2px}
+.tab-sep{width:1px;align-self:stretch;margin:8px 8px;background:var(--line)}
 
 /* ============================ Profile ============================ */
 .avatar{width:38px;height:38px;border-radius:50%;background:var(--rose-100);color:var(--rose-700);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:0 0 38px}
@@ -4265,7 +4273,7 @@ Svc.notify = {
       const med = sorted[Math.floor(sorted.length/2)] || 0;
       const odd = recent.filter(e => e.amount > med * (s.unusualExpenseFactor||3) && D.diffDays(e.date, today) <= 30);
       if (odd.length) out.push({ level:'gold', title:`${odd.length} مصروف أعلى من المعتاد`,
-        desc: odd.slice(0,2).map(e=>`${e.description} (${Money.fmt(e.amount)})`).join('، '), go:'finance' });
+        desc: odd.slice(0,2).map(e=>`${e.description} (${Money.fmt(e.amount)})`).join('، '), go:'finance', tab:'expenses' });
     }
     const due = Svc.payments.totalDue();
     if (due.count) out.push({ level:'red', title:`${Money.fmt(due.due)} غير محصّلة`,
@@ -10418,9 +10426,11 @@ const NAV = [
   { k:'exercises',  t:'مكتبة التمارين', i:ICON.dumbbell },
   { g:'المال' },
   { k:'subs',       t:'سجل الاشتراكات', i:ICON.card },
-  { k:'finance',    t:'الصندوق اليومي', i:ICON.wallet, p:{ tab:'cash' },     id:'fin-cash' },
-  { k:'finance',    t:'الحسابات',       i:ICON.coins,  p:{ tab:'revenues' }, id:'fin-acc' },
-  { k:'finance',    t:'الشركاء والأرباح', i:ICON.report, p:{ tab:'partners' }, id:'fin-partners' },
+  /* مداخل المالية الثلاثة وما يملكه كلٌّ منها من تبويبات — المصدر نفسه الذي
+     تقرأ منه شاشة المالية عنوانها وتبويباتها (انظري `FIN`). */
+  { k:'finance',    t:'الصندوق اليومي', i:ICON.wallet, p:{ tab:'cash' },     id:'fin-cash',     tabs:['cash'] },
+  { k:'finance',    t:'الحسابات',       i:ICON.coins,  p:{ tab:'revenues' }, id:'fin-acc',      tabs:['revenues','expenses','dues','capital'] },
+  { k:'finance',    t:'الشركاء والأرباح', i:ICON.report, p:{ tab:'partners' }, id:'fin-partners', tabs:['partners'] },
   { k:'payroll',    t:'الرواتب',        i:ICON.wallet },
   { k:'offers',     t:'العروض والولاء', i:ICON.gift },
   { k:'reports',    t:'التقارير',       i:ICON.report },
@@ -10449,7 +10459,7 @@ function buildNav(){
   nav.innerHTML = visible.map(n => n.g
     ? `<div class="nav-group">${U.esc(n.g)}</div>`
     : `<button class="nav-item" data-route="${n.k}" data-nav="${U.esc(navId(n))}"
-        ${n.p ? `data-params='${U.esc(JSON.stringify(n.p))}'` : ''}>${svg(n.i)}<span class="lbl">${U.esc(n.t)}</span><span class="nav-badge hidden" data-badge="${U.esc(navId(n))}"></span></button>`).join('');
+        ${n.p ? `data-params='${U.esc(JSON.stringify(n.p))}'` : ''}${n.tabs ? ` data-tabs="${U.esc(n.tabs.join(','))}"` : ''}>${svg(n.i)}<span class="lbl">${U.esc(n.t)}</span><span class="nav-badge hidden" data-badge="${U.esc(navId(n))}"></span></button>`).join('');
   nav.querySelectorAll('[data-route]').forEach(b => b.onclick = () => {
     let p = null;
     try { p = b.dataset.params ? JSON.parse(b.dataset.params) : null; } catch(e){ p = null; }
@@ -10474,7 +10484,10 @@ function navBadges(){
 }
 function go(route, params){
   const q = params ? '?' + new URLSearchParams(params).toString() : '';
-  location.hash = `#/${route}${q}`;
+  const next = `#/${route}${q}`;
+  /* الرابط نفسه لا يُطلق hashchange — فكانت ضغطةٌ على ما هو مفتوح لا تفعل شيئاً */
+  if (location.hash === next) renderRoute();
+  else location.hash = next;
 }
 function currentRoute(){
   /* الشاشة الافتتاحية اختيار النادي: الاستقبال لمن تفتح البرنامج لتعمل عليه
@@ -10496,14 +10509,27 @@ function applyPerms(root){
   });
 }
 function renderRoute(){
-  const { route, params } = currentRoute();
+  let { route, params } = currentRoute();
+  /* شاشةٌ لها حالة قانونية في الرابط (تبويب المالية) تُصحّحها هنا قبل أي
+     شيء: فالتمييز والعنوان والمحتوى يقرؤون الحالة نفسها، والرابط يطابقها. */
+  const cv = Views[route];
+  if (cv && typeof cv.canonical === 'function'){
+    const cp = cv.canonical(params || {});
+    if (cp && new URLSearchParams(cp).toString() !== new URLSearchParams(params || {}).toString()){
+      params = cp;
+      try { history.replaceState(null, '', `#/${route}?${new URLSearchParams(cp).toString()}`); } catch(e){}
+    }
+  }
   State.route = route; State.params = params;
   /* التمييز يراعي أن لشاشة واحدة عدة مداخل: يُضاء المدخل المطابق لمعاملاته،
      وإن لم يطابق أيٌّ منها فالمدخل الأول للشاشة هو المُضاء. */
   (() => {
     const btns = [...document.querySelectorAll('.nav-item')];
     const mine = btns.filter(b => b.dataset.route === route);
-    let hit = mine.find(b => {
+    /* المدخل الذي «يملك» التبويب أوّلاً: «الحسابات» مضاءٌ على المصروفات
+       والمستحقات ورأس المال أيضاً — لا يُضاء «الصندوق اليومي» لأنه الأول. */
+    let hit = (params.tab && mine.find(b => b.dataset.tabs && b.dataset.tabs.split(',').includes(String(params.tab))))
+      || mine.find(b => {
       if (!b.dataset.params) return false;
       try { return Object.entries(JSON.parse(b.dataset.params)).every(([k, v]) => String(params[k]) === String(v)); }
       catch(e){ return false; }
@@ -10511,8 +10537,8 @@ function renderRoute(){
     btns.forEach(b => b.classList.toggle('active', b === hit));
   })();
   const v = Views[route];
-  $('pageTitle').textContent = v.title;
-  $('pageSub').textContent = typeof v.sub === 'function' ? v.sub() : (v.sub || '');
+  $('pageTitle').textContent = typeof v.title === 'function' ? v.title(params) : v.title;
+  $('pageSub').textContent = typeof v.sub === 'function' ? v.sub(params) : (v.sub || '');
   const root = $('viewRoot');
   root.innerHTML = '<div class="view"></div>';
   try { v.render(root.firstChild, params); }
@@ -10630,7 +10656,7 @@ Views.dashboard = {
     })();
     const alerts = [];
     if (cnt('EXPIRING_SOON')) alerts.push(['warn', `${cnt('EXPIRING_SOON')} اشتراك يوشك أن ينتهي`, 'members', { status:'EXPIRING_SOON' }]);
-    if (dues.count) alerts.push(['bad', `${Money.fmt(dues.due)} غير محصّلة على ${dues.count} مستند`, 'finance', null]);
+    if (dues.count) alerts.push(['bad', `${Money.fmt(dues.due)} غير محصّلة على ${dues.count} مستند`, 'finance', { tab:'dues' }]);
     if (dueTasks.length) alerts.push(['warn', `${dueTasks.length} متابعة مستحقّة`, 'tasks', null]);
     if (inactive.length) alerts.push(['warn', `${inactive.length} مشتركة فعّالة لم تحضر منذ ${Settings.get('inactiveDays')} يوماً`, 'members', null]);
     if (Svc.leads.dueFollowUps().length) alerts.push(['warn', `${Svc.leads.dueFollowUps().length} مهتمّة تنتظر متابعة`, 'crm', null]);
@@ -10778,7 +10804,7 @@ Views.dashboard = {
     exWrap.querySelectorAll('[data-renew]').forEach(b => b.onclick = () => Forms.subscription(null, b.dataset.renew));
     $('dashAllExp').onclick = () => { State.f.members.status = 'EXPIRING_SOON'; go('members'); };
     const dd = $('dashDues');
-    if (dd) dd.onclick = () => { State.f.financeTab = 'dues'; go('finance'); };
+    if (dd) dd.onclick = () => FIN.open('dues');
     const ds = $('dashStock');
     if (ds) ds.onclick = () => go('inventory');
     root.querySelectorAll('[data-dpay]').forEach(b => b.onclick = () => {
@@ -10788,7 +10814,8 @@ Views.dashboard = {
     root.querySelectorAll('[data-alert]').forEach(b => b.onclick = () => {
       const [, , route, params] = alerts[Number(b.dataset.alert)];
       if (params && params.status) State.f.members.status = params.status;
-      go(route);
+      if (route === 'finance') FIN.open(params && params.tab);
+      else go(route);
     });
 
     const aud = Audit.recent(14);
@@ -12722,23 +12749,60 @@ Views.payroll = {
 
 /* ===== src/app/views/60-finance.js =================================================== */
 /* --------------------------------- Finance -------------------------------- */
+/* ============================ المالية — خريطة واحدة ============================
+   كانت للمالية طريقتا تنقّل لا تتّفقان: الشريط الجانبي يكتب التبويب في
+   الرابط، وتبويبات الصفحة تكتبه في ذاكرةٍ لا في الرابط — ثم تقرأ الشاشةُ
+   الرابطَ أولاً فتُعيد التبويب القديم. فبعد الدخول من «الحسابات» كانت
+   «الشركاء والأرباح» في أعلى الصفحة لا تفتح شيئاً، والعنوان «المالية»
+   أيّاً كان المفتوح، ويُضاء «الصندوق اليومي» على المصروفات.
+
+   الآن: **الرابط هو الحالة الوحيدة** (`#/finance?tab=…`). كل مدخل —
+   الشريط، التبويب، لوحة التحكم، التنبيه، نافذة الإقفال — يمرّ بـ`FIN.open`.
+   والقسم (الحسابات / الشركاء والأرباح / الصندوق اليومي) يُقرأ من التبويب،
+   ومنه العنوان ومسار التنقّل والمدخل المضاء في الشريط. */
+const FIN = {
+  TABS: [
+    { key:'revenues', t:'الإيرادات',        sec:'acc' },
+    { key:'expenses', t:'المصروفات',        sec:'acc' },
+    { key:'dues',     t:'المستحقات',        sec:'acc' },
+    { key:'capital',  t:'رأس المال',        sec:'acc' },
+    { key:'partners', t:'الشركاء والأرباح', sec:'partners' },
+    { key:'cash',     t:'الصندوق اليومي',   sec:'cash' },
+  ],
+  SECTIONS: { acc:'الحسابات', partners:'الشركاء والأرباح', cash:'الصندوق اليومي' },
+  has(key){ return this.TABS.some(x => x.key === key); },
+  tab(params){
+    const t = params && params.tab;
+    if (this.has(t)) return t;
+    return this.has(State.f.financeTab) ? State.f.financeTab : 'revenues';
+  },
+  info(key){ return this.TABS.find(x => x.key === key) || this.TABS[0]; },
+  open(tab){ const t = this.has(tab) ? tab : 'revenues'; State.f.financeTab = t; go('finance', { tab:t }); }
+};
 Views.finance = {
-  title:'المالية',
-  sub(){ const s = Svc.finance.summary(); return `السيولة ${Money.fmt(s.cash)}`; },
+  /* العنوان هو القسم كما يسمّيه الشريط الجانبي، لا «المالية» لكل شيء */
+  title(params){ return FIN.SECTIONS[FIN.info(FIN.tab(params)).sec]; },
+  sub(params){
+    const tb = FIN.info(FIN.tab(params)), sec = FIN.SECTIONS[tb.sec];
+    const crumb = tb.t === sec ? `المالية ‹ ${sec}` : `المالية ‹ ${sec} ‹ ${tb.t}`;
+    return `${crumb} — السيولة ${Money.fmt(Svc.finance.summary().cash)}`;
+  },
+  canonical(params){ return Object.assign({}, params, { tab:FIN.tab(params) }); },
   render(root, params){
-    /* التبويب يأتي من الرابط حين يُفتح من الشريط الجانبي، ويبقى محفوظاً بعدها */
-    const TABS = ['revenues','expenses','dues','capital','partners','cash'];
-    if (params && TABS.includes(params.tab)) State.f.financeTab = params.tab;
-    const tab = State.f.financeTab;
-    root.innerHTML = `<div class="tabs">
-        <button class="tab ${tab==='revenues'?'active':''}" data-tab="revenues">الإيرادات</button>
-        <button class="tab ${tab==='expenses'?'active':''}" data-tab="expenses">المصروفات</button>
-        <button class="tab ${tab==='dues'?'active':''}" data-tab="dues">المستحقات${Svc.payments.totalDue().count?` (${Svc.payments.totalDue().count})`:''}</button>
-        <button class="tab ${tab==='capital'?'active':''}" data-tab="capital">رأس المال</button>
-        <button class="tab ${tab==='partners'?'active':''}" data-tab="partners">الشركاء والأرباح</button>
-        <button class="tab ${tab==='cash'?'active':''}" data-tab="cash">الصندوق اليومي${Svc.cashbook.missing(7).length?` (${Svc.cashbook.missing(7).length})`:''}</button>
+    const tab = FIN.tab(params);
+    State.f.financeTab = tab;
+    const dueN = Svc.payments.totalDue().count, missN = Svc.cashbook.missing(7).length;
+    const badge = { dues: dueN ? ` (${dueN})` : '', cash: missN ? ` (${missN})` : '' };
+    const btn = x => `<button class="tab ${tab === x.key ? 'active' : ''}" data-tab="${x.key}" role="tab"
+      aria-selected="${tab === x.key}">${U.esc(x.t)}${badge[x.key] || ''}</button>`;
+    /* الهرمية مرئية: تبويبات «الحسابات» الأربعة معاً تحت اسمها، ثم القسمان الآخران */
+    root.innerHTML = `<div class="tabs fin-tabs" role="tablist" aria-label="المالية">
+        <span class="tab-group">الحسابات</span>
+        ${FIN.TABS.filter(x => x.sec === 'acc').map(btn).join('')}
+        <span class="tab-sep" aria-hidden="true"></span>
+        ${FIN.TABS.filter(x => x.sec !== 'acc').map(btn).join('')}
       </div><div id="finBody"></div>`;
-    root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { State.f.financeTab = b.dataset.tab; renderRoute(); });
+    root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => FIN.open(b.dataset.tab));
     const body = $('finBody');
     if (tab === 'revenues') this.revenues(body);
     else if (tab === 'expenses') this.expenses(body);
@@ -12890,7 +12954,7 @@ Views.finance = {
     });
     body.querySelectorAll('[data-rcp]').forEach(b => b.onclick = () => Actions.printReceiptForPayment(b.dataset.rcp));
     const ctc = body.querySelector('#cashToCapital');
-    if (ctc) ctc.onclick = () => { State.f.financeTab = 'capital'; renderRoute(); };
+    if (ctc) ctc.onclick = () => FIN.open('capital');
     const pa = body.querySelector('#cashPrintAll');
     if (pa) pa.onclick = () => Actions.printDayReceipts(today);
     const dp = body.querySelector('#cashDayPrint');
@@ -16797,10 +16861,10 @@ Screens.periodClose = function(key){
       ov.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => {
         const to = b.dataset.fix;
         h.close();
-        if (to === 'methods' || to === 'cash'){ State.f.financeTab = 'cash'; go('finance', { tab:'cash' }); }
+        if (to === 'methods' || to === 'cash') FIN.open('cash');
         else if (to === 'purchases') go('inventory', { tab:'purchases' });
-        else if (to === 'dues'){ State.f.financeTab = 'dues'; go('finance', { tab:'dues' }); }
-        else if (to === 'partners' || to === 'periods'){ State.f.financeTab = 'partners'; go('finance', { tab:'partners' }); }
+        else if (to === 'dues') FIN.open('dues');
+        else if (to === 'partners' || to === 'periods') FIN.open('partners');
         else if (to === 'inventory') go('inventory');
         else if (to === 'integrity') go('settings', { sec:'data' });
         renderRoute();
@@ -17534,8 +17598,8 @@ Object.assign(Screens, {
       const n = items[Number(el.dataset.n)];
       p.remove();
       if (n.filter) State.f.members.status = n.filter;
-      if (n.tab) State.f.financeTab = n.tab;
-      if (n.go) go(n.go);
+      if (n.go === 'finance') FIN.open(n.tab || FIN.tab({}));
+      else if (n.go) go(n.go);
     });
     setTimeout(() => {
       const off = ev => { if (!p.contains(ev.target) && ev.target.closest('#btnBell') === null){ p.remove(); document.removeEventListener('click', off); } };
@@ -19572,7 +19636,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor, Word,
-              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock,
+              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock, FIN, NAV,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,
               ready:AppReady };
