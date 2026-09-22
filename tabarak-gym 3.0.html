@@ -6433,6 +6433,120 @@ Svc.distributions = {
 
 
 
+/* ===== src/app/data/45-policy.js ===================================================== */
+/* ============================================================================
+   Policy — نقطة واحدة تُدرج فيها الأدوار لاحقاً (تحضير، لا ميزة)
+   ============================================================================
+   ما وجده التدقيق (7.10): من 102 دالّة خدمة تكتب بيانات، **19 وحدها** تفحص
+   الصلاحية بنفسها (المستخدمات، الفترات، التوزيعات، إقفال الصندوق، رأس المال،
+   ترحيل الشراء وتسديده). والباقي محروسٌ — إن حُرس — في طبقة الأفعال والشاشات
+   (`Auth.require` في Actions و`data-perm` على الأزرار). فمرحلة الأدوار لو بدأت
+   اليوم لاحتاجت أن تمرّ على مئة دالّة واحدةً واحدة، وأن تخمّن لكلٍّ مفتاحها.
+
+   فهذا الجدول هو ذلك التخمين مكتوباً مرّة واحدة: **كل دالّة تكتب ⟵ المفتاح
+   الذي سيحكمها**، أو `null` لما هو داخليّ يُحرس بفعله الأصل (رقم الوصل التالي،
+   استخراج الإطار، إعادة حساب نهاية الاشتراك…). ومفاتيحه من `PERMISSIONS`
+   نفسها — لا مفتاح جديد.
+
+   والوضع الآن `observe`: كل نداء يُسجَّل (من نادى، وهل كان دوره سيُمنع) ولا
+   يُمنع شيء. **سلوك النظام لم يتغيّر بحرف** — ولا يُقال عن هذا إنه «أدوار».
+   مرحلة الأدوار تقرأ `Policy.report()` لترى ما كانت ستمنعه، ثم تقلب الوضع إلى
+   `enforce` — بسطرٍ لا بمئة تعديل.
+
+   اختبار التغطية (tests/hardening.js) يسقط إن أُضيفت دالّة تكتب ولم يُقرَّر
+   مفتاحها هنا — فلا تتسرّب طفرةٌ جديدة خارج الجدول.
+   ========================================================================== */
+const Policy = {
+  MODE: 'observe',                 /* observe | enforce — لا يُقلب قبل مرحلة الأدوار */
+  /* المفتاح قيمةٌ أو دالّة تقرؤه من الوسائط (دفعة اشتراك أم فاتورة بيع؟) */
+  MAP: {
+    'members.create':'members.create', 'members.update':'members.edit', 'members.archive':'members.delete',
+    'subs.create':'subs.create', 'subs.update':'subs.edit', 'subs.archive':'subs.delete',
+    'payments.add': a => (a[0] && a[0].refType === 'sale') ? 'pos.money' : 'subs.money',
+    'payments.remove':'finance.delete', 'payments.setArchived':'finance.delete',
+    'inventory.saveProduct': a => a[0] ? 'inventory.edit' : 'inventory.create',
+    'inventory.archiveProduct':'inventory.delete', 'inventory.addMove':'inventory.edit',
+    'inventory.removeMove':'inventory.delete', 'inventory.recomputeCost':null,
+    'sales.create':'pos.create', 'sales.archive':'pos.delete', 'sales.nextCode':null,
+    'finance.addRevenue':'finance.create', 'finance.updateRevenue':'finance.edit', 'finance.archiveRevenue':'finance.delete',
+    'finance.addExpense':'finance.create', 'finance.updateExpense':'finance.edit', 'finance.archiveExpense':'finance.delete',
+    'finance.addCapital':'finance.money', 'finance.setCapitalMethod':'finance.money', 'finance.archiveCapital':'finance.money',
+    'finance.savePartner':'finance.money',
+    'payroll.generate':'payroll.create', 'payroll.save':'payroll.edit', 'payroll.pay':'payroll.money', 'payroll.unpay':'payroll.money',
+    'media.saveFile':null, 'media.remove':null, 'media.removeIfUnused':null,
+    'exercises.save':'exercises.edit', 'exercises.remove':'exercises.delete',
+    'attendance.checkIn':'attendance.create', 'attendance.checkOut':'attendance.create', 'attendance.remove':'attendance.delete',
+    'measure.add':'members.edit', 'measure.addBatch':'members.edit', 'measure.remove':'members.edit',
+    'goals.save':'members.edit', 'goals.setStatus':'members.edit', 'goals.remove':'members.edit',
+    'docs.save':'members.edit', 'docs.remove':'members.edit',
+    'receipts.issue':'subs.money', 'receipts.markPrinted':null, 'receipts.void':'finance.delete',
+    'membership.freeze':'subs.edit', 'membership.extend':'subs.edit', 'membership.endFreezeToday':'subs.edit',
+    'membership.cancelEvent':'subs.edit', 'membership.recompute':null,
+    'credits.grant':'subs.edit', 'credits.consume':'classes.edit', 'credits.release':'classes.edit',
+    'credits.expireForSub':null, 'credits.restoreForSub':null, 'credits.expireStale':null,
+    'leads.save': a => a[0] ? 'crm.edit' : 'crm.create', 'leads.setStage':'crm.edit', 'leads.convert':'members.create',
+    'leads.remove':'crm.delete',
+    'tasks.add':'tasks.create', 'tasks.complete':'tasks.edit', 'tasks.snooze':'tasks.edit', 'tasks.remove':'tasks.delete',
+    'tasks.closeFor':null,
+    'classes.save': a => a[0] ? 'classes.edit' : 'classes.create', 'classes.generateFrom':'classes.create',
+    'classes.cancel':'classes.edit', 'classes.remove':'classes.delete', 'classes.book':'classes.edit',
+    'classes.cancelBooking':'classes.edit', 'classes.mark':'classes.edit', 'classes.promoteNext':null,
+    'cashbook.close':'cash.money', 'cashbook.reopen':'cash.money',
+    'suppliers.save':'inventory.edit', 'suppliers.archive':'inventory.delete',
+    'purchases.save':'inventory.create', 'purchases.post':'inventory.create', 'purchases.cancel':'inventory.delete',
+    'purchases.removeDraft':'inventory.delete', 'purchases.addPayment':'finance.money', 'purchases.removePayment':'finance.money',
+    'notes.add':'members.edit', 'notes.update':'members.edit', 'notes.remove':'members.edit', 'notes.togglePin':'members.edit',
+    'periods.close':'finance.money', 'periods.reopen':'finance.money',
+    'distributions.create':'finance.money', 'distributions.update':'finance.money', 'distributions.remove':'finance.money',
+    'users.create':'settings.users', 'users.update':'settings.users', 'users.setDisabled':'settings.users',
+    'users.remove':'settings.users', 'users.setPassword':'settings.users'
+  },
+  stats: {},
+  keyFor(action, args){
+    const k = this.MAP[action];
+    return typeof k === 'function' ? k(args || []) : k;
+  },
+  /* نقطة الإدراج. في `observe` تُسجِّل ولا تمنع. */
+  check(action, args){
+    const key = this.keyFor(action, args);
+    if (!key) return true;
+    const allowed = Auth.can(key);
+    const st = this.stats[action] || (this.stats[action] = { key, calls:0, wouldDeny:0, actors:{} });
+    st.calls++;
+    if (!allowed){
+      st.wouldDeny++;
+      const who = Auth.session.actorName || '—';
+      st.actors[who] = (st.actors[who] || 0) + 1;
+      if (this.MODE === 'enforce') throw new AppError('ليس لديك صلاحية لتنفيذ هذا الإجراء','FORBIDDEN', { key, action });
+    }
+    return allowed;
+  },
+  /* ما كانت الأدوار ستمنعه لو فُعّلت — لمرحلة الأدوار لا للمستخدمة */
+  report(){
+    return Object.entries(this.stats).filter(([, v]) => v.wouldDeny)
+      .map(([action, v]) => ({ action, key:v.key, wouldDeny:v.wouldDeny, calls:v.calls, actors:v.actors }));
+  },
+  installed:false,
+  install(){
+    if (this.installed) return 0;
+    let n = 0;
+    Object.keys(this.MAP).forEach(action => {
+      const [mod, fn] = action.split('.');
+      const svc = Svc[mod];
+      if (!svc || typeof svc[fn] !== 'function' || this.MAP[action] === null) return;
+      const orig = svc[fn];
+      const policy = this;
+      svc[fn] = function(...args){ policy.check(action, args); return orig.apply(this, args); };
+      svc[fn].__policy = action;
+      n++;
+    });
+    this.installed = true;
+    return n;
+  }
+};
+Policy.install();
+
+
 /* ===== src/app/data/50-backup.js ===================================================== */
 /* ============================ Backup & Restore ===========================
    الملف نصي JSON — يُفتح ويُراجع بالعين، ويحمل نسخة المخطط للتحقق. */
@@ -19636,7 +19750,7 @@ window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Set
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor, Word,
-              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock, FIN, NAV,
+              Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock, FIN, NAV, Policy,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,
               ready:AppReady };

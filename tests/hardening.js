@@ -974,6 +974,87 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('التنقّل المالي — الشريط والتبويبات يتّفقان على كل وجهة', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 12) الجاهزية للأدوار — جدولٌ واحد، ولا تغيير في السلوك                *
+   * ===================================================================== */
+  group('الجاهزية للأدوار — كل كتابة لها مفتاح، ولا شيء يُمنع بعد', async (browser) => {
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    let errs = [];
+    try {
+      const a = await openBridged(browser, url);
+      errs = a.errors;
+      const r = await a.page.evaluate(async () => {
+        const TG = window.TG, out = {};
+        const { Svc, Policy, PERM_KEYS, Auth, Settings } = TG;
+        /* كل دالّة خدمة تكتب — تُكتشف من مصدرها لا من قائمة يكتبها الاختبار */
+        const WRITES = /Repos\.\w+\.(create|update|archive|hardDelete)|DB\.(put|putMany|remove|replaceAll)|Settings\.set|Svc\.\w+\.\w+\(/;
+        const writers = [];
+        Object.keys(Svc).forEach(mod => Object.keys(Svc[mod]).forEach(fn => {
+          const f = Svc[mod][fn];
+          if (typeof f !== 'function') return;
+          const src = String(f.__policy ? '' : f);
+          const real = f.__policy ? true : (/^async\b/.test(src) && WRITES.test(src));
+          if (real) writers.push(`${mod}.${fn}`);
+        }));
+        out.writers = writers.length;
+        out.unmapped = writers.filter(k => !(k in Policy.MAP));
+        out.badKeys = Object.keys(Policy.MAP).filter(k => {
+          const v = Policy.MAP[k]; if (v === null) return false;
+          const keys = typeof v === 'function' ? [v([null]), v([{ refType: 'sale' }]), v(['x'])] : [v];
+          return keys.some(x => !PERM_KEYS.includes(x));
+        });
+        out.unwrapped = Object.keys(Policy.MAP).filter(k => { const [m, f] = k.split('.');
+          return Policy.MAP[k] !== null && !(Svc[m] && Svc[m][f] && Svc[m][f].__policy === k); });
+        out.mode = Policy.MODE;
+        /* بلا دخول مفعّل: كل شيء مسموح، ولا شيء «كان سيُمنع» */
+        await TG.Seed.loadDemo(6);
+        out.denyWhenOff = Policy.report().length;
+        /* بدخول مفعّل ودور الاستقبال */
+        await Settings.set({ authEnabled: true }); Auth.restoreSession();
+        await Auth.setupFirstAdmin({ name: 'المالكة', username: 'own', password: 'Own#123456' });
+        await Svc.users.create({ username: 'rec', name: 'زهراء الاستقبال', roleKey: 'reception', password: 'Rec#123456' });
+        await Auth.logout(); await Auth.login('rec', 'Rec#123456');
+        const before = TG.Repos.expenses.list(true).length;
+        let threw = null;
+        try { await Svc.finance.addExpense({ date: TG.D.today(), amount: 5000, categoryId: TG.Repos.expCats.list()[0].id, description: 'اختبار', method: 'cash' }); }
+        catch (e) { threw = e.code; }
+        out.unguardedStillWorks = threw === null && TG.Repos.expenses.list(true).length === before + 1;
+        out.threw = threw;
+        const rep = Policy.report().find(x => x.action === 'finance.addExpense');
+        out.recorded = !!rep && rep.key === 'finance.create' && rep.actors['زهراء الاستقبال'] === 1;
+        /* ما كان محروساً في الخدمة يبقى محروساً كما كان */
+        let guarded = null;
+        try { await Svc.periods.close(TG.D.monthsBack(5)[0]); } catch (e) { guarded = e.code; }
+        out.existingGuard = guarded === 'FORBIDDEN';
+        /* المسموح لدورها لا يُسجَّل منعاً */
+        const m = (await Svc.members.create({ name: 'مشتركة من الاستقبال', phone: '07712340000' })).rec;
+        out.allowedNotRecorded = !Policy.report().some(x => x.action === 'members.create');
+        /* نسبة الفعل إلى فاعلته لم تتغيّر */
+        const ev = TG.Repos.audit.list(true).find(e => e.entityId === m.id);
+        out.actor = ev && ev.actor;
+        await Auth.logout(); await Auth.login('own', 'Own#123456');
+        out.ownerDenies = Policy.report().filter(x => x.actors['المالكة']).length;
+        return out;
+      });
+      ok(`كل دالّة خدمة تكتب بيانات (${r.writers}) لها قرار صلاحية في جدول واحد`, r.unmapped.length === 0, r.unmapped.join('، '));
+      ok('ومفاتيح الجدول كلّها من PERMISSIONS نفسها — لا مفتاح مخترَع', r.badKeys.length === 0, r.badKeys.join('، '));
+      ok('ونقطة الإدراج مركّبة على كل دالّة لها مفتاح', r.unwrapped.length === 0, r.unwrapped.join('، '));
+      ok('الوضع «مراقبة» لا «منع» — لا أدوار مزيّفة', r.mode === 'observe');
+      ok('بلا دخول مفعّل: لا شيء يُسجَّل منعاً', r.denyWhenOff === 0, r.denyWhenOff);
+      ok('فعلٌ غير محروس اليوم يبقى يعمل لدور الاستقبال (السلوك لم يتغيّر)', r.unguardedStillWorks, r.threw);
+      ok('لكنه يُسجَّل: «كان سيُمنع بمفتاح finance.create» ومن فاعلته', r.recorded);
+      ok('وما كان محروساً في الخدمة يبقى محروساً', r.existingGuard);
+      ok('والمسموح لدورها لا يُسجَّل منعاً', r.allowedNotRecorded);
+      ok('ونسبة الفعل إلى فاعلته كما كانت', r.actor === 'زهراء الاستقبال', r.actor);
+      ok('والمالكة لا يُسجَّل عليها منعٌ', r.ownerDenies === 0, r.ownerDenies);
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('الجاهزية للأدوار — كل كتابة لها مفتاح، ولا شيء يُمنع بعد', rows, errs);
+  });
 };
 
 /* ---------------------------------------------------------------------------
