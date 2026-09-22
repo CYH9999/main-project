@@ -203,10 +203,21 @@ const ok = (name, pass, detail) => {
       try { raw = Buffer.concat([raw, zlib.inflateSync(Buffer.from(mm[1], 'latin1'))]); } catch (e) {}
     }
     const content = raw.toString('latin1');
-    const chars = [...content.matchAll(/ActualText <FEFF([0-9A-Fa-f]+)>/g)]
+    let chars = [...content.matchAll(/ActualText <FEFF([0-9A-Fa-f]+)>/g)]
       .map(m => { const h = m[1]; let o = '';
         for (let i = 0; i < h.length; i += 4) o += String.fromCharCode(parseInt(h.slice(i, i + 4), 16));
         return o; }).join('');
+    /* النصّ يُستخرج بطريقتين: `ActualText` (ما تكتبه Skia حين لا يطابق الحرفُ
+       الرسمَ واحداً بواحد) — وبـ`pdftotext` إن وُجد، لأن الخطّ العربي المثبّت
+       يقرّر أيّ الطريقتين يُكتب بها النصّ: بخطّ Noto Kufi Arabic يُكتب النصّ
+       بجداول ToUnicode المعتادة فلا يظهر في ActualText أصلاً (قيس على 7.9.0
+       نفسه). فالمستخرَج هو اتحاد الاثنين، وفحوص الشيفرة تقع عليه كلّه. */
+    try {
+      const { execFileSync } = require('child_process');
+      const extra = execFileSync('pdftotext', ['/tmp/tg-verify.pdf', '-'], { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString('utf8').replace(/[\u200e\u200f\u202a-\u202e]/g, '');
+      chars += '\n' + extra;
+    } catch (e) { /* لا pdftotext — يبقى ActualText وحده كما كان */ }
     const pages = (s2.match(/\/Type\s*\/Page[^s]/g) || []).length;
     // Latin text (JS/CSS source) would show up as plain glyph runs
     const latin = (chars.match(/[A-Za-z]{6,}/g) || []);

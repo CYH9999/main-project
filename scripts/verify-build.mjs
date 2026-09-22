@@ -75,14 +75,49 @@ const FEATURES = [
 
   { key: 'logo', label: 'صندوق الشعار الثابت',
     html: [/\.brand-prev\{[^}]*display:flex/, /max-width:\$\{size\}px;max-height:\$\{size\}px/,
-           /\.media-drop \.brand-prev>img\{[^}]*object-fit:contain/, /class="brand-prev"/,
+           /\.media-drop \.brand-prev>img\{[^}]*object-fit:contain/,
            /boxStyle\(size\)\{/, /logoBox\(size\)\{/,
+           /* 7.10: الصندوق يملك الهندسة كلّها سطريّاً — الإطار والصورة بإحداثيات صريحة */
+           /slotStyle\(size\)\{/, /frameStyle\(pad\)\{/, /contain:strict/, /data-brand-frame/,
+           /cls:'brand-prev'/, /PAD: \{ settings:12 \}/,
            /BOX: \{[\s\S]{0,400}?sidebar: 38,[\s\S]{0,400}?print:   54,/,
            /* الحاجز الأخير: سمةٌ على كل صورة هوية، وصندوقٌ يقصّ ما خرج عنه.
               بلا هذه لا يبقى إلا سقفٌ مكتوب في كل سطح على حدة — وهو ما فشل. */
            /\[data-brand-img\]\{/, /\[data-brand-slot\]\{/,
            /data-brand-img="logo"/, /previewHtml\(kind\)\{/,
            /const shell = document\.querySelector\('\.brand'\) \|\| document;/] },
+
+  /* ------------------------------ 7.10 ------------------------------ */
+  { key: 'banner', label: 'اللافتة بتكوينٍ واحد (4:1) على كل سطح',
+    html: [/BANNER_ASPECT: 4,/, /bannerStageStyle\(\)\{/, /bannerBoxStyle\(\)\{/, /data-brand-stage/,
+           /container-type:size/, /bannerInner\(url, crop, alt, prev\)\{/] },
+
+  { key: 'poster', label: 'إطار ثابت ممتلئ للصورة المتحرّكة',
+    html: [/async _bestFrame\(dataUrl, lim\)\{/, /new ImageDecoder\(/, /posterIsBlank\(posterUrl\)\{/,
+           /async repairPosters\(\)\{/, /Brand\.repairPosters\(\)/g],
+    htmlMin: { 'Brand.repairPosters()': 2 } },
+
+  { key: 'datasafety', label: 'استعادة ذرّية ونسخ مُتحقَّق منها',
+    html: [/replaceAll\(data, hooks\)\{/, /durability:'strict'/g, /async replaceAll\(data, hooks\)\{/,
+           /async saveVerified\(category, filename, includeMedia=true\)\{/, /async verify\(obj\)\{/,
+           /prepare\(obj\)\{/, /await DB\.replaceAll\(plan\.rows, hooks\)/, /const InstanceLock = \{/,
+           /'SECOND_INSTANCE'/, /reconcile\(\)\{/],
+    rust: [/pub fn write_atomic/, /f\.sync_all\(\)/, /pub fn sweep_stale_parts/, /write_atomic\(&target, &bytes\)\?;/] },
+
+  { key: 'word', label: 'Word حقيقي لكل مستند يُطبع',
+    html: [/const Word = \(\(\) => \{/, /<w:bidiVisual\/>/, /NUMPAGES/, /w:orient="landscape"/,
+           /async function fromPrint\(title, html, opts\)\{/, /UI\.wordButton\(/g, /UI\.bindWord\(/g],
+    htmlMin: { 'UI.wordButton(': 13 },
+    rust: [/Self::Word => &\["Exports", "Word"\]/] },
+
+  { key: 'printlayout', label: 'ورقة مرتّبة وترقيم صفحات',
+    html: [/pageCss\(o\)\{/, /@bottom-center/, /counter\(pages\)/, /docCss\(R\)\{/, /printPrepare\(html\)\{/] },
+
+  { key: 'finnav', label: 'مسار واحد لكل وجهة مالية',
+    html: [/const FIN = \{/, /canonical\(params\)\{ return Object\.assign/, /data-tabs=/, /FIN\.open\(/g] },
+
+  { key: 'policy', label: 'جدول الصلاحيات للأدوار (مراقبة)',
+    html: [/const Policy = \{/, /MODE: 'observe'/, /^Policy\.install\(\);$/m] },
 
   { key: 'gifcrop', label: 'قصّ الصور المتحرّكة بلا تجميد',
     html: [/cropOf\(kind\)\{/, /cropStyle\(c\)\{/, /_crop\(st, iw, ih\)\{/,

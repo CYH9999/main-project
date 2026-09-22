@@ -1015,7 +1015,7 @@ body.locked{background:var(--plum-900)}
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.9.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.10.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -7952,7 +7952,7 @@ const InstanceLock = {
   NAME:'tabarak-gym:database', held:false,
   async acquire(opts){
     if (!Desktop.on() || !(navigator.locks && navigator.locks.request)) return true;
-    const waitMs = opts && opts.waitMs != null ? opts.waitMs : 3000;
+    const waitMs = opts && opts.waitMs != null ? opts.waitMs : 6000;
     const t0 = Date.now();
     for (;;){
       const got = await new Promise(res => {
@@ -18094,14 +18094,18 @@ Object.assign(Actions, {
         ${mediaWarn}${warnHtml}
         <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''} — ${integ}</p>` });
     if (!ok) return;
+    /* نسخةٌ تلقائية تُكتب الآن تُقرأ من القاعدة نفسها التي ستُستبدل: لا تبدأ
+       الاستعادة قبل أن تنتهي. وكان `finally` هنا يُطفئ علمها وهي جارية. */
+    for (let i = 0; Backup._busy && i < 100; i++) await new Promise(r => setTimeout(r, 100));
+    if (Backup._busy) return UI.toast('نسخة احتياطية تُكتب الآن — أعيدي المحاولة بعد لحظة','warn', 7000);
+    Backup._busy = true;                        /* لا نسخة تلقائية من هنا حتى تنتهي الاستعادة */
+    try {
 
     /* نقطة رجوع قبل فعل لا يُتراجع عنه: البيانات الحالية تُحفظ أولاً.
        وإن تعذّر ذلك لا نمضي بصمت — تُسأل المستخدمة صراحةً. */
     if (Desktop.on()){
-      Backup._busy = true;                      /* لا نسخة تلقائية في أثناء ذلك */
-      let safe = null;
-      try { safe = await Backup.safetyBackup(); } finally { Backup._busy = false; }
-      if (safe) UI.toast(`حُفظت نسخة أمان من بياناتك الحالية — ${U.esc(safe.name)}`, 'ok', 7000);
+      const safe = await Backup.safetyBackup();
+      if (safe) UI.toast(`حُفظت نسخة أمان من بياناتك الحالية — ${safe.name}`, 'ok', 7000);
       else {
         const go = await UI.confirm({ title:'تعذّرت نسخة الأمان', danger:true,
           confirmText:'استعادة بلا نقطة رجوع',
@@ -18112,7 +18116,6 @@ Object.assign(Actions, {
     }
 
     try {
-      Backup._busy = true;
       const counts = await Backup.restore(obj);
       const skipped = counts._skippedTotal || 0, dups = counts._duplicatesTotal || 0;
       const total = STORE_NAMES.reduce((a, s) => a + (Number(counts[s]) || 0), 0);
@@ -18136,7 +18139,7 @@ Object.assign(Actions, {
       buildNav(); paintWhoAmI();
       renderRoute();
     } catch(e){ Log.error('فشل الاستعادة', e); UI.toast('فشلت الاستعادة: ' + e.message,'err'); }
-    finally { Backup._busy = false; }
+    } finally { Backup._busy = false; }
   },
 
   /* استعادة من نسخة على القرص — مسار سطح المكتب: لا بحث في مجلّد التنزيلات */

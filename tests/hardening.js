@@ -393,7 +393,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
       const second = await ctx2.newPage();
       await second.goto(url, { waitUntil: 'domcontentloaded' });
       await second.waitForFunction(() => window.__TG_FS__ && window.__TG_FS__.calls.some(c => c.cmd === 'tg_ready'), null, { timeout: 60000 });
-      await second.waitForTimeout(3600);
+      await second.waitForTimeout(6600);
       const s2 = await second.evaluate(async () => {
         let code = null; try { await window.TG.ready; } catch (e) { code = e.code; }
         return { code, loaded: window.TG.DB.loaded, text: document.getElementById('viewRoot').textContent };

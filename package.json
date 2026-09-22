@@ -1,6 +1,6 @@
 {
   "name": "tabarak-gym",
-  "version": "7.9.0",
+  "version": "7.10.0",
   "private": true,
   "description": "نظام إدارة تبارك جيم — ملف واحد يعمل بلا إنترنت، مع مجموعة اختبارات تتحقّق من ثوابته",
   "scripts": {

@@ -497,6 +497,10 @@ group('تشغيل الحركة الفعلي', async (browser, url) => {
   const errors = [];
 
   /* عدد الإطارات المتمايزة خلال نافذة أطول من دورة الملف الكاملة */
+  /* الإطارات المتمايزة تُعدّ **بالبكسلات لا ببايتات PNG**: مُرمِّز لقطات
+     المتصفّح لا يَعِد بالبايتات نفسها لصورتين متطابقتين (ظهر ذلك حين كبر
+     صندوق اللافتة في 7.10: لقطتان متطابقتان بكسلاً ببكسل ومختلفتان بايتاً).
+     فتُفكّ كل لقطة في الصفحة ويُبصَم محتواها — وما يتحرّك فعلاً يبقى متمايزاً. */
   const distinctFrames = async (page, sel, n = 8, gap = 110) => {
     const seen = [];
     for (let i = 0; i < n; i++){
@@ -504,7 +508,30 @@ group('تشغيل الحركة الفعلي', async (browser, url) => {
       if (await el.count()) seen.push((await el.screenshot()).toString('base64'));
       await page.waitForTimeout(gap);
     }
-    return new Set(seen).size;
+    /* وعتبة ضجيج: حوافّ الزوايا المستديرة تُنعَّم على المعالج فتختلف بين
+       لقطتين بدرجة لون واحدة في بضع بكسلات (قيس: 8 بكسلات من 230 ألفاً،
+       بفرق 1). الحركة الحقيقية تغيّر مساحةً لا زوايا: إطارٌ متمايز حين
+       يتغيّر أكثر من 0.1% من البكسلات بأكثر من 16 درجة. */
+    return page.evaluate(async list => {
+      const frames = [];
+      for (const b64 of list){
+        const img = new Image(); img.src = 'data:image/png;base64,' + b64;
+        await img.decode();
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+        frames.push(x.getImageData(0, 0, c.width, c.height).data);
+      }
+      const same = (a, b) => {
+        if (a.length !== b.length) return false;
+        let changed = 0;
+        for (let i = 0; i < a.length; i += 4)
+          if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) > 16) changed++;
+        return changed <= (a.length / 4) * 0.001;
+      };
+      const reps = [];
+      frames.forEach(f => { if (!reps.some(r => same(r, f))) reps.push(f); });
+      return reps.length;
+    }, seen);
   };
 
   for (const [sysMode, sysLabel] of [['no-preference', 'جهاز عادي'], ['reduce', 'جهاز يطلب تقليل الحركة']]){
