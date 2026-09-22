@@ -8414,6 +8414,21 @@ html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;m
       return null;
     }
   },
+  /* ----------------------------- Word بجانب الطباعة -----------------------------
+     كل مستند يُطبع يُصدَّر Word **من المستند نفسه**: الشاشة تبني [العنوان،
+     HTML، الخيارات] مرّة واحدة، فيأخذها زرّ الطباعة وزرّ Word معاً — فلا
+     يفترق ما في الورقة عمّا في الملف. انظري `Word.fromPrint`. */
+  wordButton(id, cls){ return `<button class="${cls || 'btn btn-sm'}" id="${id}" data-word>${svg(ICON.down,15)} Word</button>`; },
+  bindWord(el, make){
+    if (!el) return;
+    el.onclick = async () => {
+      if (el.disabled) return;
+      el.disabled = true;
+      try { const [title, html, opts] = make(); await Word.fromPrint(title, html, opts); }
+      catch(e){ Log.error('تعذّر تصدير Word', e); UI.toast('تعذّر تصدير Word: ' + ((e && e.message) || ''), 'err', 8000); }
+      finally { el.disabled = false; }
+    };
+  },
   /* نافذة طباعة مستقلة: A4، ترويسة متكررة للجداول، وصفوف لا تنقطع في منتصفها */
   printSection(title, html, opts={}){
     const head = opts.plain ? '' : `<div class="print-banner">
@@ -8918,6 +8933,31 @@ const Brand = {
     return `<div class="brand-banner" data-brand-slot="banner" data-motion="${live ? 'live' : 'still'}" style="${this.bannerBoxStyle()}">`
       + this.bannerInner(url, this.cropOf('banner'), `لافتة ${this.name()}`) + '</div>';
   },
+  /* الشعار صورةً PNG مربّعة بمقاسٍ معلوم — لمستندات Word. يُرسم **كما يرسمه
+     الصندوق**: الإطار الثابت (الورق لا يتحرّك)، والقصّ المحفوظ إن وُجد وإلا
+     `contain` في المربّع. فمقاس الملف المرفوع لا يصل إلى المستند أبداً.
+     بلا شعار: العلامة المدمجة نفسها. يُعيد { bytes, dataUrl } أو null. */
+  async logoPng(px=256){
+    const url = this.renderUrl('logo', true);
+    const markSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="19" fill="#432C4C"/>`
+      + `<rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/><rect x="6" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/>`
+      + `<rect x="29" y="14" width="5" height="12" rx="2.5" fill="#FDF4F7"/></svg>`;
+    const src = url || ('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markSvg));
+    const img = new Image();
+    img.src = src;
+    try { await img.decode(); } catch(e){ return null; }
+    const iw = img.naturalWidth || px, ih = img.naturalHeight || px;
+    const c = document.createElement('canvas'); c.width = c.height = px;
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    const crop = url ? this.cropOf('logo') : null;
+    if (crop) ctx.drawImage(img, crop.x / 100 * px, crop.y / 100 * px, crop.w / 100 * px, crop.h / 100 * px);
+    else { const k = Math.min(px / iw, px / ih); ctx.drawImage(img, (px - iw * k) / 2, (px - ih * k) / 2, iw * k, ih * k); }
+    const dataUrl = c.toDataURL('image/png');
+    const bin = atob(dataUrl.split(',')[1]), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { bytes, dataUrl, canvas:c, fromLogo:!!url };
+  },
   contactLine(){
     const b = this.get();
     return [b.phone, b.address, b.instagram ? '@' + String(b.instagram).replace(/^@/, '') : ''].filter(x => U.norm(x)).join(' — ');
@@ -9021,13 +9061,13 @@ const Exporter = (() => {
     return buf => { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = t[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
   })();
   const enc = new TextEncoder();
-  function zip(files){                       /* files: [{name, text}] */
+  function zip(files){                       /* files: [{name, text} | {name, bytes:Uint8Array}] */
     const chunks = [], central = [];
     let offset = 0;
     const u16 = n => [n & 255, (n>>8) & 255];
     const u32 = n => [n & 255, (n>>8) & 255, (n>>16) & 255, (n>>24) & 255];
     files.forEach(f => {
-      const nameB = enc.encode(f.name), data = enc.encode(f.text), crc = CRC(data);
+      const nameB = enc.encode(f.name), data = f.bytes instanceof Uint8Array ? f.bytes : enc.encode(f.text), crc = CRC(data);
       const local = [...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0),
         ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(nameB.length), ...u16(0)];
       chunks.push(new Uint8Array(local), nameB, data);
@@ -9133,59 +9173,15 @@ ${sh.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformat
   }
 
   /* --------------------------------- DOCX ---------------------------------
-     تقرير Word حقيقي: عنوان، ترويسة، جداول بحدود، إجماليات، اتجاه RTL. */
-  const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
-  function p(text, { size=22, bold=false, color='241826', align='right', space=80, shade=null } = {}){
-    return `<w:p><w:pPr><w:bidi/><w:jc w:val="${align}"/><w:spacing w:after="${space}"/>${shade?`<w:shd w:val="clear" w:fill="${shade}"/>`:''}
-<w:rPr><w:rtl/>${bold?'<w:b/>':''}<w:sz w:val="${size}"/><w:color w:val="${color}"/></w:rPr></w:pPr>
-<w:r><w:rPr><w:rtl/>${bold?'<w:b/>':''}<w:sz w:val="${size}"/><w:color w:val="${color}"/></w:rPr><w:t xml:space="preserve">${xesc(text)}</w:t></w:r></w:p>`;
-  }
-  function tcell(text, { bold=false, fill=null, w=1500, color='241826' } = {}){
-    return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${fill?`<w:shd w:val="clear" w:fill="${fill}"/>`:''}<w:vAlign w:val="center"/></w:tcPr>
-${p(text, { size:20, bold, color, align:'right', space:0 })}</w:tc>`;
-  }
-  function table(headers, rows, totals){
-    const w = Math.floor(9000 / Math.max(1, headers.length));
-    const head = `<w:tr><w:trPr><w:tblHeader/></w:trPr>${headers.map(h => tcell(h, { bold:true, fill:'432C4C', color:'FFFFFF', w })).join('')}</w:tr>`;
-    const body = rows.map((r, i) => `<w:tr>${r.map(c => tcell(c, { w, fill: i % 2 ? 'FBF7FA' : null })).join('')}</w:tr>`).join('');
-    const foot = totals ? `<w:tr>${totals.map(c => tcell(c, { bold:true, fill:'F7DCE6', w })).join('')}</w:tr>` : '';
-    return `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="9000" w:type="dxa"/>
-<w:tblBorders><w:top w:val="single" w:sz="4" w:color="D9CEDA"/><w:left w:val="single" w:sz="4" w:color="D9CEDA"/>
-<w:bottom w:val="single" w:sz="4" w:color="D9CEDA"/><w:right w:val="single" w:sz="4" w:color="D9CEDA"/>
-<w:insideH w:val="single" w:sz="4" w:color="E7DEE6"/><w:insideV w:val="single" w:sz="4" w:color="E7DEE6"/></w:tblBorders></w:tblPr>
-${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
-  }
-  /* blocks: [{type:'h1'|'h2'|'p'|'kv'|'table', ...}] */
-  function docx(filename, { title, subtitle, blocks }){
-    const body = [
-      p(title, { size:34, bold:true, color:'432C4C', space:40 }),
-      subtitle ? p(subtitle, { size:20, color:'7A6E82', space:200 }) : '',
-      ...blocks.map(b => {
-        if (b.type === 'h1') return p(b.text, { size:28, bold:true, color:'A8305A', space:120 });
-        if (b.type === 'h2') return p(b.text, { size:24, bold:true, color:'432C4C', space:100 });
-        if (b.type === 'p')  return p(b.text, { size:22 });
-        if (b.type === 'kv') return table(['البند','القيمة'], b.rows);
-        if (b.type === 'table') return (b.title ? p(b.title, { size:24, bold:true, color:'432C4C', space:100 }) : '') + table(b.headers, b.rows, b.totals);
-        return '';
-      })
-    ].join('');
-    const footer = p(`${Settings.get('gymName')} — تقرير مُصدَّر من نظام الإدارة بتاريخ ${D.fmt(D.today())}`, { size:16, color:'7A6E82', align:'center' });
-    const files = [
-      { name:'[Content_Types].xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-<Default Extension="xml" ContentType="application/xml"/>
-<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>` },
-      { name:'_rels/.rels', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>` },
-      { name:'word/document.xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document ${W_NS}><w:body>${body}${footer}
-<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/>
-<w:bidi/></w:sectPr></w:body></w:document>` }
-    ];
-    const blob = new Blob([zip(files)], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    UI.download(blob, filename, 'word');
+     تقرير Word بكتل صريحة (التقرير الإداري الشهري). يُكتب بالقالب الواحد نفسه
+     الذي تُكتب به كل مستندات Word في النظام (انظري `Word` أدناه): هوية،
+     ترويسة بشعار، ترقيم صفحات، اتجاه من اليمين — لا قالبٌ ثانٍ يفترق عنه. */
+  async function docx(filename, { title, subtitle, blocks, landscape }){
+    const cells = r => (r || []).map(t => (t && typeof t === 'object') ? t : { t:String(t == null ? '' : t) });
+    const norm = (blocks || []).map(b => b.type === 'table'
+      ? Object.assign({}, b, { rows:(b.rows || []).map(cells), totals:b.totals ? cells(b.totals) : null }) : b);
+    const blob = await Word.build({ title, subtitle, blocks:norm, landscape });
+    await UI.download(blob, filename, 'word');
     return blob;
   }
 
@@ -9463,6 +9459,480 @@ ${head}${body}${foot}</w:tbl>${p('', { space:120 })}`;
            DUE_COLS, dueRows, ATT_COLS, attRows, xesc,
            PURCHASE_COLS, purchaseRows, SUPPLIER_PAY_COLS, supplierPayRows,
            PAYMENT_COLS, paymentRows, CASH_COLS, cashRows };
+})();
+
+
+/* ===== src/app/ui/12-word.js ========================================================= */
+/* ============================================================================
+   Word — مستند رسميّ حقيقي (.docx) لكل ما يُطبع
+   ============================================================================
+   لماذا وحدةٌ مستقلّة؟ لأن «Word لكل مستند مطبوع» لا يصحّ بزرٍّ يُكتب في كل
+   شاشة بطريقته. فالمصدر واحد: **المستند نفسه الذي يُطبع** (HTML بمفرداته
+   المعروفة: ترويسة، أزواج، جداول، مجاميع، ملاحظة، توقيع، تذييل) يُحوَّل إلى
+   كتل، والكتل تُكتب بقالبٍ واحد. فما يُطبع وما يُصدَّر Word بياناتٌ واحدة لا
+   تفترق، وكل مستند جديد يُطبع يحصل على Word بسطرٍ واحد في شاشته.
+
+   والقالب:
+     · ألوانه من هوية النظام نفسها (متغيّرات الأنماط)، واللون المميِّز من
+       **الشعار المرفوع** إن كان فيه لونٌ حيّ — لا لوحة مُخمَّنة.
+     · الشعار صورةٌ مقاسها ثابت في الترويسة (18 مم)، مرسومةٌ من صندوقه
+       (`Brand.logoPng`) — فمقاس الملف المرفوع لا يصل إلى المستند.
+     · اتجاهٌ حقيقي من اليمين: القسم `bidi`، والفقرات `bidi`، والجداول
+       `bidiVisual`، والنصّ `rtl` — لا محاذاةٌ لليمين فحسب.
+     · ترويسة وتذييل في كل صفحة، و«صفحة س من ص» بحقول Word.
+     · عمودي للمستندات العادية، وأفقيّ للجداول العريضة (7 أعمدة فأكثر) أو
+       حين يطلبه المستند المطبوع نفسه.
+   ========================================================================== */
+const Word = (() => {
+  const esc = s => Exporter.xesc(s);
+  const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+    + 'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+    + 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    + 'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
+  const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  /* الورقة بوحدات Word (twip = 1/20 نقطة) */
+  const A4 = { w:11906, h:16838 };
+  const MARGIN = { top:1531, bottom:1247, side:1021, header:510, footer:454 };
+  const FONT = 'Segoe UI';
+  /* جدول بسبعة أعمدة فأكثر لا يُقرأ على عرض A4 عمودياً */
+  const WIDE_COLS = 7;
+
+  /* ------------------------------ الألوان ------------------------------ */
+  const hex = v => String(v || '').trim().replace(/^#/, '').slice(0, 6).toUpperCase();
+  const cssVar = (name, fb) => {
+    try { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+          return /^#?[0-9a-f]{6}$/i.test(v) ? hex(v) : fb; } catch(e){ return fb; }
+  };
+  const rgb = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  const toHex = a => a.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+  const mix = (h, w, k) => { const a = rgb(h), b = rgb(w); return toHex(a.map((v, i) => v * (1 - k) + b[i] * k)); };
+  const lum = h => { const [r, g, b] = rgb(h).map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); });
+                     return .2126 * r + .7152 * g + .0722 * b; };
+  /* اللون الحيّ الغالب في الشعار: يُقرأ من البكسلات، ويُرفض ما لا لون فيه
+     (رمادي، أبيض، أسود) أو ما لا يكفي ليكون هوية (أقل من 4% من الشعار). */
+  function logoAccent(canvas){
+    try {
+      const ctx = canvas.getContext('2d');
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const bins = new Map(); let total = 0;
+      for (let i = 0; i < d.length; i += 16){
+        if (d[i + 3] < 200) continue;
+        total++;
+        const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+        const s = mx === mn ? 0 : (l > .5 ? (mx - mn) / (2 - mx - mn) : (mx - mn) / (mx + mn));
+        if (s < .35 || l < .18 || l > .8) continue;
+        let h = 0;
+        if (mx === r) h = ((g - b) / (mx - mn)) % 6; else if (mx === g) h = (b - r) / (mx - mn) + 2; else h = (r - g) / (mx - mn) + 4;
+        const key = Math.round(((h * 60 + 360) % 360) / 12);
+        const e = bins.get(key) || { n:0, r:0, g:0, b:0 };
+        e.n++; e.r += d[i]; e.g += d[i + 1]; e.b += d[i + 2]; bins.set(key, e);
+      }
+      const best = [...bins.values()].sort((a, b) => b.n - a.n)[0];
+      if (!best || !total || best.n / total < .04) return null;
+      let h = toHex([best.r / best.n, best.g / best.n, best.b / best.n]);
+      /* يُكتب به نصّ عناوين على ورق أبيض: إن كان فاتحاً يُعمَّق حتى يُقرأ */
+      for (let k = 0; lum(h) > .28 && k < 6; k++) h = mix(h, '000000', .15);
+      return h;
+    } catch(e){ return null; }
+  }
+  async function theme(){
+    const t = {
+      ink:cssVar('--ink', '241C28'), plum:cssVar('--plum-900', '241826'), plum7:cssVar('--plum-700', '432C4C'),
+      accent:cssVar('--rose-600', 'C43E6B'), line:cssVar('--line', 'E7DEE6'), muted:cssVar('--muted', '7A6E82'),
+      source:'brand', logo:null
+    };
+    const logo = await Brand.logoPng(256).catch(() => null);
+    if (logo){
+      t.logo = logo;
+      const acc = logo.fromLogo ? logoAccent(logo.canvas) : null;
+      if (acc){ t.accent = acc; t.source = 'logo'; }
+    }
+    t.tint = mix(t.accent, 'FFFFFF', .88);          /* صفّ الإجمالي والتنبيهات */
+    t.band = mix(t.accent, 'FFFFFF', .955);         /* الصفوف المتناوبة */
+    t.head = t.plum;                                /* رأس الجداول: خلفية النظام الداكنة */
+    return t;
+  }
+
+  /* ------------------------------ الفقرات ------------------------------ */
+  const RTL = /[֐-ࣿיִ-﷿ﹰ-﻿]/;
+  function run(text, o){
+    const t = String(text == null ? '' : text);
+    const rpr = `<w:rPr>${o.style ? `<w:rStyle w:val="${o.style}"/>` : ''}${o.bold ? '<w:b/><w:bCs/>' : ''}`
+      + `${o.color ? `<w:color w:val="${o.color}"/>` : ''}${o.size ? `<w:sz w:val="${o.size}"/><w:szCs w:val="${o.size}"/>` : ''}`
+      + `${RTL.test(t) || o.rtl ? '<w:rtl/>' : ''}</w:rPr>`;
+    /* الأسطر داخل النصّ تبقى أسطراً */
+    return t.split('\n').map((line, i) => `${i ? `<w:r>${rpr}<w:br/></w:r>` : ''}<w:r>${rpr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r>`).join('');
+  }
+  /* الفقرة دائماً `bidi`: البداية يميناً. والمحاذاة لا تُكتب إلا توسيطاً —
+     «يمين/يسار» في فقرة من اليمين يقرؤها Word منطقياً لا مادياً، فيُترك
+     الافتراض (البداية) بدل رهانٍ على تفسير. */
+  function para(text, o){
+    o = o || {};
+    const ppr = `<w:pPr>${o.pstyle ? `<w:pStyle w:val="${o.pstyle}"/>` : ''}${o.keepNext ? '<w:keepNext/>' : ''}`
+      + `${o.pageBreakBefore ? '<w:pageBreakBefore/>' : ''}${o.shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.shade}"/>` : ''}`
+      + `${o.border || ''}<w:bidi/>${o.space ? `<w:spacing w:before="${o.space[0]}" w:after="${o.space[1]}"/>` : ''}`
+      + `${o.center ? '<w:jc w:val="center"/>' : ''}<w:rPr><w:rtl/></w:rPr></w:pPr>`;
+    const runs = Array.isArray(text) ? text.map(x => run(x.t, x)).join('') : run(text, o);
+    return `<w:p>${ppr}${runs}</w:p>`;
+  }
+
+  /* ------------------------------ الجداول ------------------------------ */
+  /* عرض الأعمدة من طول محتواها — والنصّ الطويل لا يأخذ الجدول كلّه */
+  function widths(rows, n, total){
+    const w = Array(n).fill(0);
+    rows.forEach(r => { let c = 0; r.forEach(cell => { const span = cell.span || 1;
+      const len = Math.min(34, String(cell.t || '').length) / span;
+      for (let k = 0; k < span && c < n; k++, c++) w[c] = Math.max(w[c], len); }); });
+    const base = w.map(v => Math.max(4, v) + 3);
+    const sum = base.reduce((a, b) => a + b, 0);
+    const out = base.map(v => Math.floor(v / sum * total));
+    out[0] += total - out.reduce((a, b) => a + b, 0);
+    return out;
+  }
+  const border = (c, sz) => `w:val="single" w:sz="${sz || 4}" w:space="0" w:color="${c}"`;
+  function cell(c, w, o){
+    const fill = o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : '';
+    const span = c.span > 1 ? `<w:gridSpan w:val="${c.span}"/>` : '';
+    const top = o.topRule ? `<w:tcBorders><w:top ${border(o.topRule, 12)}/></w:tcBorders>` : '';
+    return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${span}${top}${fill}<w:vAlign w:val="center"/></w:tcPr>`
+      + para(c.t, { pstyle:o.pstyle || 'TGCell', bold:o.bold, color:o.color, center:o.center }) + '</w:tc>';
+  }
+  function table(b, T, width){
+    const n = Math.max(1, b.headers ? b.headers.length : 0,
+      ...[...(b.rows || []), ...(b.totalsRows || [])].map(r => r.reduce((a, c) => a + (c.span || 1), 0)));
+    const footRows = b.totalsRows || (b.totals ? [b.totals] : []);
+    const W = widths([...(b.headers ? [b.headers.map(t => ({ t }))] : []), ...(b.rows || []), ...footRows], n, width);
+    const cw = (i, span) => W.slice(i, i + (span || 1)).reduce((a, x) => a + x, 0);
+    const row = (cells, o) => { let i = 0;
+      return cells.map(c => { const x = cell(c, cw(i, c.span), o); i += c.span || 1; return x; }).join(''); };
+    const head = b.headers
+      ? `<w:tr><w:trPr><w:tblHeader/><w:cantSplit/></w:trPr>${row(b.headers.map(t => ({ t })), { fill:T.head, color:'FFFFFF', bold:true, pstyle:'TGHead' })}</w:tr>` : '';
+    const body = (b.rows || []).map((r, i) =>
+      `<w:tr><w:trPr><w:cantSplit/></w:trPr>${row(r, { fill: i % 2 ? T.band : null, center: r.length === 1 && n > 1 })}</w:tr>`).join('');
+    const foot = footRows.map((r, i) =>
+      `<w:tr><w:trPr><w:cantSplit/></w:trPr>${row(r, { fill:T.tint, bold:i === footRows.length - 1, topRule: i === 0 ? T.accent : null })}</w:tr>`).join('');
+    return (b.title ? para(b.title, { pstyle:'Heading2', keepNext:true }) : '')
+      + `<w:tbl><w:tblPr><w:tblStyle w:val="TGTable"/><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/>`
+      + `<w:tblLayout w:type="fixed"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr>`
+      + `<w:tblGrid>${W.map(x => `<w:gridCol w:w="${x}"/>`).join('')}</w:tblGrid>${head}${body}${foot}</w:tbl>`
+      + para('', { pstyle:'TGGap' });
+  }
+  /* أزواج «بند: قيمة» — عمودان من الأزواج في العمودي وثلاثة في الأفقي */
+  function kv(b, T, width, landscape){
+    const per = b.single ? 1 : (landscape ? 3 : 2);
+    const pairs = b.rows || [];
+    const unit = Math.floor(width / (per * 2));
+    const W = []; for (let i = 0; i < per; i++) W.push(Math.floor(unit * .9), Math.floor(unit * 1.1));
+    W[0] += width - W.reduce((a, x) => a + x, 0);
+    let rows = '';
+    for (let i = 0; i < pairs.length; i += per){
+      let cells = '';
+      for (let k = 0; k < per; k++){
+        const p = pairs[i + k] || ['', ''];
+        cells += `<w:tc><w:tcPr><w:tcW w:w="${W[k * 2]}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${T.band}"/></w:tcPr>${para(p[0], { pstyle:'TGLabel' })}</w:tc>`
+               + `<w:tc><w:tcPr><w:tcW w:w="${W[k * 2 + 1]}" w:type="dxa"/></w:tcPr>${para(p[1], { pstyle:'TGCell', bold:true })}</w:tc>`;
+      }
+      rows += `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr>`;
+    }
+    return (b.title ? para(b.title, { pstyle:'Heading2', keepNext:true }) : '')
+      + `<w:tbl><w:tblPr><w:tblStyle w:val="TGKV"/><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>`
+      + `<w:tblGrid>${W.map(x => `<w:gridCol w:w="${x}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>` + para('', { pstyle:'TGGap' });
+  }
+  /* المبلغ الأبرز (المستلم، المتبقّي، الإجمالي): شريطٌ بعمودين */
+  function total(b, T, width){
+    const a = Math.floor(width * .62), c = width - a;
+    const brd = `<w:tcBorders><w:top ${border(T.accent, 12)}/><w:bottom ${border(T.accent, 12)}/></w:tcBorders>`;
+    return `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>`
+      + `<w:tblGrid><w:gridCol w:w="${a}"/><w:gridCol w:w="${c}"/></w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>`
+      + `<w:tc><w:tcPr><w:tcW w:w="${a}" w:type="dxa"/>${brd}<w:shd w:val="clear" w:color="auto" w:fill="${T.tint}"/></w:tcPr>${para(b.label, { pstyle:'TGTotal' })}</w:tc>`
+      + `<w:tc><w:tcPr><w:tcW w:w="${c}" w:type="dxa"/>${brd}<w:shd w:val="clear" w:color="auto" w:fill="${T.tint}"/></w:tcPr>${para(b.value, { pstyle:'TGTotal', color:T.accent })}</w:tc>`
+      + `</w:tr></w:tbl>` + para('', { pstyle:'TGGap' });
+  }
+  function sign(b, width){
+    const n = Math.max(1, b.labels.length), gap = 600, w = Math.floor((width - gap * (n - 1)) / n);
+    const cells = b.labels.map((l, i) => (i ? `<w:tc><w:tcPr><w:tcW w:w="${gap}" w:type="dxa"/></w:tcPr>${para('')}</w:tc>` : '')
+      + `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/><w:tcBorders><w:top ${border('444444', 6)}/></w:tcBorders></w:tcPr>${para(l, { pstyle:'TGLabel', center:true })}</w:tc>`).join('');
+    const grid = b.labels.map((l, i) => (i ? `<w:gridCol w:w="${gap}"/>` : '') + `<w:gridCol w:w="${w}"/>`).join('');
+    return para('', { space:[480, 0] })
+      + `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid><w:tr>${cells}</w:tr></w:tbl>`;
+  }
+  function block(b, T, width, landscape){
+    switch (b.type){
+      case 'h1': return para(b.text, { pstyle:'Heading1', keepNext:true });
+      case 'h2': return para(b.text, { pstyle:'Heading2', keepNext:true });
+      case 'p':  return para(b.text, { pstyle:'Normal' });
+      case 'small': return para(b.text, { pstyle:'TGSmall' });
+      case 'note': return para(b.text, { pstyle:'TGNote', shade:T.band,
+        border:`<w:pBdr><w:right ${border(T.accent, 18).replace('w:space="0"', 'w:space="6"')}/></w:pBdr>` });
+      case 'kv': return kv(b, T, width, landscape);
+      case 'table': return table(b, T, width);
+      case 'total': return total(b, T, width);
+      case 'sign': return sign(b, width);
+      case 'break': return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+      default: return '';
+    }
+  }
+
+  /* ------------------------------ الترويسة والتذييل ------------------------------ */
+  const EMU_MM = 36000;
+  function drawing(rid, mm, name){
+    const e = Math.round(mm * EMU_MM);
+    return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${e}" cy="${e}"/>`
+      + `<wp:docPr id="1" name="${esc(name)}" descr="${esc(name)}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>`
+      + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>`
+      + `<pic:nvPicPr><pic:cNvPr id="0" name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr>`
+      + `<pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+      + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${e}" cy="${e}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>`
+      + `</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+  }
+  function headerXml(T, d, width){
+    const b = Brand.get();
+    const logoW = 1300, rest = width - logoW, a = Math.floor(rest * .55), c = rest - a;
+    const logoCell = `<w:tc><w:tcPr><w:tcW w:w="${logoW}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
+      + `<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>${T.logo ? drawing('rIdLogo', 18, Brand.name()) : ''}</w:p></w:tc>`;
+    const nameCell = `<w:tc><w:tcPr><w:tcW w:w="${a}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
+      + para(Brand.name(), { pstyle:'TGBrand', color:T.plum })
+      + (b.subtitle ? para(b.subtitle, { pstyle:'TGSmall' }) : '')
+      + (Brand.contactLine() ? para(Brand.contactLine(), { pstyle:'TGSmall' }) : '') + '</w:tc>';
+    const metaCell = `<w:tc><w:tcPr><w:tcW w:w="${c}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
+      + para(d.title, { pstyle:'TGDocTitle', color:T.accent })
+      + (d.subtitle ? para(d.subtitle, { pstyle:'TGSmall' }) : '')
+      + para(`${D.dayName(D.today())} ${D.fmt(D.today())}`, { pstyle:'TGSmall' }) + '</w:tc>';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr ${W_NS}>`
+      + `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>`
+      + `<w:tblBorders><w:bottom ${border(T.accent, 12)}/></w:tblBorders><w:tblCellMar><w:bottom w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>`
+      + `<w:tblGrid><w:gridCol w:w="${logoW}"/><w:gridCol w:w="${a}"/><w:gridCol w:w="${c}"/></w:tblGrid>`
+      + `<w:tr>${logoCell}${nameCell}${metaCell}</w:tr></w:tbl>${para('', { pstyle:'TGGap' })}</w:hdr>`;
+  }
+  const field = (instr, T) => `<w:r><w:rPr><w:color w:val="${T.muted}"/><w:sz w:val="16"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>`
+    + `<w:r><w:instrText xml:space="preserve"> ${instr} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`
+    + `<w:r><w:rPr><w:color w:val="${T.muted}"/><w:sz w:val="16"/></w:rPr><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+  function footerXml(T){
+    const t = (x) => run(x, { color:T.muted, size:16 });
+    const line = `<w:pBdr><w:top ${border(T.line, 6)}/></w:pBdr>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr ${W_NS}>`
+      + `<w:p><w:pPr><w:pStyle w:val="TGSmall"/>${line}<w:bidi/><w:jc w:val="center"/><w:rPr><w:rtl/></w:rPr></w:pPr>`
+      + t(`${Brand.name()} — مستند صادر من نظام الإدارة ${APP.version}`) + '</w:p>'
+      + `<w:p><w:pPr><w:pStyle w:val="TGSmall"/><w:bidi/><w:jc w:val="center"/><w:rPr><w:rtl/></w:rPr></w:pPr>`
+      + t('صفحة ') + field('PAGE', T) + t(' من ') + field('NUMPAGES', T) + '</w:p></w:ftr>';
+  }
+
+  /* ------------------------------ الأنماط ------------------------------ */
+  function stylesXml(T){
+    const rf = `<w:rFonts w:ascii="${FONT}" w:hAnsi="${FONT}" w:eastAsia="${FONT}" w:cs="${FONT}"/>`;
+    const pstyle = (id, name, ppr, rpr, basedOn, extra) => `<w:style w:type="paragraph"${id === 'Normal' ? ' w:default="1"' : ''} w:styleId="${id}">`
+      + `<w:name w:val="${name}"/>${basedOn ? `<w:basedOn w:val="${basedOn}"/>` : ''}${extra || ''}<w:qFormat/>`
+      + `<w:pPr><w:bidi/>${ppr || ''}</w:pPr><w:rPr>${rpr || ''}<w:rtl/></w:rPr></w:style>`;
+    const sz = n => `<w:sz w:val="${n}"/><w:szCs w:val="${n}"/>`;
+    const tblBorders = (c, h) => `<w:tblBorders><w:top ${border(c)}/><w:bottom ${border(c)}/>`
+      + `<w:insideH ${border(h)}/></w:tblBorders>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults><w:rPrDefault><w:rPr>${rf}${sz(20)}<w:lang w:val="ar-IQ" w:eastAsia="en-US" w:bidi="ar-IQ"/></w:rPr></w:rPrDefault>
+<w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="80" w:line="288" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+${pstyle('Normal', 'Normal', '', `<w:color w:val="${T.ink}"/>`)}
+${pstyle('Heading1', 'heading 1', `<w:keepNext/><w:spacing w:before="280" w:after="100"/><w:pBdr><w:bottom ${border(T.tint, 8).replace('w:space="0"', 'w:space="2"')}/></w:pBdr><w:outlineLvl w:val="0"/>`,
+         `<w:b/><w:bCs/><w:color w:val="${T.accent}"/>${sz(28)}`, 'Normal', '<w:next w:val="Normal"/>')}
+${pstyle('Heading2', 'heading 2', '<w:keepNext/><w:spacing w:before="180" w:after="80"/><w:outlineLvl w:val="1"/>',
+         `<w:b/><w:bCs/><w:color w:val="${T.plum7}"/>${sz(23)}`, 'Normal', '<w:next w:val="Normal"/>')}
+${pstyle('TGBrand', 'TG Brand', '<w:spacing w:before="0" w:after="20"/>', `<w:b/><w:bCs/>${sz(28)}`, 'Normal')}
+${pstyle('TGDocTitle', 'TG Document Title', '<w:spacing w:before="0" w:after="20"/>', `<w:b/><w:bCs/>${sz(26)}`, 'Normal')}
+${pstyle('TGSmall', 'TG Small', '<w:spacing w:before="0" w:after="0"/>', `<w:color w:val="${T.muted}"/>${sz(16)}`, 'Normal')}
+${pstyle('TGCell', 'TG Cell', '<w:spacing w:before="30" w:after="30" w:line="252" w:lineRule="auto"/>', sz(18), 'Normal')}
+${pstyle('TGHead', 'TG Table Head', '<w:spacing w:before="40" w:after="40"/>', `<w:b/><w:bCs/><w:color w:val="FFFFFF"/>${sz(18)}`, 'Normal')}
+${pstyle('TGLabel', 'TG Label', '<w:spacing w:before="30" w:after="30"/>', `<w:color w:val="${T.muted}"/>${sz(17)}`, 'Normal')}
+${pstyle('TGTotal', 'TG Total', '<w:spacing w:before="70" w:after="70"/>', `<w:b/><w:bCs/>${sz(24)}`, 'Normal')}
+${pstyle('TGNote', 'TG Note', '<w:spacing w:before="120" w:after="120"/><w:ind w:left="120" w:right="120"/>', `<w:color w:val="${T.ink}"/>${sz(17)}`, 'Normal')}
+${pstyle('TGGap', 'TG Gap', '<w:spacing w:before="0" w:after="120" w:line="120" w:lineRule="exact"/>', sz(8), 'Normal')}
+<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/>
+<w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+<w:style w:type="table" w:styleId="TGTable"><w:name w:val="TG Table"/><w:basedOn w:val="TableNormal"/>
+<w:tblPr><w:bidiVisual/>${tblBorders(T.plum7, T.line)}<w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="110" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="110" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+<w:style w:type="table" w:styleId="TGKV"><w:name w:val="TG Key Value"/><w:basedOn w:val="TableNormal"/>
+<w:tblPr><w:bidiVisual/>${tblBorders(T.line, T.line)}<w:tblCellMar><w:top w:w="30" w:type="dxa"/><w:left w:w="110" w:type="dxa"/><w:bottom w:w="30" w:type="dxa"/><w:right w:w="110" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+</w:styles>`;
+  }
+
+  /* ------------------------------ المستند ------------------------------ */
+  /* d: { title, subtitle, blocks, landscape } ⟵ Blob من نوع docx */
+  async function build(d){
+    const T = await theme();
+    const blocks = d.blocks || [];
+    const maxCols = Math.max(0, ...blocks.filter(b => b.type === 'table').map(b =>
+      Math.max(b.headers ? b.headers.length : 0, ...(b.rows || []).map(r => r.reduce((a, c) => a + (c.span || 1), 0)))));
+    const landscape = d.landscape != null ? !!d.landscape : maxCols >= WIDE_COLS;
+    const pg = landscape ? { w:A4.h, h:A4.w } : A4;
+    const width = pg.w - MARGIN.side * 2;
+    const body = blocks.map(b => block(b, T, width, landscape)).join('');
+    const sect = `<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/><w:footerReference w:type="default" r:id="rIdFooter"/>`
+      + `<w:pgSz w:w="${pg.w}" w:h="${pg.h}"${landscape ? ' w:orient="landscape"' : ''}/>`
+      + `<w:pgMar w:top="${MARGIN.top}" w:right="${MARGIN.side}" w:bottom="${MARGIN.bottom}" w:left="${MARGIN.side}" w:header="${MARGIN.header}" w:footer="${MARGIN.footer}" w:gutter="0"/>`
+      + `<w:bidi/></w:sectPr>`;
+    const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const files = [
+      { name:'[Content_Types].xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="png" ContentType="image/png"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
+<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
+<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>` },
+      { name:'_rels/.rels', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+<Relationship Id="rId3" Type="${REL}/extended-properties" Target="docProps/app.xml"/>
+</Relationships>` },
+      { name:'docProps/core.xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<dc:title>${esc(d.title)}</dc:title><dc:creator>${esc(Brand.name())}</dc:creator><cp:lastModifiedBy>${esc(Brand.name())}</cp:lastModifiedBy>
+<dc:language>ar-IQ</dc:language><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified>
+</cp:coreProperties>` },
+      { name:'docProps/app.xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>${esc(Brand.name())} ${APP.version}</Application></Properties>` },
+      { name:'word/_rels/document.xml.rels', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdStyles" Type="${REL}/styles" Target="styles.xml"/>
+<Relationship Id="rIdSettings" Type="${REL}/settings" Target="settings.xml"/>
+<Relationship Id="rIdHeader" Type="${REL}/header" Target="header1.xml"/>
+<Relationship Id="rIdFooter" Type="${REL}/footer" Target="footer1.xml"/>
+</Relationships>` },
+      { name:'word/_rels/header1.xml.rels', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${T.logo ? `<Relationship Id="rIdLogo" Type="${REL}/image" Target="media/logo.png"/>` : ''}
+</Relationships>` },
+      { name:'word/settings.xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="100"/>
+<w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>
+<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>
+<w:themeFontLang w:val="en-US" w:bidi="ar-IQ"/></w:settings>` },
+      { name:'word/styles.xml', text:stylesXml(T) },
+      { name:'word/header1.xml', text:headerXml(T, d, width) },
+      { name:'word/footer1.xml', text:footerXml(T) },
+      { name:'word/document.xml', text:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${W_NS}><w:body>${body || para('')}${sect}</w:body></w:document>` },
+    ];
+    if (T.logo) files.push({ name:'word/media/logo.png', bytes:T.logo.bytes });
+    const blob = new Blob([Exporter.zip(files)], { type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    blob.tgMeta = { landscape, maxCols, accent:T.accent, accentSource:T.source, hasLogo:!!T.logo, parts:files.map(f => f.name) };
+    return blob;
+  }
+
+  /* ------------------------------ من المستند المطبوع ------------------------------
+     المفردات المعروفة تُترجم كتلاً، وما سواها يُقرأ نصّاً بترتيبه. لا شيء
+     يُخترع: كل كلمة في الـWord كانت في المستند المطبوع. */
+  const clean = s => String(s || '').replace(/\s+/g, ' ').trim();
+  const SKIP = 'script,style,button,svg,img,.no-print,#tgPrintExit,input,select,textarea';
+  function cellsOf(tr){
+    return [...tr.children].filter(c => /^T[DH]$/.test(c.tagName))
+      /* `textContent` لا `innerText`: المستند يُحلَّل في وعاءٍ غير مرئيّ، و`innerText`
+       لا يعيد نصّ ما لا يُرسم — فتخرج الخلايا فارغة. و<br> يصير سطراً. */
+      .map(c => { c.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+        return { t:String(c.textContent || '').split('\n').map(clean).filter(Boolean).join('\n'),
+                 span:Math.max(1, Number(c.getAttribute('colspan')) || 1) }; });
+  }
+  function tableBlock(t){
+    if (t.classList.contains('doc-sums'))
+      return { type:'kv', single:true, rows:[...t.querySelectorAll('tr')].map(tr => cellsOf(tr).map(c => c.t)).filter(r => r.length >= 2).map(r => [r[0], r[r.length - 1]]) };
+    let headers = null;
+    const thead = t.querySelector(':scope > thead');
+    const allRows = [...t.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr, :scope > tfoot > tr')];
+    if (thead){ const hr = thead.querySelector('tr'); if (hr) headers = cellsOf(hr).map(c => c.t); }
+    else if (allRows[0] && [...allRows[0].children].every(c => c.tagName === 'TH')) headers = cellsOf(allRows.shift()).map(c => c.t);
+    const bodyRows = allRows.filter(tr => !(tr.parentElement && /THEAD|TFOOT/.test(tr.parentElement.tagName)) && !(headers && tr === (thead && thead.querySelector('tr'))));
+    /* كل صفوف التذييل لا أوّلها: مستند الشراء فيه «المجموع» و«الخصم» و«الإجمالي»،
+       وكشف الشريكة فيه «ما ضُخّ» و«ما استُرجع» و«القائم» — لا يسقط منها رقم. */
+    const foot = [...t.querySelectorAll(':scope > tfoot > tr')].map(cellsOf).filter(r => r.some(c => c.t));
+    return { type:'table', headers, rows:bodyRows.map(cellsOf).filter(r => r.some(c => c.t)), totalsRows: foot.length ? foot : null };
+  }
+  function walk(el, out, meta){
+    if (el.nodeType === 3){ const t = clean(el.textContent); if (t) out.push({ type:'p', text:t }); return; }
+    if (el.nodeType !== 1 || el.matches(SKIP)) return;
+    const cls = el.classList, tag = el.tagName;
+    if (cls.contains('doc-head')){
+      const m = el.querySelector('.doc-head-meta');
+      if (m){ const st = m.querySelector('strong'); if (st && !meta.docTitle) meta.docTitle = clean(st.textContent);
+        const subs = [...m.querySelectorAll('span')].map(x => clean(x.textContent)).filter(Boolean);
+        if (subs.length && !meta.docSub) meta.docSub = subs.join(' · '); }
+      return;
+    }
+    if (cls.contains('print-banner')) return;
+    if (/^H[1-3]$/.test(tag) || cls.contains('doc-title') || cls.contains('rep-h') && tag !== 'H4'){ out.push({ type:'h1', text:clean(el.textContent) }); return; }
+    if (/^H[4-6]$/.test(tag)){ out.push({ type:'h2', text:clean(el.textContent) }); return; }
+    if (tag === 'DL'){
+      const rows = []; let k = null;
+      [...el.children].forEach(c => { if (c.tagName === 'DT') k = clean(c.textContent); else if (c.tagName === 'DD'){ rows.push([k || '', clean(c.textContent)]); k = null; } });
+      if (rows.length) out.push({ type:'kv', rows }); return;
+    }
+    if (tag === 'TABLE'){ const b = tableBlock(el); if ((b.rows && b.rows.length) || b.headers) out.push(b); return; }
+    if (cls.contains('doc-total')){
+      const parts = [...el.children].map(c => clean(c.textContent)).filter(Boolean);
+      out.push(parts.length >= 2 ? { type:'total', label:parts[0], value:parts.slice(1).join(' ') } : { type:'note', text:clean(el.textContent) });
+      return;
+    }
+    if (cls.contains('doc-note') || cls.contains('doc-copy') || cls.contains('sens')){ const t = clean(el.textContent); if (t) out.push({ type:'note', text:t }); return; }
+    if (cls.contains('doc-sign')){ out.push({ type:'sign', labels:[...el.children].map(c => clean(c.textContent)) }); return; }
+    if (cls.contains('doc-foot') || tag === 'FOOTER' || cls.contains('rep-foot')){
+      const kids = [...el.childNodes].map(n => clean(n.textContent)).filter(Boolean);
+      kids.forEach(t => out.push({ type:'small', text:t })); return;
+    }
+    /* شبكة أعمدة (الجدول الأسبوعي): كل عمود يصير عموداً في جدول */
+    const st = el.getAttribute('style') || '';
+    const grid = /grid-template-columns\s*:\s*repeat\((\d+)/.exec(st);
+    if (grid && el.children.length){
+      const text = x => x.children.length ? [...x.children].map(y => clean(y.textContent)).filter(Boolean).join('\n') : clean(x.textContent);
+      const cols = [...el.children].map(c => [...c.children].map(text).filter(Boolean));
+      const headers = cols.map(c => c[0] || '');
+      const depth = Math.max(0, ...cols.map(c => c.length - 1));
+      const rows = [];
+      for (let i = 1; i <= depth; i++) rows.push(cols.map(c => ({ t:c[i] || '' })));
+      out.push({ type:'table', headers, rows:rows.length ? rows : [cols.map(() => ({ t:'—' }))] });
+      return;
+    }
+    if (tag === 'UL' || tag === 'OL'){ [...el.children].forEach(li => { const t = clean(li.textContent); if (t) out.push({ type:'p', text:'• ' + t }); }); return; }
+    if (tag === 'P'){ const t = clean(el.textContent); if (t) out.push({ type: cls.contains('t-sub') || cls.contains('hint') ? 'small' : 'p', text:t }); return; }
+    const pageBreak = cls.contains('page-break');
+    /* عنصرٌ بلا أبناء كتليّين: فقرة واحدة بنصّه */
+    const blockKids = [...el.children].some(c => !/^(B|STRONG|SPAN|EM|I|SMALL|A|BR|IMG|SVG|SUB|SUP|CODE|LABEL)$/.test(c.tagName));
+    if (!blockKids){ const t = clean(el.textContent); if (t) out.push({ type:'p', text:t }); }
+    else [...el.childNodes].forEach(n => walk(n, out, meta));
+    if (pageBreak) out.push({ type:'break' });
+  }
+  function blocksFromHtml(html){
+    const host = document.createElement('div');
+    host.setAttribute('dir', 'rtl');
+    host.style.cssText = 'position:fixed;left:-20000px;top:0;width:190mm;visibility:hidden';
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    const meta = {}, out = [];
+    try { [...host.childNodes].forEach(n => walk(n, out, meta)); }
+    finally { host.remove(); }
+    /* فاصل صفحة في آخر المستند لا معنى له */
+    while (out.length && out[out.length - 1].type === 'break') out.pop();
+    return { blocks:out, meta };
+  }
+
+  /* ------------------------------ التصدير ------------------------------ */
+  const fileName = t => `${String(t || 'مستند').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80)}-${D.today()}.docx`;
+  /* المستند المطبوع ⟵ Word. `opts.landscape` يُحترم كما في الطباعة. */
+  async function fromPrint(title, html, opts){
+    const o = opts || {};
+    const { blocks, meta } = blocksFromHtml(html);
+    const blob = await build({ title:meta.docTitle || title, subtitle:o.subtitle || meta.docSub || '', blocks,
+                               landscape:o.landscape ? true : null });
+    const saved = await UI.download(blob, o.filename || fileName(title), 'word');
+    Audit.log('report','export',`تصدير Word: ${title}`).catch(() => {});
+    return { blob, saved };
+  }
+  return { build, blocksFromHtml, fromPrint, theme, logoAccent, fileName, WIDE_COLS };
 })();
 
 
@@ -10487,9 +10957,10 @@ Views.members = {
         ${UI.select('mStatus', f.status, statusOptions())}
         <label class="switch"><input type="checkbox" id="mArch" ${f.archived?'checked':''}> إظهار المؤرشفات</label>
         <div style="flex:1"></div>
-        <button class="btn btn-sm" id="mCsv">${svg(ICON.down,15)} CSV</button>
-        <button class="btn btn-sm" id="mXls">${svg(ICON.down,15)} Excel</button>
         <button class="btn btn-sm" id="mPrint">${svg(ICON.print,15)} طباعة</button>
+        ${UI.wordButton('mWord')}
+        <button class="btn btn-sm" id="mXls">${svg(ICON.down,15)} Excel</button>
+        <button class="btn btn-sm" id="mCsv">${svg(ICON.down,15)} CSV</button>
         <button class="btn btn-sm btn-primary" id="mAdd">${svg(ICON.plus,15,2.4)} مشتركة جديدة</button>
       </div>
       <div id="mTable"></div></div>`;
@@ -10547,11 +11018,13 @@ Views.members = {
       left:r.st.daysLeft==null?0:r.st.daysLeft, count:r.stats.count, owed:r.stats.totalOwed, paid:r.stats.totalPaid }));
     $('mCsv').onclick = () => Exporter.csv(`المشتركات-${D.today()}.csv`, MEM_COLS, memExport());
     $('mXls').onclick = () => Exporter.xlsx(`المشتركات-${D.today()}.xlsx`, [{ name:'المشتركات', cols:MEM_COLS, rows:memExport() }]);
-    $('mPrint').onclick = () => UI.printSection('قائمة المشتركات',  /* جدول عريض ⇒ أفقي */
+    const mDoc = () => ['قائمة المشتركات',  /* جدول عريض ⇒ أفقي */
       `<table class="tbl"><thead><tr><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>الحالة</th><th>نهاية الاشتراك</th><th>الاشتراكات</th><th>المستحق</th><th>المدفوع</th></tr></thead>
        <tbody>${(f._rows||[]).map(r=>`<tr><td>${U.esc(r.m.code)}</td><td>${U.esc(r.m.name)}</td><td>${U.esc(r.m.phone||'')}</td>
         <td>${r.st.status.ar}</td><td>${r.st.endDate?D.fmt(r.st.endDate):'—'}</td><td>${r.stats.count}</td>
-        <td>${Money.fmt(r.stats.totalOwed)}</td><td>${Money.fmt(r.stats.totalPaid)}</td></tr>`).join('')}</tbody></table>`, { landscape:true });
+        <td>${Money.fmt(r.stats.totalOwed)}</td><td>${Money.fmt(r.stats.totalPaid)}</td></tr>`).join('')}</tbody></table>`, { landscape:true }];
+    $('mPrint').onclick = () => UI.printSection(...mDoc());
+    UI.bindWord($('mWord'), mDoc);
   }
 };
 
@@ -10924,7 +11397,8 @@ Views.member = {
         <div class="row" style="gap:10px;align-items:center"><span>عليها متبقٍّ <strong class="money-neg">${Money.fmt(balance.due)}</strong></span>
         <div style="flex:1"></div><button class="btn btn-sm btn-primary" data-a="collect">قبض دفعة</button></div></div></div>` : ''}
       <div class="card"><div class="card-head"><h3>دفتر الحساب</h3><div class="sp"></div>
-        <button class="btn btn-sm" data-a="statement">${svg(ICON.print, 14)} طباعة الكشف</button></div><div class="card-body">
+        <button class="btn btn-sm" data-a="statement">${svg(ICON.print, 14)} طباعة الكشف</button>
+        <button class="btn btn-sm" data-a="statementWord">${svg(ICON.down, 14)} Word</button></div><div class="card-body">
         ${rows.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>البيان</th><th>مستحق</th><th>مقبوض</th><th>الوصل</th><th>الرصيد</th><th></th></tr></thead>
           <tbody>${body}</tbody>
           <tfoot><tr><th colspan="2">الإجمالي</th><th class="num">${Money.fmt(balance.total)}</th>
@@ -10941,7 +11415,8 @@ Views.member = {
           <td class="num">${U.esc(r.no)}${r.voided ? ' <span class="pill bad">مُبطَل</span>' : ''}</td>
           <td class="num">${D.fmt(String(r.issuedAt).slice(0, 10))}</td><td class="num">${Money.fmt(r.amount)}</td>
           <td class="num">${r.reprints ? r.reprints + ' إعادة' : 'الأصل'}</td>
-          <td class="ta-l"><button class="btn btn-sm" data-reprint="${r.id}">${svg(ICON.print, 13)} طباعة</button></td></tr>`).join('')}
+          <td class="ta-l"><div class="t-actions"><button class="btn btn-sm" data-reprint="${r.id}">${svg(ICON.print, 13)} طباعة</button>
+            <button class="btn btn-sm" data-rcpword="${r.id}">${svg(ICON.down, 13)} Word</button></div></td></tr>`).join('')}
         </tbody></table></div></div>` : ''}`;
     };
 
@@ -11077,6 +11552,8 @@ Views.member = {
         else if (a === 'doc') Forms.document(null, m.id);
         else if (a === 'grant') Forms.creditGrant(m.id);
         else if (a === 'statement') Actions.printStatement(m.id);
+        else if (a === 'statementWord') Word.fromPrint(`كشف حساب ${m.name}`, Print.statementHtml(m.id))
+          .catch(e => UI.toast('تعذّر تصدير Word: ' + e.message, 'err'));
         else if (a === 'note') Forms.memberNote(null, m.id);
         else if (a === 'lastreceipt' && lastPayment) Actions.printReceiptForPayment(lastPayment.id);
       });
@@ -11115,6 +11592,10 @@ Views.member = {
       on('[data-pmts]', b => Screens.paymentLedger('subscription', b.dataset.pmts));
       on('[data-receipt]', b => Actions.printReceiptForPayment(b.dataset.receipt));
       on('[data-reprint]', b => Actions.printReceipt(b.dataset.reprint));
+      /* نسخة Word من الوصل: مستندٌ لا طباعة — لا يزيد عدّاد إعادة الطباعة ولا يُصدر رقماً */
+      on('[data-rcpword]', b => { const rc = Repos.receipts.get(b.dataset.rcpword);
+        if (rc) Word.fromPrint(`وصل ${rc.no}`, Print.receiptHtml(rc, { format:'a4' }))
+          .catch(e => UI.toast('تعذّر تصدير Word: ' + e.message, 'err')); });
       on('[data-docedit]', b => Forms.document(b.dataset.docedit, m.id));
       on('[data-docview]', b => Screens.viewMedia((Repos.memberDocs.get(b.dataset.docview) || {}).mediaId));
       on('[data-idview]', () => Screens.viewMedia(m.idMediaId));
@@ -11564,6 +12045,7 @@ Views.trainings = {
       ${legacyNote}
       <div class="card"><div class="card-head"><h3>الجدول الأسبوعي</h3><div class="sp"></div>
         <button class="btn btn-sm" id="tPrint">${svg(ICON.print,15)} طباعة الجدول</button>
+        ${UI.wordButton('tWord')}
         <button class="btn btn-sm btn-primary" id="tAdd">${svg(ICON.plus,15,2.4)} حصة جديدة</button></div>
         <div class="card-body" id="tGrid"></div></div>
       <div class="card"><div class="card-head"><h3>كل الحصص</h3></div><div class="card-body tight" id="tTable"></div></div></div>`;
@@ -11615,7 +12097,9 @@ Views.trainings = {
       renderRoute();
     };
     $('tAdd').onclick = () => Forms.training();
-    $('tPrint').onclick = () => UI.printSection('الجدول الأسبوعي', `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">${grid}</div>`);
+    const tDoc = () => ['الجدول الأسبوعي', `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">${grid}</div>`, { landscape:true }];
+    $('tPrint').onclick = () => UI.printSection(...tDoc());
+    UI.bindWord($('tWord'), tDoc);
   }
 };
 const coachName = id => { const s = id ? Repos.staff.get(id) : null; return s ? s.name : 'بلا مدربة'; };
@@ -12137,9 +12621,10 @@ Views.payroll = {
           ${UI.select('pPeriod', period, monthOptions())}
           <button class="btn btn-sm btn-dark" id="pGen">إنشاء كشوف الشهر</button>
           <div style="flex:1"></div>
-          <button class="btn btn-sm" id="pCsv">${svg(ICON.down,15)} CSV</button>
-          <button class="btn btn-sm" id="pXls">${svg(ICON.down,15)} Excel</button>
           <button class="btn btn-sm" id="pPrint">${svg(ICON.print,15)} طباعة الكشف</button>
+          ${UI.wordButton('pWord')}
+          <button class="btn btn-sm" id="pXls">${svg(ICON.down,15)} Excel</button>
+          <button class="btn btn-sm" id="pCsv">${svg(ICON.down,15)} CSV</button>
         </div><div id="pTable"></div></div></div>`;
 
     const cols = [
@@ -12178,12 +12663,14 @@ Views.payroll = {
         net:x.p.net, state:x.p.status==='paid'?'مدفوع':'غير مدفوع', paid:x.p.paidDate?D.fmt(x.p.paidDate):'—' }; });
     $('pCsv').onclick = () => Exporter.csv(`الرواتب-${period}.csv`, PAY_COLS, payExport());
     $('pXls').onclick = () => Exporter.xlsx(`الرواتب-${period}.xlsx`, [{ name:D.monthName(period), cols:PAY_COLS, rows:payExport() }]);
-    $('pPrint').onclick = () => UI.printSection(`كشف رواتب ${D.monthName(period)}`,
+    const pDoc = () => [`كشف رواتب ${D.monthName(period)}`,
       `<table class="tbl"><thead><tr><th>الموظفة</th><th>الوظيفة</th><th>الأساسي</th><th>إضافات</th><th>خصومات</th><th>سلف</th><th>الصافي</th><th>التوقيع</th></tr></thead>
        <tbody>${rows.map(x=>`<tr><td>${U.esc(x.s.name)}</td><td>${U.esc(x.s.role)}</td><td>${Money.fmt(x.p.baseSalary)}</td>
         <td>${Money.fmt(U.sum(x.p.additions||[],a=>a.amount))}</td><td>${Money.fmt(U.sum(x.p.deductions||[],a=>a.amount))}</td>
         <td>${Money.fmt(U.sum(x.p.advances||[],a=>a.amount))}</td><td><strong>${Money.fmt(x.p.net)}</strong></td><td style="width:120px"></td></tr>`).join('')}
-        <tr><th colspan="6">المجموع</th><th>${Money.fmt(tot.net)}</th><th></th></tr></tbody></table>`);
+        </tbody><tfoot><tr><td colspan="6">المجموع</td><td>${Money.fmt(tot.net)}</td><td></td></tr></tfoot></table>`, { landscape:true }];
+    $('pPrint').onclick = () => UI.printSection(...pDoc());
+    UI.bindWord($('pWord'), pDoc);
   }
 };
 
@@ -12289,7 +12776,8 @@ Views.finance = {
       </div></div>
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>حركة اليوم بالتفصيل</h3><div class="sp"></div>
         ${todayPays.length ? `<button class="btn btn-sm" id="cashPrintAll">${svg(ICON.print, 15)} طباعة كل الوصولات (${todayPays.length})</button>` : ''}
-        <button class="btn btn-sm" id="cashDayPrint">${svg(ICON.print, 15)} طباعة كشف اليوم</button></div><div class="card-body">
+        <button class="btn btn-sm" id="cashDayPrint">${svg(ICON.print, 15)} طباعة كشف اليوم</button>
+        ${UI.wordButton('cashDayWord')}</div><div class="card-body">
         <h4 style="font-size:13px;margin:0 0 8px">المقبوض اليوم</h4>
         ${todayPays.length ? `<table class="mini-tbl"><thead><tr><th>الوقت</th><th>من</th><th>البيان</th><th>المبلغ</th><th>الطريقة</th><th>الوصل</th><th></th></tr></thead><tbody>
           ${todayPays.map(p => { const rc = Svc.receipts.forPayment(p.id);
@@ -12329,8 +12817,9 @@ Views.finance = {
           <div class="t-sub" style="margin-top:6px">التوزيع يخرج من الدرج اليوم، ولا يُخصم من الربح في أي تقرير.</div>` : ''}
       </div></div>
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>سجل الإقفالات</h3><div class="sp"></div>
-        <button class="btn btn-sm" id="cashCsv">${svg(ICON.down, 15)} CSV</button>
-        <button class="btn btn-sm" id="cashPrint">${svg(ICON.print, 15)} طباعة</button></div><div class="card-body">
+        <button class="btn btn-sm" id="cashPrint">${svg(ICON.print, 15)} طباعة</button>
+        ${UI.wordButton('cashWord')}
+        <button class="btn btn-sm" id="cashCsv">${svg(ICON.down, 15)} CSV</button></div><div class="card-body">
         ${rows.length ? `<table class="mini-tbl"><thead><tr><th>التاريخ</th><th>افتتاحي</th><th>داخل</th><th>خارج</th><th>متوقّع</th><th>معدود</th><th>الفرق</th><th>ملاحظات</th><th></th></tr></thead><tbody>
           ${rows.map(c => `<tr><td class="num">${D.fmt(c.date)}</td><td class="num">${Money.fmt(c.openingCash)}</td>
             <td class="num">${Money.fmt(c.cashIn)}</td><td class="num">${Money.fmt(c.cashOut)}</td>
@@ -12360,7 +12849,9 @@ Views.finance = {
     const pa = body.querySelector('#cashPrintAll');
     if (pa) pa.onclick = () => Actions.printDayReceipts(today);
     const dp = body.querySelector('#cashDayPrint');
-    if (dp) dp.onclick = () => Print.open(`كشف صندوق ${D.fmt(today)}`, Print.cashDayHtml(today));
+    const dayDoc = () => [`كشف صندوق ${D.fmt(today)}`, Print.cashDayHtml(today)];
+    if (dp) dp.onclick = () => Print.open(...dayDoc());
+    UI.bindWord(body.querySelector('#cashDayWord'), dayDoc);
     /* ورقة المطابقة: الأيام المقفلة بلقطتها، والمفتوحة محسوبة الآن — كما في السجل أعلاه */
     const cc = body.querySelector('#cashCsv');
     if (cc) cc.onclick = () => {
@@ -12370,12 +12861,14 @@ Views.finance = {
       Audit.log('report','export',`تصدير CSV: حركة النقد ${D.fmt(from)} — ${D.fmt(to)}`);
     };
     const pr = body.querySelector('#cashPrint');
-    if (pr) pr.onclick = () => Print.open('سجل إقفال الصندوق', Print.reportHtml('سجل إقفال الصندوق', [{
+    const logDoc = () => ['سجل إقفال الصندوق', Print.reportHtml('سجل إقفال الصندوق', [{
       headers:['التاريخ','افتتاحي','داخل','خارج','متوقّع','معدود','الفرق','ملاحظات'],
       rows:rows.map(c => [D.fmt(c.date), Money.fmt(c.openingCash), Money.fmt(c.cashIn), Money.fmt(c.cashOut),
         Money.fmt(c.expectedCash), Money.fmt(c.countedCash), Money.fmt(c.difference), U.esc(c.notes || '')]),
       totals:['الإجمالي','','','','','', Money.fmt(sum.net), `${sum.shortages} نقص / ${sum.overages} زيادة`]
-    }], { landscape:true }), { landscape:true });
+    }], { landscape:true }), { landscape:true }];
+    if (pr) pr.onclick = () => Print.open(...logDoc());
+    UI.bindWord(body.querySelector('#cashWord'), logDoc);
   },
   /* ------------------------------ المستحقات -----------------------------
      كل ما لم يُقبض بعد في مكان واحد: اشتراكات وفواتير، الأقدم أولاً. */
@@ -12411,8 +12904,9 @@ Views.finance = {
           <input class="inp search" id="duQ" placeholder="بحث باسم المشتركة أو رقم الفاتورة" value="${U.esc(f.q)}">
           ${UI.select('duKind', f.kind, [{v:'',t:'كل الأنواع'},{v:'subscription',t:'اشتراكات'},{v:'sale',t:'فواتير بيع'}])}
           <div style="flex:1"></div>
-          <button class="btn btn-sm" id="duXls">${svg(ICON.down,15)} Excel</button>
           <button class="btn btn-sm" id="duPrint">${svg(ICON.print,15)} طباعة</button>
+          ${UI.wordButton('duWord')}
+          <button class="btn btn-sm" id="duXls">${svg(ICON.down,15)} Excel</button>
         </div><div id="duTable"></div></div></div>`;
 
     const draw = () => {
@@ -12456,13 +12950,15 @@ Views.finance = {
     $('f_duKind').onchange = e => { f.kind = e.target.value; f.page=1; draw(); };
     $('duXls').onclick = () => Exporter.xlsx(`المستحقات-${D.today()}.xlsx`,
       [{ name:'المستحقات', cols:Exporter.DUE_COLS, rows:Exporter.dueRows(f._rows||[]) }]);
-    $('duPrint').onclick = () => UI.printSection('كشف المستحقات',
+    const duDoc = () => ['كشف المستحقات',
       `<table class="tbl"><thead><tr><th>المشتركة</th><th>الهاتف</th><th>المستند</th><th>التاريخ</th><th>المتبقي</th></tr></thead><tbody>
         ${(f._rows||[]).map(x=>`<tr><td>${U.esc(x.member?x.member.name:(x.doc.customerName||'زبونة عابرة'))}</td>
           <td>${U.esc(x.member?(x.member.phone||''):'')}</td>
           <td>${U.esc(x.kind==='sale'?('فاتورة '+x.doc.code):('اشتراك '+(x.doc.planName||'')))}</td>
           <td>${D.fmt(x.date)}</td><td>${Money.fmt(x.st.due)}</td></tr>`).join('')}
-        </tbody><tfoot><tr><td colspan="4">الإجمالي</td><td>${Money.fmt(U.sum(f._rows||[], x=>x.st.due))}</td></tr></tfoot></table>`);
+        </tbody><tfoot><tr><td colspan="4">الإجمالي</td><td>${Money.fmt(U.sum(f._rows||[], x=>x.st.due))}</td></tr></tfoot></table>`];
+    $('duPrint').onclick = () => UI.printSection(...duDoc());
+    UI.bindWord($('duWord'), duDoc);
   },
   revenues(body){
     const f = State.f.revenues;
@@ -12697,7 +13193,8 @@ Views.finance = {
           <td class="t-sub num">${D.fmt(String(p.closedAt).slice(0,10))}
             ${(p.acknowledged || []).length ? `<div class="t-sub">${(p.acknowledged || []).length} تنبيهاً أُقرّ</div>` : ''}</td>
           <td class="ta-l"><div class="t-actions">
-            <button class="btn btn-sm" data-sum-p="${p.key}">الملخّص</button>
+            <button class="btn btn-sm" data-sum-p="${p.key}">${svg(ICON.print,13)} الملخّص</button>
+            <button class="btn btn-sm" data-sum-w="${p.key}">${svg(ICON.down,13)} Word</button>
             <button class="btn btn-sm" data-perm="finance.money" data-reopen-p="${p.key}">إعادة فتح</button></div></td></tr>`).join('')}
         </tbody></table></div></div>` : ''}
       </div>`;
@@ -12749,6 +13246,8 @@ Views.finance = {
       await guard(null, () => Svc.distributions.remove(d.id), 'أُلغي التوزيع'); renderRoute();
     });
     on('[data-sum-p]', b => Print.open(`ملخّص إقفال ${D.monthName(b.dataset.sumP)}`, Print.periodCloseHtml(b.dataset.sumP)));
+    on('[data-sum-w]', b => Word.fromPrint(`ملخّص إقفال ${D.monthName(b.dataset.sumW)}`, Print.periodCloseHtml(b.dataset.sumW))
+      .catch(e => UI.toast('تعذّر تصدير Word: ' + e.message, 'err')));
     on('[data-reopen-p]', async b => {
       if (!await UI.confirm({ title:'إعادة فتح فترة', confirmText:'إعادة الفتح',
         message:'سيعود ربح الفترة متحرّكاً مع أي تعديل لاحق. لا يمكن إعادة فتح فترة وُزّعت أرباحها.' })) return;
@@ -12986,7 +13485,8 @@ Views.inventory = {
         والتسديد بعده ليس مصروفاً ثانياً — لذلك لا يُحسب الشراء مرتين.
       </div></div>
       ${payables.count ? `<div class="card" style="border-color:var(--gold-600)"><div class="card-head"><h3>مستحقات الموردين</h3><div class="sp"></div>
-        <button class="btn btn-sm" id="puPayPrint">${svg(ICON.print,15)} طباعة</button></div><div class="card-body">
+        <button class="btn btn-sm" id="puPayPrint">${svg(ICON.print,15)} طباعة</button>
+        ${UI.wordButton('puPayWord')}</div><div class="card-body">
         <table class="mini-tbl"><thead><tr><th>المستند</th><th>المورّد</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th><th></th></tr></thead><tbody>
         ${payables.rows.map(x => `<tr><td class="num">${U.esc(x.p.code)}</td>
           <td>${U.esc(x.supplier ? x.supplier.name : '—')}</td><td class="num">${D.fmt(x.p.date)}</td>
@@ -13047,6 +13547,7 @@ Views.inventory = {
     root.querySelectorAll('[data-pupay]').forEach(b => b.onclick = () => Forms.purchasePayment(b.dataset.pupay));
     const pp = root.querySelector('#puPayPrint');
     if (pp) pp.onclick = () => Print.open('مستحقات الموردين', Print.payablesHtml());
+    UI.bindWord(root.querySelector('#puPayWord'), () => ['مستحقات الموردين', Print.payablesHtml()]);
   },
 
   /* ------------------------------- الموردون -------------------------------
@@ -13145,7 +13646,8 @@ Views.attendance = {
             </tbody></table></div>`:UI.empty('لا حضور بعد','سجّلي أول حضور من الأعلى')}</div></div>
       </div>
       <div class="card"><div class="card-head"><h3>سجل يوم ${U.esc(D.fmt(f.date))}</h3><div class="sp"></div>
-        <button class="btn btn-sm" id="attPrint">${svg(ICON.print,15)} طباعة</button></div>
+        <button class="btn btn-sm" id="attPrint">${svg(ICON.print,15)} طباعة</button>
+        ${UI.wordButton('attWord')}</div>
         <div id="attTable"></div></div></div>`;
 
     const draw = () => {
@@ -13192,10 +13694,12 @@ Views.attendance = {
     $('attSearch').onkeydown = e => { if (e.key === 'Enter'){ const b = resBox.querySelector('[data-in]:not([disabled])'); if (b) b.click(); } };
     $('f_attDate').onchange = e => { f.date = e.target.value || D.today(); f.sessionId = ''; renderRoute(); };
     $('f_attSession').onchange = e => { f.sessionId = e.target.value; search(); };
-    $('attPrint').onclick = () => UI.printSection(`سجل الحضور — ${D.fmt(f.date)}`,
+    const attDoc = () => [`سجل الحضور — ${D.fmt(f.date)}`,
       `<table class="tbl"><thead><tr><th>الوقت</th><th>المشتركة</th><th>الكود</th><th>الحصة</th></tr></thead><tbody>
         ${(f._rows||[]).map(r=>`<tr><td>${U.esc(r.a.time||'')}</td><td>${U.esc(r.m?r.m.name:'—')}</td>
-          <td>${U.esc(r.m?r.m.code:'')}</td><td>${U.esc(r.tr?r.tr.title:'—')}</td></tr>`).join('')}</tbody></table>`);
+          <td>${U.esc(r.m?r.m.code:'')}</td><td>${U.esc(r.tr?r.tr.title:'—')}</td></tr>`).join('')}</tbody></table>`];
+    $('attPrint').onclick = () => UI.printSection(...attDoc());
+    UI.bindWord($('attWord'), attDoc);
     setTimeout(()=>{ const el = $('attSearch'); if (el) el.focus(); }, 60);
   }
 };
@@ -13588,7 +14092,7 @@ const Reports = {
     </div>`;
   },
   word(r){
-    Exporter.docx(`تقرير-${r.key}.docx`, {
+    return Exporter.docx(`تقرير-${r.key}.docx`, {
       title:`${r.gym} — التقرير الإداري الشهري`,
       subtitle:`الفترة: ${r.title} (${D.fmt(r.from)} — ${D.fmt(r.to)}) · أُصدر في ${D.fmt(r.generatedAt)}`,
       blocks:[
@@ -13753,17 +14257,23 @@ Views.reports = {
       <div class="card no-print"><div class="filters">
         ${UI.select('rpPeriod', key, monthOptions())}
         <div style="flex:1"></div>
-        <button class="btn btn-sm" id="rpCsv">${svg(ICON.down,15)} تصديرات محاسبية</button>
-        <button class="btn btn-sm" id="rpXls">${svg(ICON.down,15)} Excel</button>
-        <button class="btn btn-sm" id="rpWord">${svg(ICON.down,15)} Word</button>
         <button class="btn btn-sm btn-dark" id="rpPrint">${svg(ICON.print,15)} طباعة / PDF</button>
+        <button class="btn btn-sm" id="rpWord">${svg(ICON.down,15)} Word</button>
+        <button class="btn btn-sm" id="rpXls">${svg(ICON.down,15)} Excel</button>
+        <button class="btn btn-sm" id="rpCsv">${svg(ICON.down,15)} تصديرات محاسبية</button>
       </div></div>
       <div class="card"><div class="card-body" id="repBody">${Reports.html(r, false)}</div></div></div>`;
     $('f_rpPeriod').onchange = e => { State.f.reportPeriod = e.target.value; renderRoute(); };
     $('rpPrint').onclick = () => { UI.printSection(`التقرير الإداري — ${r.title}`, Reports.html(r, true), { plain:true });
       Audit.log('report','print',`طباعة تقرير ${r.title}`); };
-    $('rpWord').onclick = () => { Reports.word(r); UI.toast('تم تصدير التقرير بصيغة Word');
-      Audit.log('report','export',`تصدير Word لتقرير ${r.title}`); };
+    /* رسالة الحفظ يقولها مخرج الملفات نفسه حين يقع الحفظ فعلاً — لا قبله */
+    $('rpWord').onclick = async () => {
+      const b = $('rpWord'); b.disabled = true;
+      try { await Reports.word(r); if (!Desktop.on()) UI.toast('تم تصدير التقرير بصيغة Word');
+            Audit.log('report','export',`تصدير Word لتقرير ${r.title}`); }
+      catch(e){ Log.error('تعذّر تصدير Word', e); UI.toast('تعذّر تصدير Word: ' + e.message, 'err'); }
+      finally { b.disabled = false; }
+    };
     $('rpXls').onclick = () => { Reports.excel(r); UI.toast('تم تصدير التقرير بصيغة Excel');
       Audit.log('report','export',`تصدير Excel لتقرير ${r.title}`); };
     $('rpCsv').onclick = () => Screens.accountingExport(key);
@@ -16204,7 +16714,8 @@ Screens.periodClose = function(key){
         </ul><div class="t-sub" style="margin-top:8px">هذه أوضاع طبيعية قد تبقى — لكنها تُقرأ قبل الإقفال وتُحفظ معه.</div>
       </div></div>` : ''}
       <div class="card" style="margin-top:12px"><div class="card-head"><h3>ما الذي يُقفَل بالضبط</h3><div class="sp"></div>
-        <button class="btn btn-sm" id="pcPrint">${svg(ICON.print,15)} طباعة الملخّص</button></div><div class="card-body">
+        <button class="btn btn-sm" id="pcPrint">${svg(ICON.print,15)} طباعة الملخّص</button>
+        ${UI.wordButton('pcWord')}</div><div class="card-body">
         <table class="mini-tbl" style="max-width:560px"><tbody>
           ${row('الإيرادات', Money.fmt(sm.revenue), 'money-pos')}
           ${row('المصروفات', Money.fmt(sm.expense), 'money-neg')}
@@ -16234,7 +16745,9 @@ Screens.periodClose = function(key){
       const btn = ov.querySelector('#pcDo');
       const ack = ov.querySelector('#pcAck');
       if (ack && !ck.blocking.length){ btn.disabled = true; ack.onchange = () => { btn.disabled = !ack.checked; }; }
-      ov.querySelector('#pcPrint').onclick = () => Print.open(`ملخّص إقفال ${D.monthName(key)}`, Print.periodCloseHtml(key));
+      const pcDoc = () => [`ملخّص إقفال ${D.monthName(key)}`, Print.periodCloseHtml(key)];
+      ov.querySelector('#pcPrint').onclick = () => Print.open(...pcDoc());
+      UI.bindWord(ov.querySelector('#pcWord'), pcDoc);
       ov.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => {
         const to = b.dataset.fix;
         h.close();
@@ -16581,8 +17094,9 @@ Screens.purchase = function(id){
                 <button class="btn btn-danger" id="puDel">حذف المسودة</button>` : ''}
               ${p.status === 'posted' ? `${st.due > 0 ? '<button class="btn btn-primary" data-perm="finance.money" id="puDoPay">تسديد دفعة</button>' : ''}
                 <button class="btn" id="puPrint">${svg(ICON.print,15)} طباعة</button>
+                ${UI.wordButton('puWord', 'btn')}
                 <button class="btn btn-danger" data-perm="inventory.delete" id="puCancel">إلغاء المستند</button>` : ''}
-              ${p.status === 'cancelled' ? '<button class="btn" id="puPrint">' + svg(ICON.print,15) + ' طباعة</button>' : ''}
+              ${p.status === 'cancelled' ? '<button class="btn" id="puPrint">' + svg(ICON.print,15) + ' طباعة</button>' + UI.wordButton('puWord', 'btn') : ''}
               <button class="btn" id="puSupp">كشف المورّد</button>
               <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
       onMount(ov, hh){
@@ -16603,6 +17117,7 @@ Screens.purchase = function(id){
         });
         on('#puDoPay', () => { hh.close(); Forms.purchasePayment(id); });
         on('#puPrint', () => Print.open(`مستند شراء ${p.code}`, Print.purchaseHtml(id)));
+        UI.bindWord(ov.querySelector('#puWord'), () => [`مستند شراء ${p.code}`, Print.purchaseHtml(id)]);
         on('#puSupp', () => { hh.close(); Screens.supplierStatement(p.supplierId); });
         on('#puCancel', async () => {
           const reason = await new Promise(res => {
@@ -16777,10 +17292,12 @@ Screens.supplierStatement = function(supplierId){
           <td class="num">${Money.fmt(x.amount)}</td><td>${U.esc(PayMethods.label(x.method))}</td></tr>`; }).join('')}
         </tbody></table>` : '<div class="t-sub">لا دفعات بعد.</div>'}`,
     footer:`<button class="btn btn-primary" id="ssPrint">${svg(ICON.print,15)} طباعة الكشف</button>
+            ${UI.wordButton('ssWord', 'btn')}
             <button class="btn" id="ssBuy">مستند شراء جديد</button>
             <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
     onMount(ov, h){
       ov.querySelector('#ssPrint').onclick = () => Print.open(`كشف حساب ${sup.name}`, Print.supplierStatementHtml(supplierId));
+      UI.bindWord(ov.querySelector('#ssWord'), () => [`كشف حساب ${sup.name}`, Print.supplierStatementHtml(supplierId)]);
       ov.querySelector('#ssBuy').onclick = () => { h.close(); Forms.purchase(null, supplierId); };
       ov.querySelectorAll('[data-sdoc]').forEach(b => b.onclick = () => { h.close(); Screens.purchase(b.dataset.sdoc); });
     } });
@@ -18075,11 +18592,13 @@ Screens.partnerStatement = function(partnerId){
             : '<span class="pill warn">بلا تفصيل (توزيع قديم)</span>'}</td></tr>`; }).join('')}
         </tbody></table>` : '<div class="t-sub">لا توزيعات بعد.</div>'}`,
     footer:`<button class="btn btn-primary" id="psPrint">${svg(ICON.print,15)} طباعة الكشف</button>
+            ${UI.wordButton('psWord', 'btn')}
             <button class="btn" data-perm="finance.money" id="psDist">توزيع أرباح</button>
             <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
     onMount(ov, h){
       ov.querySelector('#psPrint').onclick = () =>
         Print.open(`كشف حساب ${st.partner.name}`, Print.partnerStatementHtml(partnerId));
+      UI.bindWord(ov.querySelector('#psWord'), () => [`كشف حساب ${st.partner.name}`, Print.partnerStatementHtml(partnerId)]);
       ov.querySelector('#psDist').onclick = () => { h.close(); Forms.distribution(partnerId); };
     }
   });
@@ -19009,7 +19528,7 @@ async function bootSafely(){
 window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, PayMethods, Backup, Seed, Audit, Migrations, Integrity, Exporter,
               STORE_LABELS, storeLabel,
               Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
-              Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor,
+              Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor, Word,
               Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
               boot, bootSafely, renderRoute, go, State, buildNav, currentRoute, navBadges, Gate, afterSignIn,

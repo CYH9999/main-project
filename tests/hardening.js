@@ -692,6 +692,156 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('الهوية 7.10 — اللافتة بتكوينٍ واحد في الإعدادات والاستقبال', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 9) Word — كل مستند يُطبع له Word حقيقي من المستند نفسه                *
+   * ===================================================================== */
+  group('Word — كل مستند يُطبع يُصدَّر .docx حقيقياً', async (browser) => {
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    let errs = [];
+    try {
+      const a = await openBridged(browser, url, { context: { viewport: { width: 1440, height: 900 } } });
+      errs = a.errors;
+      const r = await a.page.evaluate(async ([gifB64]) => {
+        const TG = window.TG, H = window.TGH, FS = window.__TG_FS__;
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        await H.representative(gifB64);
+        await TG.Brand.setMedia('logo', await H.makeFile({ type: 'png', w: 1200, h: 1200 }));
+        const k = TG.D.monthsBack(1)[0];
+        if (!TG.Svc.periods.isClosed(k)) await TG.Svc.periods.close(k).catch(() => {});
+        try { await TG.Svc.payroll.generate(TG.D.monthKey(TG.D.today())); } catch (e) {}
+        /* ما يُمرَّر إلى المحوِّل: العنوان وHTML المستند المطبوع نفسه */
+        const seen = [];
+        const realFP = TG.Word.fromPrint;
+        TG.Word.fromPrint = function (t, h, o) { seen.push({ t, h, o }); return realFP.apply(this, arguments); };
+        const words = () => FS.files.filter(f => f.category === 'word');
+        const unzip = (b64) => {
+          const bin = atob(b64), u = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+          const dv = new DataView(u.buffer), out = {}; let p = 0;
+          while (p + 30 <= u.length && dv.getUint32(p, true) === 0x04034b50) {
+            const method = dv.getUint16(p + 8, true), size = dv.getUint32(p + 18, true);
+            const nl = dv.getUint16(p + 26, true), xl = dv.getUint16(p + 28, true);
+            const name = new TextDecoder().decode(u.subarray(p + 30, p + 30 + nl));
+            if (method !== 0) return { error: 'compressed ' + name };
+            out[name] = u.subarray(p + 30 + nl + xl, p + 30 + nl + xl + size);
+            p += 30 + nl + xl + size;
+          }
+          return out;
+        };
+        const inspect = (file, want) => {
+          const z = unzip(file.b64);
+          if (z.error) return { error: z.error };
+          const txt = n => z[n] ? new TextDecoder().decode(z[n]) : null;
+          const need = ['[Content_Types].xml', '_rels/.rels', 'word/document.xml', 'word/styles.xml', 'word/settings.xml',
+                        'word/header1.xml', 'word/footer1.xml', 'word/_rels/document.xml.rels', 'docProps/core.xml'];
+          const missing = need.filter(n => !z[n]);
+          const badXml = Object.keys(z).filter(n => /\.(xml|rels)$/.test(n)).filter(n =>
+            new DOMParser().parseFromString(txt(n), 'application/xml').getElementsByTagName('parsererror').length);
+          const doc = txt('word/document.xml') || '';
+          const dom = new DOMParser().parseFromString(doc, 'application/xml');
+          const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+          const text = [...dom.getElementsByTagNameNS(W, 't')].map(t => t.textContent).join('\n');
+          /* كل خلية وكل بند في المستند المطبوع موجودٌ في الـWord */
+          const host = document.createElement('div'); host.innerHTML = want.h;
+          const expected = [...host.querySelectorAll('td,th,dt,dd')].flatMap(c => String(c.textContent).replace(/\s+/g, ' ').trim() ? [String(c.textContent).replace(/\s+/g, ' ').trim()] : []);
+          const lost = expected.filter(e => !text.replace(/\s+/g, ' ').includes(e) && !e.split(' ').every(w => text.includes(w)));
+          const sect = /<w:sectPr>[\s\S]*<\/w:sectPr>/.exec(doc);
+          const png = z['word/media/logo.png'];
+          return {
+            name: file.name, folder: file.folder, bytes: file.b64.length,
+            pk: atob(file.b64).slice(0, 2) === 'PK', missing, badXml,
+            arabic: /[؀-ۿ]/.test(text), tables: (doc.match(/<w:tbl>/g) || []).length,
+            bidiVisual: (doc.match(/<w:bidiVisual\/>/g) || []).length, rtlSection: !!sect && /<w:bidi\/>/.test(sect[0]),
+            landscape: /w:orient="landscape"/.test(doc),
+            logo: !!png && png[1] === 0x50 && png[2] === 0x4E && /r:embed="rIdLogo"/.test(txt('word/header1.xml') || ''),
+            pageNumbers: /PAGE/.test(txt('word/footer1.xml') || '') && /NUMPAGES/.test(txt('word/footer1.xml') || ''),
+            expected: expected.length, lost: lost.slice(0, 4),
+          };
+        };
+        const results = {};
+        const run = async (label, open, sel, wantLandscape) => {
+          const n0 = words().length, s0 = seen.length;
+          await open();
+          await sleep(250);
+          const scope = TG.UI.stack.length ? TG.UI.stack[TG.UI.stack.length - 1].el : document;
+          const btn = scope.querySelector(sel) || document.querySelector(sel);
+          if (!btn) { results[label] = { error: 'زرّ Word غير موجود: ' + sel }; return; }
+          btn.click();
+          for (let i = 0; i < 80 && words().length === n0; i++) await sleep(100);
+          const f = words().slice(-1)[0];
+          if (words().length === n0 || !seen[s0]) { results[label] = { error: 'لم يُحفظ ملف' }; }
+          else results[label] = Object.assign(inspect(f, seen[s0]), { wantLandscape });
+          while (TG.UI.stack.length) TG.UI.stack[TG.UI.stack.length - 1].close();
+        };
+        const go = async (route, params) => { TG.go(route, params); TG.renderRoute(); await sleep(200); };
+        const m = TG.Repos.members.list().find(x => TG.Svc.payments.ofMember(x.id).length) || TG.Repos.members.list()[0];
+        await TG.Svc.receipts.ensure(TG.Svc.payments.ofMember(m.id)[0].id);
+        const rcp = TG.Repos.receipts.list(true).find(x => x.memberId === m.id) || TG.Repos.receipts.list(true)[0];
+        const reprintsBefore = rcp ? Number(rcp.reprints) || 0 : null;
+        const pur = TG.Repos.purchases.list(true).find(x => x.status === 'posted');
+        const partner = TG.Repos.partners.list()[0];
+
+        await run('قائمة المشتركات', () => go('members'), '#mWord', true);
+        await run('كشف حساب مشتركة', () => go('member', { id: m.id, tab: 'money' }), '[data-a="statementWord"]', false);
+        await run('وصل قبض', () => go('member', { id: m.id, tab: 'money' }), `[data-rcpword="${rcp.id}"]`, false);
+        await run('الجدول الأسبوعي', () => go('trainings'), '#tWord', true);
+        await run('كشف الرواتب', () => go('payroll'), '#pWord', true);
+        await run('كشف الصندوق اليومي', () => go('finance', { tab: 'cash' }), '#cashDayWord', false);
+        await run('سجل إقفال الصندوق', () => go('finance', { tab: 'cash' }), '#cashWord', true);
+        await run('كشف المستحقات', () => go('finance', { tab: 'dues' }), '#duWord', false);
+        await run('ملخّص إقفال (القائمة)', () => go('finance', { tab: 'partners' }), '[data-sum-w]', false);
+        await run('ملخّص إقفال (النافذة)', () => TG.Screens.periodClose(TG.D.monthKey(TG.D.today())), '#pcWord', false);
+        await run('كشف حساب شريكة', () => TG.Screens.partnerStatement(partner.id), '#psWord', false);
+        await run('مستحقات الموردين', () => go('inventory', { tab: 'purchases' }), '#puPayWord', false);
+        await run('مستند شراء', () => TG.Screens.purchase(pur.id), '#puWord', false);
+        await run('كشف حساب مورّد', () => TG.Screens.supplierStatement(pur.supplierId), '#ssWord', false);
+        await run('سجل الحضور', () => go('attendance'), '#attWord', false);
+        TG.Word.fromPrint = realFP;
+
+        /* التقرير الإداري: كتلٌ منسّقة بالقالب نفسه */
+        const n0 = words().length;
+        await go('reports');
+        document.getElementById('rpWord').click();
+        for (let i = 0; i < 80 && words().length === n0; i++) await sleep(100);
+        const rep = words().slice(-1)[0];
+        results['التقرير الإداري'] = words().length > n0 ? Object.assign(inspect(rep, { h: '' }), { wantLandscape: null }) : { error: 'لم يُحفظ' };
+
+        /* ترتيب الأزرار: طباعة ⟵ Word ⟵ Excel ⟵ CSV */
+        await go('members');
+        const ids = [...document.querySelectorAll('#mPrint,#mWord,#mXls,#mCsv')].map(b => b.id);
+        const rcpAfter = rcp ? Number(TG.Repos.receipts.get(rcp.id).reprints) || 0 : null;
+        /* مركز الملفات يجد ملفات Word */
+        await go('files'); await sleep(500);
+        const fc = document.getElementById('viewRoot').textContent;
+        const listed = words().filter(f => fc.includes(f.name)).length;
+        return { results, ids, reprintsBefore, rcpAfter, listed, total: words().length, folders: [...new Set(words().map(f => f.folder))] };
+      }, [ANIM_B64]);
+
+      for (const [label, d] of Object.entries(r.results)) {
+        if (d.error) { ok(`${label}: Word`, false, d.error); continue; }
+        ok(`${label}: ملف .docx حقيقي (حزمة zip بأجزاء Word كاملة)`, d.pk && /\.docx$/.test(d.name) && !d.missing.length && d.bytes > 2000,
+           `${d.name} ${d.missing.join(',')}`);
+        ok(`${label}: كل أجزاء XML سليمة البنية`, d.badXml.length === 0, d.badXml.join(','));
+        ok(`${label}: عربيّ من اليمين — قسم RTL وجداول bidiVisual`, d.arabic && d.rtlSection && (d.tables === 0 || d.bidiVisual >= d.tables),
+           `tables=${d.tables} bidiVisual=${d.bidiVisual}`);
+        ok(`${label}: الشعار في الترويسة وترقيم «صفحة س من ص»`, d.logo && d.pageNumbers);
+        if (d.wantLandscape !== null)
+          ok(`${label}: الاتجاه ${d.wantLandscape ? 'أفقي للجدول العريض' : 'عمودي'}`, d.landscape === d.wantLandscape, `landscape=${d.landscape}`);
+        if (d.expected)
+          ok(`${label}: كل خلية وبند في المستند المطبوع موجودٌ في Word (${d.expected})`, d.lost.length === 0, d.lost.join(' | '));
+      }
+      ok('ترتيب الأزرار: طباعة ⟵ Word ⟵ Excel ⟵ CSV', JSON.stringify(r.ids) === JSON.stringify(['mPrint', 'mWord', 'mXls', 'mCsv']), r.ids.join(','));
+      ok('نسخة Word من الوصل لا تُعدّ إعادة طباعة', r.reprintsBefore === r.rcpAfter, `${r.reprintsBefore} ⟵ ${r.rcpAfter}`);
+      ok('كل ملفات Word في «Exports\\Word» وحده', r.folders.length === 1 && r.folders[0] === 'Exports\\Word', r.folders.join(','));
+      ok('ومركز الملفات يعرضها', r.listed > 0, `${r.listed}/${r.total}`);
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('Word — كل مستند يُطبع يُصدَّر .docx حقيقياً', rows, errs);
+  });
 };
 
 /* ---------------------------------------------------------------------------

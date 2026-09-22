@@ -11,7 +11,8 @@
     "desktop:build": "tauri build",
     "desktop:build:windows": "tauri build --bundles nsis",
     "test:paths": "node scripts/check-paths-rs.mjs",
-    "test:render": "node tests/verify-render.cjs"
+    "test:render": "node tests/verify-render.cjs",
+    "test:docx": "node tests/verify-docx.cjs"
   },
   "devDependencies": {
     "playwright": "1.55.0",
