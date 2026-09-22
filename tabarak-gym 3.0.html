@@ -8212,9 +8212,58 @@ const UI = {
 
      وقواعد الهوية على حالها: المطبوع يأخذ الإطار الثابت دائماً، لأن الذي
      يبني الترويسة هو `Brand.printHeader` نفسه لا مسار جديد. */
+  /* ------------------------ تخطيط الورقة — مصدرٌ واحد ------------------------
+     ما يُطبع كان يرث مقاسات الشاشة: صفوف جداول بحشوة 10×14 بكسل (14 صفّاً في
+     الصفحة)، ومبالغ تنكسر على سطرين («500,000» ثم «د.ع»)، وعناوين تبقى وحدها
+     أسفل صفحة وبطاقات تنشطر بين صفحتين، ولا رقم صفحة. وكانت الطباعة من
+     المتصفح ومن تطبيق سطح المكتب تكتب قواعدها كلٌّ على حدة.
+
+     فالقواعد هنا وحدها، و`R` هو جذر المستند في كل طريق: `#tgPrintRoot` في
+     سطح المكتب و`body` في نافذة المتصفح. وترقيم الصفحات في هامش الورقة نفسها
+     (`@page @bottom-center`): لا يُحسب في الشيفرة ولا يُخترع. */
+  pageCss(o){
+    if (o.slip) return '@page{size:80mm auto;margin:4mm}';
+    return `@page{size:${o.landscape ? 'A4 landscape' : 'A4'};margin:13mm 12mm 15mm;`
+      + `@bottom-center{content:"صفحة " counter(page) " من " counter(pages);font-size:8.5pt;color:#6B6070;`
+      + `font-family:"Segoe UI",Tahoma,Arial,sans-serif}}`;
+  },
+  docCss(R){
+    return `${R}{color:#000;font-size:11.5px;line-height:1.5}
+${R} img{max-width:100%}
+${R} table{width:100%;max-width:100%;border-collapse:collapse}
+${R} table.tbl,${R} table.mini-tbl,${R} table.rep-tbl{font-size:10.5px}
+${R} table.tbl th,${R} table.mini-tbl th,${R} table.rep-tbl th{padding:5px 6px;background:#EFE8EE;color:#241826;
+  font-weight:700;text-align:start;border-bottom:1.5px solid #432C4C;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+${R} table.tbl td,${R} table.mini-tbl td,${R} table.rep-tbl td{padding:4px 6px;border-bottom:1px solid #DDD5DC;
+  vertical-align:top;overflow-wrap:anywhere}
+${R} table.tbl tbody tr:nth-child(even) td{background:#FBF8FA;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+${R} tfoot td,${R} tfoot th{font-weight:700;background:#F7EDF2;border-top:1.5px solid #432C4C;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+${R} .num,${R} td[data-num]{white-space:nowrap;font-variant-numeric:tabular-nums}
+${R} thead{display:table-header-group} ${R} tfoot{display:table-footer-group}
+${R} tr{break-inside:avoid;page-break-inside:avoid}
+${R} h1,${R} h2,${R} h3,${R} h4,${R} .rep-h,${R} .doc-title{break-after:avoid;page-break-after:avoid}
+${R} .rep-cards,${R} .rep-card,${R} .rep-lead,${R} .kpi,${R} .doc-head,${R} .rep-head,${R} .doc-total,
+${R} .doc-sign,${R} .doc-note,${R} dl.doc-kv,${R} .doc-sums{break-inside:avoid;page-break-inside:avoid}
+${R} .rep-cards{grid-template-columns:repeat(4,1fr)}
+${R} .rep-head .doc-head-brand{display:flex;gap:12px;align-items:center}
+${R} .page-break{break-after:page;page-break-after:always}
+${R} .card{box-shadow:none;border:0}`;
+  },
+  /* خلايا المبالغ والأرقام لا تنكسر على سطرين. تُعلَّم على نسخة المستند
+     المطبوعة وحدها — لا تتغيّر شاشة ولا بيانات. */
+  printPrepare(html){
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const NUM = /^[\s\d.,٠-٩−\-+%×/:]+(\s*(د\.ع|\$|IQD|USD|يوماً|يوم|قطعة))?$/;
+    host.querySelectorAll('td,th').forEach(c => {
+      const t = String(c.textContent || '').trim();
+      if (t && t.length <= 24 && NUM.test(t)) c.setAttribute('data-num', '');
+    });
+    return host.innerHTML;
+  },
   printCss(o){
-    const page = o.slip ? '@page{size:80mm auto;margin:4mm}'
-                        : `@page{size:${o.landscape ? 'A4 landscape' : 'A4'};margin:14mm 12mm}`;
+    const page = this.pageCss(o);
     /* ------------------- حالة الطباعة تقع على العرض نفسه -------------------
        العيب الذي أوجد هذا: `ShowPrintUI` تطبع **ما في العرض**. وكان إخفاء
        التطبيق معلّقاً على `@media print` وحدها — أي أن كل ما يمنع وصول
@@ -8241,6 +8290,7 @@ html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;m
   background:#241826;color:#fff;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.28);
   cursor:pointer;border:0;font-family:inherit}
 @media print{#tgPrintExit{display:none!important}}
+${this.docCss('#tgPrintRoot')}
 @media print{
   ${page}
   html,body{height:auto!important;min-height:0!important;overflow:visible!important;background:#fff!important}
@@ -8293,7 +8343,7 @@ html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;m
     const root = document.createElement('div');
     root.id = 'tgPrintRoot';
     root.setAttribute('dir', 'rtl');
-    root.innerHTML = bodyHtml;
+    root.innerHTML = UI.printPrepare(bodyHtml);
     document.body.appendChild(style);
     document.body.appendChild(root);
     /* الحالة تُعلن على الجذر **قبل** انتظار الصور: فمن هنا فصاعداً ليس في
@@ -8431,9 +8481,9 @@ html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;m
   },
   /* نافذة طباعة مستقلة: A4، ترويسة متكررة للجداول، وصفوف لا تنقطع في منتصفها */
   printSection(title, html, opts={}){
-    const head = opts.plain ? '' : `<div class="print-banner">
-        <strong>${U.esc(Settings.get('gymName'))} — ${U.esc(title)}</strong>
-        <span>${U.esc(D.fmt(D.today()))}</span></div>`;
+    /* ترويسة كل مستند مطبوع — بالشعار في صندوقه، كما في الوصل والكشوف.
+       كانت هنا سطراً نصّياً بلا شعار، فتخرج القوائم بهويّةٍ غير الكشوف. */
+    const head = opts.plain ? '' : `<div class="doc print-sec-head" style="max-width:none">${Brand.printHeader(title, opts.subtitle || '')}</div>`;
     /* سطح المكتب: المستند نفسه، وواجهة طباعة ويندوز الحقيقية */
     if (Desktop.on())
       return UI.printNative(`<div class="print-wrap">${head}${html}</div>`, opts);
@@ -8443,16 +8493,11 @@ html[data-tg-print="on"] #tgPrintRoot{display:block;background:#fff;color:#000;m
     const css = document.querySelector('style').textContent;
     doc.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${U.esc(title)}</title>
       <style>${css}
-        @page { size:${opts.landscape ? 'A4 landscape' : 'A4'}; margin:14mm 12mm; }
+        ${UI.pageCss(opts)}
         body{background:#fff;margin:0;padding:0}
         .print-wrap{padding:0}
-        .print-banner{display:flex;justify-content:space-between;align-items:baseline;
-          border-bottom:2px solid var(--plum-900);padding-bottom:8px;margin-bottom:14px;font-size:15px}
-        table{page-break-inside:auto} thead{display:table-header-group} tfoot{display:table-footer-group}
-        tr{page-break-inside:avoid;break-inside:avoid}
-        .rep-sec{page-break-inside:auto} .rep-h,h3,h4{page-break-after:avoid}
-        .card{box-shadow:none}
-      </style></head><body><div class="print-wrap">${head}${html}</div>
+        ${UI.docCss('body')}
+      </style></head><body><div class="print-wrap">${head}${UI.printPrepare(html)}</div>
       <script>window.onload=function(){setTimeout(function(){window.print();},350);}<\/script></body></html>`);
     doc.close();
     return w;
@@ -13866,7 +13911,8 @@ const Reports = {
     return `
     <div class="report">
       <header class="rep-head">
-        <div><div class="rep-gym">${U.esc(r.gym)}</div><div class="rep-title">التقرير الإداري الشهري</div></div>
+        <div class="doc-head-brand">${forPrint ? Brand.logoHtml(Brand.BOX.print, true) : ''}
+          <div><div class="rep-gym">${U.esc(r.gym)}</div><div class="rep-title">التقرير الإداري الشهري</div></div></div>
         <div class="rep-meta"><div>الفترة: <strong>${U.esc(r.title)}</strong></div>
           <div>${U.esc(D.fmt(r.from))} — ${U.esc(D.fmt(r.to))}</div>
           <div class="t-sub">أُصدر في ${U.esc(D.fmt(r.generatedAt))}</div></div>
@@ -18082,16 +18128,13 @@ const Print = {
     if (!t) return null;
     const w = t.win, doc = t.doc;
     const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
-    const page = o.slip ? '@page{size:80mm auto;margin:4mm}' : `@page{size:${o.landscape ? 'A4 landscape' : 'A4'};margin:14mm 12mm}`;
     doc.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
       <title>${U.esc(title)}</title><style>${css}
-      ${page}
+      ${UI.pageCss(o)}
       body{background:#fff;margin:0;padding:0;color:#000}
       .doc{padding:0}
-      table{page-break-inside:auto} thead{display:table-header-group} tfoot{display:table-footer-group}
-      tr{page-break-inside:avoid;break-inside:avoid}
-      .page-break{page-break-after:always}
-      </style></head><body>${html}
+      ${UI.docCss('body')}
+      </style></head><body>${UI.printPrepare(html)}
       <script>window.onload=function(){setTimeout(function(){window.print();},${o.slip ? 250 : 400});}<\/script>
       </body></html>`);
     doc.close();

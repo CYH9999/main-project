@@ -842,6 +842,71 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('Word — كل مستند يُطبع يُصدَّر .docx حقيقياً', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 10) الطباعة — الورقة هي المستند، مرتّباً                              *
+   * ===================================================================== */
+  group('الطباعة 7.10 — ورقة مرتّبة: ترويسة بالشعار، صفوف مضغوطة، ترقيم', async (browser) => {
+    const srv = await serveDesktop();
+    const url = `http://127.0.0.1:${srv.address().port}/?intro=0`;
+    const rows = [];
+    const ok = (name, pass, detail) => rows.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+    let errs = [];
+    try {
+      const a = await openBridged(browser, url, { context: { viewport: { width: 1440, height: 900 } } });
+      errs = a.errors;
+      const page = a.page;
+      await page.evaluate(async ([b64]) => {
+        const TG = window.TG, H = window.TGH;
+        await H.representative(b64);
+        await TG.Brand.setMedia('logo', await H.makeFile({ type: 'png', w: 1200, h: 1200 }));
+        try { await TG.Svc.payroll.generate(TG.D.monthKey(TG.D.today())); } catch (e) {}
+      }, [ANIM_B64]);
+      const jobs = [
+        ['قائمة المشتركات', `(TG.go('members'),TG.renderRoute(),new Promise(r=>setTimeout(r,300)).then(()=>document.getElementById('mPrint').click()))`, true],
+        ['كشف الرواتب', `(TG.go('payroll'),TG.renderRoute(),new Promise(r=>setTimeout(r,300)).then(()=>document.getElementById('pPrint').click()))`, true],
+        ['وصل قبض', `(async()=>{const m=TG.Repos.members.list().find(x=>TG.Svc.payments.ofMember(x.id).length);const r=await TG.Svc.receipts.ensure(TG.Svc.payments.ofMember(m.id)[0].id);return TG.Actions.printReceipt(r.id,'a4');})()`, false],
+        ['التقرير الإداري', `(TG.go('reports'),TG.renderRoute(),new Promise(r=>setTimeout(r,300)).then(()=>document.getElementById('rpPrint').click()))`, false],
+        ['كشف الصندوق', `TG.Print.open('كشف', TG.Print.cashDayHtml(TG.D.today()))`, false],
+      ];
+      for (const [label, js, landscape] of jobs) {
+        await page.evaluate(js);
+        await page.waitForFunction(() => ['native', 'done'].includes(window.TG.UI._printState), null, { timeout: 15000 });
+        const dom = await page.evaluate(() => {
+          const root = document.getElementById('tgPrintRoot');
+          const shown = [...document.body.children].filter(e => getComputedStyle(e).display !== 'none').map(e => e.id || e.tagName);
+          const td = root.querySelector('table.tbl td, table.doc-tbl td, table.rep-tbl td');
+          const numCells = [...root.querySelectorAll('td')].filter(c => /^[\d,.\s]+\s*د\.ع$/.test(c.textContent.trim()));
+          const wrapped = numCells.filter(c => getComputedStyle(c).whiteSpace !== 'nowrap').length;
+          const logo = root.querySelector('.brand-logo img');
+          const lb = logo && logo.closest('.brand-logo').getBoundingClientRect();
+          return { shown, pad: td ? parseFloat(getComputedStyle(td).paddingTop) : null,
+                   logo: !!logo, logoBox: lb ? `${Math.round(lb.width)}×${Math.round(lb.height)}` : null,
+                   numCells: numCells.length, wrapped,
+                   css: [...document.querySelectorAll('#tgPrintStyle')].map(x => x.textContent).join('') };
+        });
+        await page.emulateMedia({ media: 'print' });
+        const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+        await page.emulateMedia({ media: 'screen' });
+        await page.evaluate(() => { if (window.TG.UI._printUndo) window.TG.UI._printUndo(); });
+        const raw = pdf.toString('latin1');
+        const pages = (raw.match(/\/Type\s*\/Page[^s]/g) || []).length;
+        const box = /\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/.exec(raw);
+        const land = box ? Number(box[1]) > Number(box[2]) : null;
+        ok(`${label}: لا شيء في العرض غير المستند (لا هيكل ولا شيفرة)`, dom.shown.length === 1 && dom.shown[0] === 'tgPrintRoot', dom.shown.join(','));
+        const want = label === 'وصل قبض' ? '56×56' : '54×54';     /* Brand.BOX.receipt / Brand.BOX.print */
+        ok(`${label}: ترويسةٌ بالشعار في صندوقه ${want}`, dom.logo && dom.logoBox === want, dom.logoBox);
+        if (dom.pad != null) ok(`${label}: صفوف جداول مضغوطة للورق (حشوة ≤ 6 بكسل)`, dom.pad <= 6, dom.pad);
+        ok(`${label}: المبالغ لا تنكسر على سطرين`, dom.wrapped === 0, `${dom.wrapped}/${dom.numCells}`);
+        ok(`${label}: ترقيم «صفحة س من ص» في هامش الورقة`, /@bottom-center/.test(dom.css) && /counter\(pages\)/.test(dom.css));
+        ok(`${label}: الورقة ${landscape ? 'أفقية' : 'عمودية'} A4`, land === landscape && box && Math.round(Math.max(box[1], box[2])) === 842,
+           box ? `${box[1]}×${box[2]}` : '');
+        ok(`${label}: عدد صفحات معقول`, pages >= 1 && pages <= 6, pages);
+      }
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('الطباعة 7.10 — ورقة مرتّبة: ترويسة بالشعار، صفوف مضغوطة، ترقيم', rows, errs);
+  });
 };
 
 /* ---------------------------------------------------------------------------
