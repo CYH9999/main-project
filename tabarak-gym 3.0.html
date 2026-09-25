@@ -597,6 +597,16 @@ body.locked{background:var(--plum-900)}
    الأبعاد والقصّ والاستدارة كما كانت تماماً — object-fit:cover يفعل ما كان
    يفعله background-size:cover. */
 .brand-banner img{display:block}
+/* ترويسة الاستقبال: اللافتة نفسها بصندوقها (4:1، سقف 240)، أو شريط هويةٍ هادئ */
+.desk-hero{margin:0 0 16px}
+.desk-hero .brand-banner{margin:0 auto}
+.desk-hero-empty{display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-lg)}
+.desk-hero-empty .dh-txt strong{display:block;font-size:15px;color:var(--ink)}
+.desk-hero-empty .dh-txt span{display:block;font-size:12px;color:var(--muted)}
+.desk-hero-empty .sp{flex:1}
+.desk-hero-empty .dh-date{text-align:end;font-size:12px;color:var(--muted);line-height:1.4}
+.desk-hero-empty .dh-date b{display:block;color:var(--ink-2);font-size:13px}
 /* ------------------------------ صندوق الشعار ------------------------------
    الدرس: **أبعاد الملف المرفوع كانت تقرّر حجم الشعار على الشاشة.** معاينة
    الإعدادات كانت الصورة نفسها، فترسم `max-height` سقفاً لا صندوقاً: مصدر
@@ -7152,6 +7162,13 @@ const Policy = {
     'users.create':'settings.users', 'users.update':'settings.users', 'users.setDisabled':'settings.users',
     'users.remove':'settings.users', 'users.setPassword':'settings.users'
   },
+  /* 7.11 — القدرات الخطرة: ليست دوالّ خدمة بل عمليات تمرّ ببوّابة (`Security.guard`).
+     سؤالها `Security.can(actor, key)`، وهذا الجدول مرآته هنا: مرحلة الأدوار ترى في
+     مكانٍ واحد المفاتيح العادية والقدرات الخطرة معاً. المرجع `Security.CAPS`. */
+  get CAPABILITIES(){
+    return Object.fromEntries(Object.entries(Security.CAPS).map(([k, d]) =>
+      [k, { level:d.level, perm:d.perm, ownerOnly:!!d.ownerOnly, backup:!!d.backup }]));
+  },
   stats: {},
   keyFor(action, args){
     const k = this.MAP[action];
@@ -9869,6 +9886,24 @@ const Brand = {
     return `<div class="brand-banner" data-brand-slot="banner" data-motion="${live ? 'live' : 'still'}" style="${this.bannerBoxStyle()}">`
       + this.bannerInner(url, this.cropOf('banner'), `لافتة ${this.name()}`) + '</div>';
   },
+  /* ترويسة الاستقبال (7.11) — الشاشة التي تُفتح كل صباح. اللافتة المضبوطة في
+     «الإعدادات ⟵ الهوية البصرية ⟵ اللافتة» هي نفسها هنا (المُخرِج نفسه والقصّ
+     نفسه — لا حالة ثانية). وبلا لافتة: شريط هويةٍ هادئ بالشعار والاسم والتاريخ،
+     لا صورةٌ مكسورة ولا مساحةٌ فارغة محجوزة. */
+  receptionHeader(){
+    const banner = this.bannerHtml();
+    if (banner) return `<div class="desk-hero" data-desk-hero="banner">${banner}</div>`;
+    const b = this.get();
+    const canEdit = Auth.can('settings.edit');
+    return `<div class="desk-hero desk-hero-empty" data-desk-hero="empty">
+      ${this.logoHtml(this.BOX.receipt)}
+      <div class="dh-txt"><strong>${U.esc(this.name())}</strong>
+        <span>${U.esc(b.subtitle || 'نظام إدارة النادي')}</span></div>
+      <div class="sp"></div>
+      <div class="dh-date"><b>${U.esc(D.dayName(D.today()))}</b><span class="num">${U.esc(D.fmt(D.today()))}</span></div>
+      ${canEdit ? `<button class="btn btn-ghost btn-sm" type="button" data-hero-banner>إضافة لافتة</button>` : ''}
+    </div>`;
+  },
   /* الشعار صورةً PNG مربّعة بمقاسٍ معلوم — لمستندات Word. يُرسم **كما يرسمه
      الصندوق**: الإطار الثابت (الورق لا يتحرّك)، والقصّ المحفوظ إن وُجد وإلا
      `contain` في المربّع. فمقاس الملف المرفوع لا يصل إلى المستند أبداً.
@@ -11736,7 +11771,7 @@ Views.desk = {
     const todayPay = Repos.payments.list().filter(p => p.date === today);
 
     root.innerHTML = `
-      ${Brand.bannerHtml()}
+      ${Brand.receptionHeader()}
       <div class="desk">
         <button data-a="member">${svg(ICON.users, 22)} مشتركة جديدة</button>
         <button data-a="sub">${svg(ICON.card, 22)} اشتراك / تجديد</button>
@@ -11822,6 +11857,8 @@ Views.desk = {
         }).join('')}</tbody></table></div></div>` : ''}`;
 
     /* ------------------------------ الربط ------------------------------ */
+    const heroBtn = root.querySelector('[data-hero-banner]');
+    if (heroBtn) heroBtn.onclick = () => go('settings', { sec:'brand' });
     const on = (sel, fn) => root.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
     on('[data-a]', b => {
       const a = b.dataset.a;

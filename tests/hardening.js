@@ -1257,3 +1257,5 @@ function PAGE_HELPERS() {
     return bad;
   };
 }
+/* تُصدَّر ليُعاد استعمالها في tests/phase711.js — نادٍ ممثّل واحد لا اثنان */
+module.exports.PAGE_HELPERS = PAGE_HELPERS;
