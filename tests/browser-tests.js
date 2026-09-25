@@ -2098,8 +2098,21 @@ window.TGTests = (() => {
       { t:'استعادة نسخة احتياطية', key:'settings.danger',
         arrange:() => Backup.build(true), run:b => Backup.restore(b),
         check:() => Repos.users.list(true).length >= 4 },
+      /* 7.11: إعادة التهيئة تمرّ ببوّابة العمليات الخطرة. من لا يملك القدرة يُرفض
+         عند حدّ الفعل (FORBIDDEN) كما كان؛ ومن يملكها يجتاز البوّابة الحقيقية —
+         كلمة مرورها الآن ورمز الأمان والعبارة ونسخة الأمان — بنافذتها الحقيقية
+         (لا بالحوار الآلي أعلاه، الذي يُغلق ما لا زرّ «تأكيد» فيه). */
       { t:'إعادة تهيئة البرنامج بالكامل', key:'settings.danger',
-        run:() => Actions.wipe(), check:() => DB.count('members') === 0 }
+        arrange:async () => {
+          if (!T().Security.hasPin())
+            await T().Security.applyPin('setup', { password:AUTH_PW.owner, pin:GATE_PIN, pin2:GATE_PIN });
+        },
+        run:async () => {
+          const stub = UI.modal; UI.modal = realModal;
+          try { return await throughGate(() => Actions.wipe(), { password:AUTH_PW.owner }); }
+          finally { UI.modal = stub; }
+        },
+        check:() => DB.count('members') === 0 }
     ];
 
     /* عدّ السطور قبل المحاولة الممنوعة وبعدها: الرفض يجب ألا يكتب شيئاً */
@@ -2651,6 +2664,55 @@ window.TGTests = (() => {
        U.round2(U.sum(good.data.payments, p => p.amount)));
   }
 
+
+  /* --------------------------------------------------------------------
+     بوّابة العمليات الخطرة (7.11) في الاختبارات: لا تُتجاوز، بل تُملأ.
+     يراقب النوافذ فيملأ الحقول **الحقيقية** (كلمة المرور، رمز الأمان، العبارة
+     المعروضة) ويضغط الزرّ — فيمرّ كل فعل خطر في المجموعات بالطريق الذي تمرّ
+     به المستخدمة: التحقّق الفعلي، ونسخة الأمان من القرص، والسجلّ الأمني.
+     { password, pin, phrase: 'auto' | نصّ | null, cancel } */
+  const GATE_PIN = '482913';
+  function autoGate(opts){
+    const o = Object.assign({ pin:GATE_PIN, phrase:'auto' }, opts || {});
+    const seen = new WeakSet();
+    const log = [];
+    const fill = (root, sel, v) => {
+      const i = root.querySelector(sel);
+      if (!i || v == null) return;
+      i.value = v; i.dispatchEvent(new Event('input', { bubbles:true }));
+    };
+    const scopeOf = el => el.closest('.modal') || el.parentElement || document;
+    const tick = () => {
+      document.querySelectorAll('[data-pin-flow],[data-sec-gate]').forEach(el => {
+        if (seen.has(el)) return;
+        seen.add(el);
+        const root = scopeOf(el);
+        if (el.hasAttribute('data-pin-flow')){
+          log.push('pin:' + el.getAttribute('data-pin-flow'));
+          fill(root, '#pinPw', o.password); fill(root, '#pinOld', o.oldPin);
+          fill(root, '#pinNew', o.newPin || o.pin); fill(root, '#pinNew2', o.newPin || o.pin);
+          setTimeout(() => { const b = root.querySelector('[data-pin-ok]'); if (b) b.click(); }, 0);
+          return;
+        }
+        log.push('gate:' + el.getAttribute('data-sec-gate'));
+        if (o.cancel){ setTimeout(() => { const c = root.querySelector('[data-close]'); if (c) c.click(); }, 0); return; }
+        fill(root, '#secPass', o.password);
+        fill(root, '#secPin', o.pin);
+        const want = root.querySelector('[data-sec-phrase]');
+        fill(root, '#secPhrase', o.phrase === 'auto' ? (want ? want.textContent : null) : o.phrase);
+        setTimeout(() => { const b = root.querySelector('[data-sec-ok]'); if (b && !b.disabled) b.click(); }, 0);
+      });
+    };
+    const mo = new MutationObserver(tick);
+    mo.observe(document.body, { childList:true, subtree:true });
+    tick();
+    return { log, stop(){ mo.disconnect(); } };
+  }
+  /* يُمرّر فعلاً خطراً ببوّابته ثم يُعيد نتيجته */
+  async function throughGate(fn, opts){
+    const g = autoGate(opts);
+    try { return await fn(); } finally { g.stop(); }
+  }
   return {
     get results(){ return results; },
     reset(){ results = []; },
@@ -2660,6 +2722,6 @@ window.TGTests = (() => {
     storeCosting, accountingExports, releaseAudit,
     branding, onboarding,
     auth, permMatrix, usersAdmin, accountability, authBackup,
-    writeProbe, probeExists, totals, endDates, downgrade
+    writeProbe, probeExists, totals, endDates, downgrade, autoGate, throughGate, GATE_PIN
   };
 })();

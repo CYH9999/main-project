@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { tauriAsset } = require('./tauri-runtime.js');
 
 const ROOT = path.join(__dirname, '..');
 const CONF = path.join(ROOT, 'src-tauri', 'tauri.conf.json');
@@ -195,11 +196,13 @@ module.exports = function register({ group, record, TESTS_JS }) {
         const u = decodeURIComponent(req.url.split('?')[0]);
         const file = u === '/' ? DIST : path.join(ROOT, u.replace(/^\//, ''));
         if (!fs.existsSync(file)) { r.writeHead(404); return r.end('nf'); }
+        /* الصفحة وسياستها كما يقدّمهما Tauri فعلاً (tests/tauri-runtime.js) */
+        const served = file === DIST ? tauriAsset(fs.readFileSync(file, 'utf8'), conf()) : { body:fs.readFileSync(file), csp };
         r.writeHead(200, {
           'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
-          'Content-Security-Policy': csp,
+          'Content-Security-Policy': served.csp || csp,
         });
-        r.end(fs.readFileSync(file));
+        r.end(served.body);
       });
       srv.listen(0, '127.0.0.1', () => res(srv));
     });
@@ -220,7 +223,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
     return { ctx, page, errors };
   }
 
@@ -620,7 +623,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
       const realConfirm = window.TG.UI.confirm;
       window.TG.UI.confirm = async () => true;
       const file = new File([JSON.stringify(snapshot)], 'نسخة.json', { type: 'application/json' });
-      await Actions.importBackup(file);
+      await window.TGTests.throughGate(() => Actions.importBackup(file));
       await new Promise(r => setTimeout(r, 500));
       window.TG.UI.confirm = realConfirm;
       const safety = FS.files.filter(f => /^قبل-الاستعادة-/.test(f.name));
@@ -638,7 +641,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
   });
 
   /* ===================================================================== *
-   * 6) فشل نسخة الأمان: تُسأل المستخدمة ولا تُستبدل بياناتها بصمت          *
+   * 6) فشل نسخة الأمان: لا تُستبدل البيانات أبداً (7.11)                    *
+   *                                                                       *
+   * كان 7.10 يسأل «استعادة بلا نقطة رجوع؟» ويمضي إن قُبل. المطلوب الآن     *
+   * صريح: نسخة أمان تعذّرت ⟵ العملية تُلغى، بلا سؤال يفتح الباب.           *
    * ===================================================================== */
   group('جسر سطح المكتب — نقطة الرجوع حين تتعذّر', async (browser) => {
     const srv = await serveDesktop();
@@ -647,31 +653,31 @@ module.exports = function register({ group, record, TESTS_JS }) {
     const rows = await page.evaluate(async () => {
       const out = [];
       const ok = (n, p, d) => out.push({ name: n, pass: !!p, detail: d == null ? '' : String(d) });
-      const { Actions, Backup, Svc, Repos } = window.TG;
+      const { Actions, Backup, Svc, Repos, Security } = window.TG;
       await Svc.members.create({ name: 'بيانات ثمينة' });
       const backup = Backup.build(false);
       await Svc.members.create({ name: 'أحدث من النسخة' });
 
       const asked = [];
       const realConfirm = window.TG.UI.confirm;
-      /* تُقبل الاستعادة نفسها، ويُرفض المضيّ بلا نقطة رجوع — وهذا هو السؤال
-         الذي تختبره هذه المجموعة. */
-      window.TG.UI.confirm = async (o) => { asked.push(o.title || ''); return !/نسخة الأمان/.test(o.title || ''); };
+      window.TG.UI.confirm = async (o) => { asked.push(o.title || ''); return true; };
       const file = new File([JSON.stringify(backup)], 'نسخة.json', { type: 'application/json' });
+      const g = window.TGTests.autoGate();
       await Actions.importBackup(file);
       await new Promise(r => setTimeout(r, 400));
-      ok('تُسأل المستخدمة حين تتعذّر نسخة الأمان',
-         asked.some(t => /نسخة الأمان/.test(t)), asked.join(' | '));
-      ok('ورفضها يوقف الاستعادة',
-         Repos.members.list(true).some(m => m.name === 'أحدث من النسخة'));
-
-      /* وقبولها يمضي — نفس المسار، قرار صريح */
-      window.TG.UI.confirm = async () => true;
-      await Actions.importBackup(file);
-      await new Promise(r => setTimeout(r, 500));
-      ok('وقبولها الصريح يُتمّ الاستعادة',
-         !Repos.members.list(true).some(m => m.name === 'أحدث من النسخة'));
+      g.stop();
       window.TG.UI.confirm = realConfirm;
+      ok('البوّابة اجتيزت فعلاً (المحاولة وصلت إلى نسخة الأمان)', g.log.some(x => /^gate:dangerous\.restore/.test(x)), g.log.join(','));
+      ok('لا يُعرض سؤال «المتابعة بلا نقطة رجوع» أبداً',
+         !asked.some(t => /نسخة الأمان|بلا نقطة رجوع/.test(t)), asked.join(' | '));
+      ok('والاستعادة لم تقع: ما أُضيف بعد النسخة باقٍ',
+         Repos.members.list(true).some(m => m.name === 'أحدث من النسخة'));
+      const ev = Security.recent(5)[0] || {};
+      const d = ev.details || {};
+      ok('والسجلّ الأمني يقول لماذا: نسخة الأمان تعذّرت',
+         d.capability === 'dangerous.restore' && d.result === 'rejected' && d.reason === 'backup-failed'
+         && d.backup && d.backup.ok === false, JSON.stringify(d));
+      ok('ويقول إن الطبقات الأخرى اجتيزت قبلها', d.pin === 'ok' && d.phrase === 'ok', `${d.pin}/${d.phrase}`);
       return out;
     });
     rows.push({ name: 'لا خطأ تشغيل', pass: errors.length === 0, detail: errors.slice(0, 2).join(' | ') });
@@ -696,6 +702,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
     await page.evaluate(() => window.TG.ready);
+    await page.evaluate(TESTS_JS);                /* أدوات البوّابة (autoGate) — 7.11 */
     const rows = await page.evaluate(async () => {
       const out = [];
       const ok = (n, p, d) => out.push({ name: n, pass: !!p, detail: d == null ? '' : String(d) });
@@ -724,16 +731,20 @@ module.exports = function register({ group, record, TESTS_JS }) {
       ok('ولا يُحقن مستند في صفحة التطبيق', !document.getElementById('tgPrintRoot'));
       if (fr) fr.remove();
 
-      /* الاستعادة في المتصفح بلا نسخة أمان ولا سؤال */
+      /* الاستعادة في المتصفح: البوّابة نفسها، ونسخة الأمان تنزيلٌ مُتحقَّقٌ من
+         نصّه قبل الاستبدال (لا قرص يُقرأ منه هنا) — ولا سؤال «بلا نقطة رجوع» */
       const b = Backup.build(false);
-      const asked = [];
-      const realConfirm = UI.confirm;
+      const asked = [], downloads = [];
+      const realConfirm = UI.confirm, realDownload = UI.download;
       UI.confirm = async (o) => { asked.push(o.title || ''); return true; };
-      await window.TG.Actions.importBackup(new File([JSON.stringify(b)], 'n.json', { type: 'application/json' }));
+      UI.download = (blob, name) => { downloads.push(name); };
+      await window.TGTests.throughGate(() =>
+        window.TG.Actions.importBackup(new File([JSON.stringify(b)], 'n.json', { type: 'application/json' })));
       await new Promise(r => setTimeout(r, 400));
-      UI.confirm = realConfirm;
-      ok('لا يُسأل المتصفح عن نسخة أمان لا يستطيعها',
+      UI.confirm = realConfirm; UI.download = realDownload;
+      ok('لا يُسأل المتصفح عن المتابعة بلا نسخة أمان',
          !asked.some(t => /نسخة الأمان/.test(t)), asked.join(' | '));
+      ok('ونسخة الأمان في المتصفح تنزيلٌ قبل الاستبدال', downloads.some(n => /^قبل-الاستعادة-/.test(n)), downloads.join(','));
       return out;
     });
     rows.push({ name: 'لا خطأ تشغيل في المتصفح', pass: errors.length === 0, detail: errors.slice(0, 3).join(' | ') });

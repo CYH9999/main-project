@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'tabarak-gym 3.0.html');
@@ -38,6 +39,9 @@ const rustSource = () => fs.readdirSync(RUST_DIR)
   .join('\n');
 
 const sha256 = buf => crypto.createHash('sha256').update(buf).digest('hex');
+/* ما يفعله Tauri بالسياسة والصفحة قبل WebView2 — المحاكاة نفسها التي تعمل تحتها
+   مجموعات سطح المكتب، فلا تفترق البوّابة عن الاختبار (tests/tauri-runtime.js). */
+const { tauriAsset, allowsInline, canModify } = createRequire(import.meta.url)('../tests/tauri-runtime.js');
 const read = p => fs.readFileSync(p, 'utf8');
 
 let failed = 0;
@@ -155,6 +159,22 @@ const FEATURES = [
     html: [/async openFile\(category, name\)/, /async openFolder\(category\)/],
     rust: [/fn tg_open_file/, /fn tg_open_folder/, /fn resolve_existing/] },
 
+  /* ------------------------------ 7.11 ------------------------------ */
+  /* السياسة **المطبَّقة** لا المكتوبة: Tauri يُلحق nonce بـ`style-src` فيتجاهل
+     WebView2 ‏'unsafe-inline' ويُحذف كل نمطٍ سطريّ — وهذا ما جعل الشعار بمقاس
+     ملفه واللافتة بارتفاع صفر على ويندوز. والسكربت يبقى محروساً بالبصمات، فلا
+     معالج سطريّ (`onclick="…"`) في الواجهة: يسقط هناك صامتاً. */
+  { key: 'csp', label: 'السياسة المطبَّقة في WebView2 تُبقي هندسة الواجهة',
+    html: [/\[data-brand-slot\]\[data-size="38"\]\{/, /\.brand-banner\{aspect-ratio:4\/1;max-width:960px\}/,
+           /\[data-brand-stage\]\{position:absolute/, /data-size="\$\{Math\.round\(size\)\}"/],
+    htmlNot: [/\son(click|load|error|change|input|submit|keydown|keyup|mouseover)="/],
+    conf: c => {
+      const served = tauriAsset('<html><head><style>a{}</style></head><body><script>1</script></body></html>', c);
+      return canModify(c, 'script-src') && !canModify(c, 'style-src')
+          && allowsInline(served.csp, 'style-src') && !allowsInline(served.csp, 'script-src');
+    },
+    confWhy: 'style-src مستثنى من تعديل Tauri (الأنماط السطرية تُطبَّق)، وscript-src باقٍ ببصماته' },
+
   { key: 'build', label: 'هويّة البناء',
     html: [/const Build = \{/, /Build\.details\(\)/],
     rust: [/env!\("TG_GIT_SHA"\)/, /env!\("TG_BUILD_ID"\)/, /env!\("TG_FRONTEND_SHA"\)/] },
@@ -164,6 +184,7 @@ function scanFeatures(html, rust, conf, where) {
   for (const f of FEATURES) {
     const misses = [];
     for (const re of f.html || []) if (!re.test(html)) misses.push(`html:${re.source.slice(0, 40)}`);
+    for (const re of f.htmlNot || []) if (re.test(html)) misses.push(`ممنوع:${re.source.slice(0, 40)}`);
     for (const [needle, min] of Object.entries(f.htmlMin || {})) {
       const n = html.split(needle).length - 1;
       if (n < min) misses.push(`${needle}×${n}<${min}`);

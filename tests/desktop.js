@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { tauriAsset } = require('./tauri-runtime.js');
 const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..');
@@ -37,11 +38,13 @@ function serveDesktop(){
       const u = decodeURIComponent(req.url.split('?')[0]);
       const file = u === '/' ? DIST : path.join(ROOT, u.replace(/^\//, ''));
       if (!fs.existsSync(file)){ r.writeHead(404); return r.end('not found'); }
+      /* الصفحة وسياستها كما يقدّمهما Tauri فعلاً — لا نصّ ملف التهيئة (tests/tauri-runtime.js) */
+      const served = file === DIST ? tauriAsset(fs.readFileSync(file, 'utf8'), conf()) : { body:fs.readFileSync(file), csp };
       r.writeHead(200, {
         'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
-        'Content-Security-Policy': csp,
+        'Content-Security-Policy': served.csp || csp,
       });
-      r.end(fs.readFileSync(file));
+      r.end(served.body);
     });
     srv.listen(0, '127.0.0.1', () => res(srv));
   });
@@ -63,7 +66,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     await page.goto(url, { waitUntil:'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
     return { ctx, page, errors, requests };
   }
 
@@ -494,7 +497,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     await p2.goto(url, { waitUntil:'domcontentloaded' });
     await p2.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
     await p2.evaluate(() => window.TG.ready);
-    await p2.addScriptTag({ content: TESTS_JS });
+    await p2.evaluate(TESTS_JS);
 
     const after = await p2.evaluate(async (b) => {
       const { Backup, Svc, Settings, Repos, Auth } = window.TG;
@@ -619,7 +622,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     await page.reload({ waitUntil:'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
     const kept = await page.evaluate(() => {
       const out = [];
       const ok = (n, p, d) => out.push({ name:n, pass:!!p, detail:d == null ? '' : String(d) });
@@ -764,7 +767,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
     await page.goto(url, { waitUntil:'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
 
     const rows = await page.evaluate(async () => {
       const out = [];
@@ -897,7 +900,7 @@ module.exports = function register({ group, record, chromium, CHROME, TESTS_JS }
       await page.goto(url, { waitUntil:'domcontentloaded' });
       await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout:120000 });
       await page.evaluate(() => window.TG.ready);
-      await page.addScriptTag({ content: FIXTURE });
+      await page.evaluate(FIXTURE);
       const counts = await page.evaluate(() => window.TGFixture.buildLarge());
 
       const t0 = Date.now();

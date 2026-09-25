@@ -23,6 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { tauriAsset } = require('./tauri-runtime.js');
 const { installBridge } = require('./desktop-io.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -52,12 +53,14 @@ module.exports = function register({ group, record, TESTS_JS }) {
           : path.join(ROOT, u.replace(/^\//, ''));
         if (!fs.existsSync(file)) { r.writeHead(404); return r.end('nf'); }
         const ext = path.extname(file).toLowerCase();
-        const body = fs.readFileSync(file);
+        /* الصفحة وسياستها كما يقدّمهما Tauri فعلاً (tests/tauri-runtime.js) */
+        const served = file === DIST ? tauriAsset(fs.readFileSync(file, 'utf8'), conf()) : null;
+        const body = served ? Buffer.from(served.body, 'utf8') : fs.readFileSync(file);
         r.writeHead(200, {
           'Content-Type': TYPES[ext] || 'application/octet-stream',
           'Content-Length': body.length,
           'Accept-Ranges': 'bytes',
-          'Content-Security-Policy': csp,
+          'Content-Security-Policy': (served && served.csp) || csp,
         });
         r.end(body);
       });
@@ -78,7 +81,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
     return { ctx, page, errors };
   }
 
@@ -92,7 +95,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
+    await page.evaluate(TESTS_JS);
     return { ctx, page, errors };
   }
 

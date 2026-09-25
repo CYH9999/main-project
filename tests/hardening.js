@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { tauriAsset } = require('./tauri-runtime.js');
 const { installBridge } = require('./desktop-io.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -32,9 +33,12 @@ module.exports = function register({ group, record, TESTS_JS }) {
         const u = decodeURIComponent(req.url.split('?')[0]);
         const file = u === '/' ? DIST : path.join(ROOT, u.replace(/^\//, ''));
         if (!fs.existsSync(file)) { r.writeHead(404); return r.end('nf'); }
+        /* الصفحة وسياستها كما يقدّمهما Tauri فعلاً (tests/tauri-runtime.js) */
+        const served = file === DIST ? tauriAsset(fs.readFileSync(file, 'utf8'), JSON.parse(fs.readFileSync(CONF, 'utf8')))
+                                     : { body:fs.readFileSync(file), csp };
         r.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
-                           'Content-Security-Policy': csp });
-        r.end(fs.readFileSync(file));
+                           'Content-Security-Policy': served.csp || csp });
+        r.end(served.body);
       });
       srv.listen(0, '127.0.0.1', () => res(srv));
     });
@@ -42,8 +46,8 @@ module.exports = function register({ group, record, TESTS_JS }) {
   async function boot(page) {
     await page.waitForFunction(() => window.TG && window.TG.ready, null, { timeout: 60000 });
     await page.evaluate(() => window.TG.ready);
-    await page.addScriptTag({ content: TESTS_JS });
-    await page.addScriptTag({ content: `(${PAGE_HELPERS.toString()})()` });
+    await page.evaluate(TESTS_JS);
+    await page.evaluate(`(${PAGE_HELPERS.toString()})()`);
   }
   async function openBridged(browser, url, opts = {}) {
     const ctx = opts.ctx || await browser.newContext(opts.context || { viewport: { width: 1440, height: 900 } });
@@ -102,10 +106,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
         await TG.Repos.expenses.create({ date: TG.D.today(), amount: 777777, categoryId: null, notes: 'بعد النسخة', method: 'cash' });
         out.changed = JSON.stringify(H.fingerprint()) !== JSON.stringify(out.fp0);
 
-        /* --- الاستعادة من القرص من الطريق الحقيقي --- */
+        /* --- الاستعادة من القرص من الطريق الحقيقي — ببوّابتها (7.11) --- */
         const realConfirm = TG.UI.confirm;
         TG.UI.confirm = async () => true;
-        await TG.Actions.restoreFromDisk('manual', man.name);
+        await window.TGTests.throughGate(() => TG.Actions.restoreFromDisk('manual', man.name));
         await new Promise(r => setTimeout(r, 400));
         TG.UI.confirm = realConfirm;
         toasts.stop();
@@ -438,7 +442,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
         await TG.Auth.logout(); await TG.Auth.login('late', 'Late#123456');
         out.before = TG.Auth.session.actorName;
         const realConfirm = TG.UI.confirm; TG.UI.confirm = async () => true;
-        await TG.Actions.importBackup(new File([JSON.stringify(snap)], 'n.json', { type: 'application/json' }));
+        /* البوّابة تطلب كلمة مرور الداخلة الآن (7.11) — ثم الاستعادة كما كانت */
+        await window.TGTests.throughGate(() =>
+          TG.Actions.importBackup(new File([JSON.stringify(snap)], 'n.json', { type: 'application/json' })),
+          { password: 'Late#123456' });
         await new Promise(r => setTimeout(r, 300));
         TG.UI.confirm = realConfirm;
         out.after = TG.Auth.session.actorId;

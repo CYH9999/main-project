@@ -13,6 +13,7 @@
    + رمادي وردي فاتح للخلفية + ذهبي هادئ للولاء
    ============================================================ */
 :root{
+  --danger-line:#E3B9BC; --danger-bg:#FDF6F6; --gold-line:#EBD9A8;
   --plum-900:#241826; --plum-800:#31203A; --plum-700:#432C4C;
   --rose-700:#A8305A; --rose-600:#C43E6B; --rose-500:#DB5C86; --rose-100:#F7DCE6; --rose-50:#FDF4F7;
   --gold-600:#B98A2E; --gold-50:#FBF3E1;
@@ -551,6 +552,37 @@ body.locked{background:var(--plum-900)}
 .whoami b{font-weight:600}
 .whoami .role{color:var(--muted)}
 
+/* ------------------------------ بوّابة العمليات الخطرة (7.11) ------------------------------
+   نافذة واحدة لكل عملية خطرة: ما سيحدث في الأعلى، والطبقات مرقّمة بأسمائها،
+   والحقول تحتها. لا ألوان صارخة: الأحمر للزرّ وحده. */
+.ta-c{text-align:center}
+.sec-gate{display:flex;flex-direction:column;gap:12px}
+.sec-what{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--danger-line);
+  background:var(--danger-bg);border-radius:var(--r-md)}
+.sec-what strong{display:block;font-size:14px;color:var(--ink)}
+.sec-ic{color:var(--red-600);flex:0 0 auto;display:flex;margin-top:1px}
+.sec-detail{font-size:13px}
+.sec-detail .tbl-wrap{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-sm)}
+.sec-steps{margin:0;padding:0;list-style:none;counter-reset:st;display:flex;flex-direction:column;gap:6px}
+.sec-steps li{counter-increment:st;display:grid;grid-template-columns:22px 92px 1fr;gap:8px;align-items:baseline;font-size:12.5px}
+.sec-steps li::before{content:counter(st);width:20px;height:20px;border-radius:50%;background:var(--surface-2);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink-2)}
+.sec-steps li span{color:var(--muted)}
+.sec-note{background:var(--gold-50);border:1px solid var(--gold-line);border-radius:var(--r-sm);padding:9px 11px;
+  font-size:12.5px;color:var(--ink-2);margin-bottom:10px}
+.sec-fields{margin:0}
+.sec-phrase-want{font-weight:700;font-size:15px;padding:8px 12px;border:1px dashed var(--danger-line);
+  border-radius:var(--r-sm);background:var(--surface-2);margin-bottom:6px;user-select:none;-webkit-user-select:none;letter-spacing:.2px}
+#secPhrase.ok{border-color:var(--green-600);box-shadow:0 0 0 2px var(--green-50)}
+.sec-err{background:var(--red-50);border:1px solid var(--danger-line);color:var(--red-600);border-radius:var(--r-sm);
+  padding:8px 11px;font-size:12.5px;font-weight:600}
+.sec-err[hidden]{display:none}
+.danger-card{border-color:var(--danger-line)}
+.danger-card .card-head h3::before{background:var(--red-600)}
+.danger-tiers td{vertical-align:top}
+.danger-tiers .danger-row td{background:var(--danger-bg)}
+.sec-log td{font-size:12.5px;vertical-align:top}
+
 /* ------------------------------ الهوية البصرية ------------------------------ */
 /* اللافتة: صندوقٌ بنسبة إطار المحرّر (4:1) في كل سطح — النسبة وسقف العرض
    يكتبهما `Brand.bannerBoxStyle` سطريّاً من ثابتٍ واحد. و`container-type:size`
@@ -618,6 +650,35 @@ body.locked{background:var(--plum-900)}
 .media-drop.wide .brand-prev{width:100%;height:auto;aspect-ratio:4/1;padding:0;border:0;
   outline:1px solid var(--line);outline-offset:-1px;
   position:relative;overflow:hidden;container-type:size;display:block}
+/* ---------------- 7.11: الهندسة في ورقة الأنماط أيضاً، لا سطريّاً وحده ----------------
+   السبب الجذري لشعارٍ «ضخم» ولافتةٍ «غير موجودة» على ويندوز: Tauri يضع nonce على
+   عنصر <style> ويُلحقه بـ`style-src`، ووجود nonce يجعل WebView2 يتجاهل
+   'unsafe-inline' — فيُحذف **كل** `style="…"` سطريّ. وكانت هندسة الشعار كلّها
+   سطريّة، فرُسم بمقاس ملفه (512×512 في شريطٍ عرضه 238)، وكان ارتفاع صندوق اللافتة
+   سطريّاً (`aspect-ratio`) مع `container-type:size` فانهار إلى صفر.
+
+   الإصلاح الجذري في `tauri.conf.json` (`dangerousDisableAssetCspModification:
+   ["style-src"]`): السياسة المطبَّقة هي المكتوبة. وهذه القواعد طبقة ثانية: كل
+   رقمٍ ثابت في هندسة الهوية مكتوبٌ هنا أيضاً — في الورقة التي تحمل الـnonce وتُطبَّق
+   دائماً — فلو سقطت الأنماط السطرية مرّة أخرى لسببٍ لا نراه، يبقى الشعار في صندوقه
+   واللافتة بنسبتها. مقاسات `data-size` هي `Brand.BOX` نفسها (يفحصها اختبار). */
+[data-brand-slot][data-size]{position:relative;overflow:hidden;display:block;padding:0;box-sizing:border-box;contain:strict}
+[data-brand-slot][data-size="38"]{width:38px;height:38px;min-width:38px;min-height:38px;max-width:38px;max-height:38px;flex:0 0 38px}
+[data-brand-slot][data-size="44"]{width:44px;height:44px;min-width:44px;min-height:44px;max-width:44px;max-height:44px;flex:0 0 44px}
+[data-brand-slot][data-size="54"]{width:54px;height:54px;min-width:54px;min-height:54px;max-width:54px;max-height:54px;flex:0 0 54px}
+[data-brand-slot][data-size="56"]{width:56px;height:56px;min-width:56px;min-height:56px;max-width:56px;max-height:56px;flex:0 0 56px}
+[data-brand-slot][data-size="64"]{width:64px;height:64px;min-width:64px;min-height:64px;max-width:64px;max-height:64px;flex:0 0 64px}
+[data-brand-slot][data-size="120"]{width:120px;height:120px;min-width:120px;min-height:120px;max-width:120px;max-height:120px;flex:0 0 120px}
+[data-brand-slot][data-size="150"]{width:150px;height:150px;min-width:150px;min-height:150px;max-width:150px;max-height:150px;flex:0 0 150px}
+[data-brand-frame]{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;display:block;margin:0;padding:0}
+[data-brand-frame][data-pad="12"]{left:12px;top:12px;right:12px;bottom:12px}
+[data-brand-frame]>[data-brand-img]:not([data-brand-crop]){position:absolute;left:0;top:0;width:100%;height:100%;
+  max-width:none;max-height:none;min-width:0;min-height:0;margin:0;padding:0;border:0;object-fit:contain;object-position:center}
+.brand-banner{aspect-ratio:4/1;max-width:960px}
+[data-brand-stage]{position:absolute;left:50%;top:50%;width:max(100cqw, 400cqh);height:max(100cqh, 25cqw);
+  transform:translate(-50%,-50%);overflow:hidden;display:block}
+.brand-banner>[data-brand-img]:not([data-brand-crop]),.brand-banner-prev>[data-brand-img]:not([data-brand-crop]){
+  position:absolute;left:0;top:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;object-position:center}
 .media-drop{
   border:1.5px dashed var(--line);border-radius:var(--r-md);padding:16px;text-align:center;background:var(--surface-2);
 }
@@ -974,6 +1035,7 @@ body.locked{background:var(--plum-900)}
         <div class="gsearch-res hidden" id="globalSearchRes" role="listbox"></div>
       </div>
       <div id="whoami" style="display:none"></div>
+      <button class="btn btn-icon" id="btnTheme" type="button" title="المظهر" aria-label="المظهر"></button>
       <button class="btn btn-icon bell" id="btnBell" title="التنبيهات" aria-label="التنبيهات">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
         <span class="cnt hidden" id="bellCount">0</span>
@@ -2085,21 +2147,610 @@ const Auth = {
 /* =============================== Audit =================================== */
 const Audit = {
   /* «من نفّذ» صار جزءاً من كل حدث. قبل هذه المرحلة كان السجل يقول ماذا حدث
-     ومتى ولا يقول مَن — بينما شاشة الخصوصية تَعِد بأنه يقول ذلك. الآن يفي. */
-  async log(entity, action, summary, entityId){
+     ومتى ولا يقول مَن — بينما شاشة الخصوصية تَعِد بأنه يقول ذلك. الآن يفي.
+
+     7.11: الوسيط الخامس `details` — كائنٌ منظَّم (بلا أسرار) لأحداث البوّابة
+     الأمنية: أي طبقة اجتيزت وأيّها سقطت، ونسخة الأمان، والنتيجة. حقلٌ إضافي في
+     السجل نفسه — لا جدول جديد ولا ترقية مخطّط. */
+  KEEP: 1000, SECURITY_KEEP: 500,
+  async log(entity, action, summary, entityId, details){
     try{
-      await Repos.audit.create({ ts:new Date().toISOString(), entity, action,
+      const rec = { ts:new Date().toISOString(), entity, action,
         summary:String(summary||''), entityId:entityId||null,
-        actorId:Auth.session.actorId || null, actor:Auth.session.actorName || '' });
+        actorId:Auth.session.actorId || null, actor:Auth.session.actorName || '' };
+      if (details && typeof details === 'object') rec.details = details;
+      await Repos.audit.create(rec);
       const all = Repos.audit.list(true);
       if (all.length > 1200){                                  // تقليم السجل حتى لا يتضخم
-        const old = U.sortBy(all, x=>x.ts).slice(0, all.length-1000);
+        /* الأحداث الأمنية لا يزيحها سيلُ الأحداث العادية: لكلٍّ حدّه. فلا يستطيع
+           من يريد إخفاء محاولةٍ فاشلة أن يُغرقها بمئات العمليات التافهة. */
+        const sec = U.sortBy(all.filter(x => x.entity === 'security'), x=>x.ts);
+        const rest = U.sortBy(all.filter(x => x.entity !== 'security'), x=>x.ts);
+        const old = [...sec.slice(0, Math.max(0, sec.length - this.SECURITY_KEEP)),
+                     ...rest.slice(0, Math.max(0, rest.length - this.KEEP))];
         for (const o of old) await Repos.audit.hardDelete(o.id);
       }
     }catch(e){ Log.warn('تعذّر تسجيل الحدث', e); }
   },
   recent(n=50){ return U.sortBy(Repos.audit.list(true), x=>x.ts, -1).slice(0,n); }
 };
+
+
+/* ===== src/app/data/42-security.js =================================================== */
+/* ========================= بوّابة العمليات الخطرة =========================
+   البيانات أثمن ما في هذا النظام: مال النادي كلّه، واشتراكاته، ورواتبه،
+   وحساباته. وكان «حذف كل شيء» يمرّ بتأكيدين ينقرهما أي شخص وجد جلسة مفتوحة.
+
+   الآن كل عملية خطرة تمرّ ببوّابة واحدة، وطبقاتها مستقلّة — لا تُغني إحداها
+   عن أخرى:
+
+     1. القدرة       — `Security.can(الفاعلة، القدرة)`: من يملكها أصلاً؟
+     2. هويةٌ طازجة  — كلمة مرور الحساب الداخل تُكتب الآن وتُفحص ببصمتها
+                       المخزّنة (PBKDF2) — لا يُكتفى بأن الجلسة مفتوحة.
+     3. رمز الأمان   — سرٌّ ثانٍ للمالكة وحدها، منفصل عن كلمة المرور، ملبَّد
+                       بملح وتكرارات أعلى، لا يُكتب نصّاً في أي مكان.
+     4. عبارة النيّة — تولّدها البوّابة (فيها رقم عشوائي) وتُكتب حرفاً بحرف،
+                       والنسخ واللصق ممنوعان فيها: لا يقع الحذف بضغطة.
+     5. نسخة أمان    — تُكتب وتُقرأ من القرص وتُتحقَّق **قبل** أي مسّ. تعذّرت؟
+                       تُلغى العملية. لا «متابعة بلا نقطة رجوع» بعد اليوم.
+     6. سجلّ أمني    — كل محاولة (نجحت أو رُفضت) حدثٌ بمن ومتى وأي طبقة
+                       اجتازت أو سقطت ونسخة الأمان — بلا سرّ واحد فيه.
+     7. تهدئة        — المحاولات الفاشلة المتتالية تُبطئ البوّابة (30 ثانية
+                       تتضاعف حتى 15 دقيقة) — ولا إقفال دائم أبداً: المالكة
+                       تنتظر أو تستعمل رمز الاسترجاع، ولا تُحبس خارج نظامها.
+
+   وحدود الصدق: حين يكون تسجيل الدخول **غير مفعّل** لا هويّة تُعاد: كل من يفتح
+   الجهاز «مالكة». فيصير رمز الأمان هو الحاجز الوحيد، ويُقال ذلك في النافذة.
+
+   ولمرحلة الأدوار: `Security.can(actor, key)` هو السؤال الوحيد، و`policy`
+   دالّةٌ تُستبدل — العملية الخطرة نفسها لا تعرف شيئاً عن الأدوار. */
+const Security = {
+  /* القدرات — مفتاح ⟵ المستوى والصلاحية التي تحكمها اليوم.
+       high     هويّة طازجة (+ نسخة أمان إن كانت تمسّ بيانات)
+       critical هويّة طازجة + رمز الأمان + عبارة النيّة + نسخة أمان، وللمالكة وحدها */
+  CAPS: {
+    'dangerous.resetData': { level:'critical', perm:'settings.danger', ownerOnly:true, backup:true,
+      label:'إعادة تهيئة كاملة — حذف كل البيانات', phrase:'احذف كل البيانات' },
+    'dangerous.restore':   { level:'critical', perm:'settings.danger', ownerOnly:true, backup:true,
+      label:'استعادة نسخة احتياطية — استبدال كل البيانات', phrase:'استبدل كل البيانات' },
+    'dangerous.clearDemo': { level:'high', perm:'settings.edit', backup:true,
+      label:'حذف البيانات التجريبية وما يتبعها' },
+    'security.disableAuth':{ level:'high', perm:'settings.users',
+      label:'إيقاف تسجيل الدخول والصلاحيات' },
+    'security.adminAccount':{ level:'high', perm:'settings.users',
+      label:'حساب بصلاحية المالكة (إنشاء، ترقية، أو تعيين كلمة مرور)' },
+    'security.pin':        { level:'high', perm:'settings.danger', ownerOnly:true,
+      label:'رمز الأمان للعمليات الخطرة' }
+  },
+  PIN_MIN: 6,
+  PIN_MAX: 32,
+  /* الرمز أقصر فضاءً من كلمة مرور، فتكراراته أعلى — والتكرار يُحفظ في السجل
+     نفسه فيبقى القديم قابلاً للتحقّق إن تغيّر الرقم لاحقاً. */
+  PIN_ITERATIONS: 120000,
+  LOCK: { threshold:3, baseMs:30000, maxMs:15 * 60000 },
+
+  /* ------------------------------ القدرة ------------------------------ */
+  actor(){
+    const s = Auth.session || {};
+    return { actorId:s.actorId || null, actorName:s.actorName || '', roleKey:s.roleKey || null, authEnabled:Auth.enabled() };
+  },
+  /* القرار اليوم: الصلاحية المسجَّلة للقدرة، والقدرات «للمالكة وحدها» تحتاج دور
+     مالكة (من يملك `*` أو إدارة المستخدمات). بلا دخول مفعّل: المالكة الضمنية.
+     هذا يطابق ما كان: الاستعادة وإعادة التهيئة كانتا بـ`settings.danger`. */
+  defaultPolicy(actor, key, def){
+    if (!def) return false;
+    if (!actor.authEnabled) return true;
+    if (!actor.actorId || !actor.roleKey) return false;
+    const perms = Auth.permsOf(actor.roleKey);
+    if (!(perms.includes('*') || perms.includes(def.perm))) return false;
+    if (def.ownerOnly && !Auth.isAdminRole(actor.roleKey)) return false;
+    return true;
+  },
+  /* نقطة الإدراج لمرحلة الأدوار: تُستبدل هذه الدالّة، ولا تُمسّ أي عملية */
+  policy: null,
+  can(actor, key){
+    const def = this.CAPS[key];
+    const a = actor || this.actor();
+    const fn = typeof this.policy === 'function' ? this.policy : this.defaultPolicy.bind(this);
+    try { return !!fn(a, key, def); } catch(e){ Log.warn('تعذّر تقييم القدرة', e); return false; }
+  },
+
+  /* ----------------------------- رمز الأمان ----------------------------- */
+  pinRecord(){ const r = Settings.get('securityPin'); return (r && r.hash && r.salt) ? r : null; },
+  hasPin(){ return !!this.pinRecord(); },
+  /* الأرقام العربية-الهندية تُقرأ لاتينية: لوحة مفاتيح عربية لا تُسقط رمزاً صحيحاً */
+  digits(s){ return String(s == null ? '' : s).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+                                              .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))); },
+  normPin(s){ return this.digits(s).trim(); },
+  validatePin(pin, pin2){
+    const p = this.normPin(pin);
+    if (p.length < this.PIN_MIN) return `رمز الأمان ${this.PIN_MIN} أحرف أو أرقام على الأقل`;
+    if (p.length > this.PIN_MAX) return `رمز الأمان ${this.PIN_MAX} حرفاً على الأكثر`;
+    if (/^(.)\1+$/.test(p)) return 'رمزٌ من خانة واحدة مكرّرة سهل التخمين — اختاري غيره';
+    if ('0123456789012345678901234567890123'.includes(p) || '9876543210987654321098765432109876'.includes(p))
+      return 'رمزٌ متسلسل سهل التخمين — اختاري غيره';
+    if (pin2 !== undefined && this.normPin(pin2) !== p) return 'الرمزان غير متطابقين';
+    return null;
+  },
+  async hashPin(pin){
+    const salt = Crypto.toHex(Crypto.randomBytes(16));
+    return { algo:'pbkdf2-sha256', salt, iterations:this.PIN_ITERATIONS,
+             hash:await Crypto.pbkdf2(this.normPin(pin), salt, this.PIN_ITERATIONS) };
+  },
+  async verifyPin(pin){
+    const rec = this.pinRecord();
+    if (!rec) return false;
+    return Crypto.verify(this.normPin(pin), rec);
+  },
+  /* كتابة الرمز — لا تُنادى إلا من تدفّق تحقّق من الهوية قبلها (انظري pinFlow) */
+  async _storePin(pin, how){
+    const rec = await this.hashPin(pin);
+    await Settings.set({ securityPin:Object.assign(rec, { setAt:new Date().toISOString(),
+      setBy:Auth.session.actorName || '' }) });
+    await this.record({ cap:'security.pin', level:'high', result:'done', action:how });
+    return true;
+  },
+
+  /* ------------------------------ التهدئة ------------------------------
+     الحالة في الإعدادات (على القرص): إعادة التحميل لا تُصفّرها. والتهدئة
+     تتضاعف ولها سقف — لا إقفال دائم. */
+  lockState(){ const s = Settings.get('securityLock'); return (s && typeof s === 'object') ? s : { fails:0, until:null }; },
+  lockedFor(){
+    const s = this.lockState();
+    const until = s.until ? Date.parse(s.until) : 0;
+    return Math.max(0, until - Date.now());
+  },
+  cooldownMs(fails){
+    const L = this.LOCK;
+    if (fails < L.threshold) return 0;
+    return Math.min(L.maxMs, L.baseMs * Math.pow(2, fails - L.threshold));
+  },
+  async registerFailure(){
+    const s = this.lockState();
+    const fails = (Number(s.fails) || 0) + 1;
+    const ms = this.cooldownMs(fails);
+    await Settings.set({ securityLock:{ fails, until: ms ? new Date(Date.now() + ms).toISOString() : null,
+                                        lastFailAt:new Date().toISOString() } });
+    return ms;
+  },
+  async clearFailures(){
+    const s = this.lockState();
+    if (s.fails || s.until) await Settings.set({ securityLock:{ fails:0, until:null } });
+  },
+  fmtWait(ms){
+    const s = Math.ceil(ms / 1000);
+    return s < 60 ? `${s} ثانية` : `${Math.ceil(s / 60)} دقيقة`;
+  },
+
+  /* ------------------------------ العبارة ------------------------------ */
+  newPhrase(def){
+    const b = Crypto.randomBytes(2);
+    const n = 1000 + ((b[0] << 8 | b[1]) % 9000);
+    return `${def.phrase} ${n}`;
+  },
+  phraseMatches(typed, want){
+    const n = s => this.digits(s).replace(/\s+/g, ' ').trim();
+    return n(typed) === n(want);
+  },
+
+  /* ----------------------------- السجلّ الأمني -----------------------------
+     حدثٌ واحد لكل محاولة، بلا كلمة مرور ولا رمز ولا عبارة — ما اجتيز وما سقط. */
+  async record(ev){
+    const a = this.actor();
+    const d = {
+      capability:ev.cap, level:ev.level || (this.CAPS[ev.cap] || {}).level || '',
+      actorId:ev.actorId !== undefined ? ev.actorId : a.actorId,
+      actor:ev.actor !== undefined ? ev.actor : a.actorName,
+      authEnabled:ev.authEnabled !== undefined ? ev.authEnabled : a.authEnabled,
+      reauth:ev.reauth || 'n/a', pin:ev.pin || 'n/a', phrase:ev.phrase || 'n/a',
+      backup:ev.backup || null, result:ev.result || '', reason:ev.reason || '', action:ev.action || '',
+      failures:Number(ev.failures) || 0
+    };
+    const label = (this.CAPS[ev.cap] || {}).label || ev.cap;
+    const RES = { done:'نُفّذت', rejected:'رُفضت', cancelled:'أُلغيت', failed:'فشلت', denied:'محاولة فاشلة' };
+    const parts = [`${label}: ${RES[d.result] || d.result}`];
+    if (d.reason) parts.push(this.REASONS[d.reason] || d.reason);
+    if (d.backup && d.backup.ok) parts.push(`نسخة الأمان ${d.backup.name}`);
+    await Audit.log('security', ev.action || d.result || 'event', parts.join(' — '), null, d);
+    return d;
+  },
+  REASONS: {
+    forbidden:'ليست لديها هذه القدرة', locked:'البوّابة في فترة تهدئة', 'bad-password':'كلمة المرور غير صحيحة',
+    'bad-pin':'رمز الأمان غير صحيح', 'bad-phrase':'العبارة لا تطابق', 'backup-failed':'تعذّرت نسخة الأمان — لم يُمسّ شيء',
+    'no-pin':'لم يُعيَّن رمز الأمان', 'no-user':'الحساب الداخل لم يعد موجوداً أو أُوقف', cancelled:'أُلغيت من المستخدمة'
+  },
+  recent(n=30){ return Audit.recent(2000).filter(a => a.entity === 'security').slice(0, n); },
+
+  /* ------------------------------ البوّابة ------------------------------
+     `guard(key, { detail, run })` — كل عملية خطرة تُنادى من هنا وحدها.
+     تُعيد ما أعاده `run`، أو null إن أُلغيت أو رُفضت (والسبب قيل للمستخدمة). */
+  async guard(key, opts){
+    const o = opts || {};
+    const def = this.CAPS[key];
+    if (!def) throw new AppError('عملية خطرة غير معروفة','UNKNOWN_CAPABILITY', { key });
+    const who = this.actor();
+    /* الفاعلة تُلتقط الآن: الاستعادة تستبدل المستخدمات، والحدث يُكتب بعدها */
+    const ev = { cap:key, level:def.level, actorId:who.actorId, actor:who.actorName, authEnabled:who.authEnabled };
+    if (!this.can(null, key)){
+      await this.record(Object.assign(ev, { result:'rejected', reason:'forbidden' }));
+      throw new AppError('ليس لديك صلاحية لتنفيذ هذا الإجراء','FORBIDDEN', { key });
+    }
+    /* الرمز شرطٌ مسبق للحرِج — وحين لا دخول مفعّلاً هو الهويّة الوحيدة للعالي كذلك */
+    if (this.needsPin(def) && !this.hasPin()){
+      const set = await this.pinFlow('setup', { reason:def.label });
+      if (!set){ await this.record(Object.assign(ev, { result:'cancelled', reason:'no-pin' })); return null; }
+    }
+    const passed = await this.challenge(key, def, ev, o);
+    if (!passed){
+      if (!ev.result) Object.assign(ev, { result:'cancelled', reason:'cancelled' });
+      await this.record(ev);
+      return null;
+    }
+    /* نسخة الأمان قبل أي مسّ — وإن تعذّرت تنتهي العملية هنا */
+    if (def.backup){
+      try {
+        const b = await Backup.preAction(key);
+        ev.backup = { ok:true, name:b.name, kind:b.kind || 'manual', verified:b.verified === true ? 'disk' : (b.verified || ''),
+                      records:b.records || 0, at:new Date().toISOString() };
+        UI.toast(`حُفظت نسخة أمان من بياناتك الحالية وتُحقِّق منها — ${b.name}`, 'ok', 7000);
+      } catch(e){
+        Log.error('تعذّرت نسخة الأمان قبل عملية خطرة', e);
+        ev.backup = { ok:false, error:String((e && e.message) || e) };
+        await this.record(Object.assign(ev, { result:'rejected', reason:'backup-failed' }));
+        UI.toast('لم تُنفَّذ العملية: تعذّرت نسخة الأمان من بياناتك الحالية، فلم يُمسّ شيء. ' + ((e && e.message) || ''), 'err', 12000);
+        return null;
+      }
+    }
+    try {
+      const out = await o.run(ev);
+      await this.record(Object.assign(ev, { result:'done' }));
+      return out === undefined ? true : out;
+    } catch(e){
+      await this.record(Object.assign(ev, { result:'failed', reason:String((e && e.message) || e) }))
+        .catch(e2 => Log.warn('تعذّر تسجيل فشل العملية', e2));
+      throw e;
+    }
+  },
+  needsPin(def){ return def.level === 'critical' || (!Auth.enabled() && def.level === 'high'); },
+  needsPassword(){ return Auth.enabled(); },
+
+  /* نافذة التحقّق — تبقى مفتوحة عند الخطأ فتُصحَّح بلا إعادة كتابة كل شيء */
+  challenge(key, def, ev, o){
+    const wantPw = this.needsPassword(), wantPin = this.needsPin(def), critical = def.level === 'critical';
+    const phrase = critical ? this.newPhrase(def) : null;
+    const user = Auth.currentUser();
+    const steps = [
+      wantPw ? ['هويّة', 'كلمة مرور حسابك الآن — الجلسة المفتوحة لا تكفي'] : null,
+      wantPin ? ['رمز الأمان', 'السرّ الثاني للعمليات الخطرة'] : null,
+      critical ? ['النيّة', 'كتابة العبارة كما هي'] : null,
+      def.backup ? ['نسخة أمان', 'تُكتب وتُتحقَّق قبل التنفيذ، وإن تعذّرت لا يُنفَّذ شيء'] : null
+    ].filter(Boolean);
+    return new Promise(res => {
+      let settled = false;
+      const finish = v => { if (!settled){ settled = true; res(v); } };
+      const body = `<div class="sec-gate" data-sec-gate="${U.esc(key)}">
+        <div class="sec-what"><span class="sec-ic">${svg(ICON.shield, 22, 1.8)}</span>
+          <div><strong>${U.esc(def.label)}</strong>
+            <div class="t-sub">${critical ? 'عملية لا يُتراجع عنها من داخل البرنامج — لكل طبقة سببها.' : 'عملية حسّاسة — تحتاج تأكيد هويّتك الآن.'}</div></div></div>
+        ${o.detail || ''}
+        <ol class="sec-steps">${steps.map(([t, d]) => `<li><b>${U.esc(t)}</b><span>${U.esc(d)}</span></li>`).join('')}</ol>
+        ${!Auth.enabled() ? `<div class="sec-note">تسجيل الدخول غير مفعّل: لا حساب يُعاد التحقّق منه، فرمز الأمان هو الحاجز الوحيد.
+          فعّلي الدخول من «الصلاحيات والخصوصية» لحماية أقوى.</div>` : ''}
+        <div class="form-grid sec-fields">
+          ${wantPw ? Gate.passField('secPass', `كلمة مرور ${user ? user.name : 'حسابك'}`, 'current-password') : ''}
+          ${wantPin ? Gate.passField('secPin', 'رمز الأمان', 'off') : ''}
+        </div>
+        ${critical ? `<div class="field sec-phrase"><label for="secPhrase">اكتبي العبارة التالية كما هي حرفاً بحرف</label>
+            <div class="sec-phrase-want" data-sec-phrase dir="rtl">${U.esc(phrase)}</div>
+            <input class="inp" id="secPhrase" autocomplete="off" spellcheck="false" dir="rtl" aria-describedby="secPhraseHint">
+            <span class="hint" id="secPhraseHint">النسخ واللصق معطّلان هنا عمداً.</span></div>` : ''}
+        <div class="sec-err" role="alert" aria-live="assertive" hidden></div>
+      </div>`;
+      const h = UI.modal({ title: critical ? 'تأكيد عملية خطرة' : 'تأكيد الهويّة', size:'narrow', body,
+        footer:`<button class="btn btn-danger" data-sec-ok disabled>${U.esc(critical ? 'تنفيذ' : 'تأكيد')}</button>
+                <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+        onMount:(ov) => {
+          Gate.wireEyes(ov);
+          const okBtn = ov.querySelector('[data-sec-ok]');
+          const err = ov.querySelector('.sec-err');
+          const pw = ov.querySelector('#secPass'), pin = ov.querySelector('#secPin'), ph = ov.querySelector('#secPhrase');
+          const showErr = msg => { err.textContent = msg; err.hidden = !msg; };
+          let tick = null;
+          const refresh = () => {
+            const wait = this.lockedFor();
+            if (wait > 0){
+              showErr(`محاولات فاشلة متتالية — البوّابة مقفلة مؤقّتاً. أعيدي المحاولة بعد ${this.fmtWait(wait)}.`);
+              okBtn.disabled = true;
+              if (!tick) tick = setInterval(refresh, 1000);
+              return;
+            }
+            if (tick){ clearInterval(tick); tick = null; if (/مقفلة مؤقّتاً/.test(err.textContent)) showErr(''); }
+            const filled = (!pw || pw.value) && (!pin || pin.value) && (!ph || this.phraseMatches(ph.value, phrase));
+            okBtn.disabled = !filled;
+          };
+          if (ph){
+            ['paste', 'drop'].forEach(t => ph.addEventListener(t, e => { e.preventDefault(); showErr('اكتبي العبارة بيدك — اللصق معطّل هنا.'); }));
+            ph.addEventListener('input', () => ph.classList.toggle('ok', this.phraseMatches(ph.value, phrase)));
+          }
+          [pw, pin, ph].filter(Boolean).forEach(i => {
+            i.addEventListener('input', refresh);
+            /* Enter لا يُنفّذ عملية خطرة: الزرّ وحده يفعل */
+            i.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+          });
+          refresh();
+          okBtn.onclick = async () => {
+            if (okBtn.disabled) return;
+            okBtn.disabled = true; showErr('');
+            const r = await this.verifyLayers({ def, ev, pw: pw && pw.value, pin: pin && pin.value, ph: ph && ph.value, phrase });
+            if (pw) pw.value = ''; if (pin) pin.value = '';
+            if (r.ok){ if (tick) clearInterval(tick); finish(true); h.close(); return; }
+            showErr(r.message);
+            if (r.fatal){ if (tick) clearInterval(tick); finish(false); h.close(); UI.toast(r.message, 'err', 9000); return; }
+            (pw || pin || ph).focus();
+            refresh();
+          };
+        },
+        onClose:() => finish(false) });
+      return h;
+    });
+  },
+  /* الفحص نفسه — مفصولٌ عن النافذة فيُختبر وحده. يُسجَّل كل سقوط حدثاً. */
+  async verifyLayers({ def, ev, pw, pin, ph, phrase }){
+    if (this.lockedFor() > 0){
+      await this.record(Object.assign({}, ev, { result:'denied', reason:'locked' }));
+      return { ok:false, message:`البوّابة مقفلة مؤقّتاً — أعيدي المحاولة بعد ${this.fmtWait(this.lockedFor())}.` };
+    }
+    const fail = async (reason, msg, patch) => {
+      Object.assign(ev, patch || {});
+      /* يُحمل العدد إلى الحدث الأخير: الاستعادة وإعادة التهيئة تمحوان ما قبلهما
+         من السجل (ويبقى في نسخة الأمان)، فلا يُنسى أن محاولةً سقطت قبل النجاح. */
+      ev.failures = (ev.failures || 0) + 1;
+      const ms = await this.registerFailure();
+      await this.record(Object.assign({}, ev, { result:'denied', reason }));
+      return { ok:false, message: msg + (ms ? ` — البوّابة مقفلة ${this.fmtWait(ms)} بعد محاولات فاشلة متتالية.` : '') };
+    };
+    if (this.needsPassword()){
+      const u = Auth.currentUser();
+      if (!u || u.disabled){
+        await this.record(Object.assign({}, ev, { result:'rejected', reason:'no-user' }));
+        return { ok:false, fatal:true, message:'الحساب الداخل لم يعد موجوداً أو أُوقف — لا يمكن المتابعة.' };
+      }
+      if (def.ownerOnly && !Auth.isAdminRole(u.roleKey))
+        return { ok:false, fatal:true, message:'هذه العملية لحساب المالكة وحده.' };
+      if (!await Crypto.verify(String(pw || ''), u.pass))
+        return fail('bad-password', 'كلمة المرور غير صحيحة', { reauth:'failed' });
+      ev.reauth = 'ok';
+    }
+    if (this.needsPin(def)){
+      if (!await this.verifyPin(pin)) return fail('bad-pin', 'رمز الأمان غير صحيح', { pin:'failed' });
+      ev.pin = 'ok';
+    }
+    if (def.level === 'critical'){
+      if (!this.phraseMatches(ph, phrase)) return fail('bad-phrase', 'العبارة لا تطابق المطلوب', { phrase:'failed' });
+      ev.phrase = 'ok';
+    }
+    await this.clearFailures();
+    return { ok:true };
+  },
+
+  /* ---------------------------- إدارة الرمز ----------------------------
+     setup  — أوّل مرة: كلمة المرور الآن (إن كان الدخول مفعّلاً) + الرمز مرّتين
+     change — الرمز الحالي + كلمة المرور + الجديد مرّتين
+     reset  — نسيتُه: كلمة المرور + رمز الاسترجاع (المسجَّل عند التهيئة)،
+              ويُولَّد رمز استرجاع جديد يُعرض مرة واحدة — الطريق الموثّق الوحيد. */
+  pinFlow(mode, opts){
+    const o = opts || {};
+    if (!this.can(null, 'security.pin')){
+      UI.toast('إدارة رمز الأمان لحساب المالكة وحده','err'); return Promise.resolve(false);
+    }
+    const wantPw = Auth.enabled();
+    const user = Auth.currentUser();
+    const title = { setup:'تعيين رمز الأمان', change:'تغيير رمز الأمان', reset:'استعادة رمز الأمان',
+                    'after-reset':'رمز أمان جديد بعد انقضاء الانتظار' }[mode];
+    return new Promise(res => {
+      let settled = false;
+      const finish = v => { if (!settled){ settled = true; res(v); } };
+      const h = UI.modal({ title, size:'narrow',
+        body:`<div class="sec-gate" data-pin-flow="${U.esc(mode)}">
+          ${o.reason ? `<p style="margin-top:0">«${U.esc(o.reason)}» تحتاج رمز أمان — سرّاً ثانياً للمالكة وحدها، غير كلمة المرور.</p>` : ''}
+          <p class="t-sub" style="margin-top:0">يُطلب مع كلمة المرور قبل كل عملية تحذف البيانات أو تستبدلها. يُحفظ ملبَّداً
+            (PBKDF2) ولا يُكتب نصّاً في أي مكان. ${this.PIN_MIN} خانات على الأقل.</p>
+          <div class="form-grid sec-fields">
+            ${mode === 'change' ? Gate.passField('pinOld', 'رمز الأمان الحالي', 'off') : ''}
+            ${wantPw ? Gate.passField('pinPw', `كلمة مرور ${user ? user.name : 'حسابك'}`, 'current-password') : ''}
+            ${mode === 'reset' ? `<div class="field"><label for="pinRec">رمز الاسترجاع</label>
+              <input class="inp" id="pinRec" dir="ltr" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX"></div>` : ''}
+            ${Gate.passField('pinNew', 'رمز الأمان الجديد', 'new-password')}
+            ${Gate.passField('pinNew2', 'تأكيد الرمز الجديد', 'new-password')}
+          </div>
+          <div class="sec-err" role="alert" aria-live="assertive" hidden></div></div>`,
+        footer:`<button class="btn btn-primary" data-pin-ok>حفظ الرمز</button>
+                <button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+        onMount:(ov) => {
+          Gate.wireEyes(ov);
+          const err = ov.querySelector('.sec-err');
+          const val = id => { const i = ov.querySelector('#' + id); return i ? i.value : undefined; };
+          const showErr = m => { err.textContent = m; err.hidden = !m; };
+          ov.querySelector('[data-pin-ok]').onclick = async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true; showErr('');
+            try {
+              const d = { old:val('pinOld'), password:val('pinPw'), recovery:val('pinRec'), pin:val('pinNew'), pin2:val('pinNew2') };
+              const r = mode === 'after-reset' ? await this.completeDelayedReset(d) : await this.applyPin(mode, d);
+              if (!r.ok){ showErr(r.message); return; }
+              finish(true); h.close();
+              UI.toast(mode === 'setup' ? 'عُيِّن رمز الأمان' : 'تغيّر رمز الأمان', 'ok', 6000);
+              if (typeof o.onDone === 'function') o.onDone();
+              if (r.recoveryCode) this.showRecoveryCode(r.recoveryCode);
+            } catch(ex){ showErr((ex && ex.message) || 'تعذّر الحفظ'); }
+            finally { btn.disabled = false; }
+          };
+        },
+        onClose:() => finish(false) });
+      return h;
+    });
+  },
+  /* المنطق بلا نافذة — يُختبر وحده. يُعيد { ok, message, recoveryCode? } */
+  async applyPin(mode, d){
+    if (!this.can(null, 'security.pin')) return { ok:false, message:'إدارة رمز الأمان لحساب المالكة وحده' };
+    const wait = this.lockedFor();
+    if (wait > 0) return { ok:false, message:`البوّابة مقفلة مؤقّتاً — أعيدي المحاولة بعد ${this.fmtWait(wait)}.` };
+    const ev = { cap:'security.pin', level:'high', action:mode };
+    const fail = async (reason, msg) => {
+      const ms = await this.registerFailure();
+      await this.record(Object.assign({}, ev, { result:'denied', reason }));
+      return { ok:false, message: msg + (ms ? ` — البوّابة مقفلة ${this.fmtWait(ms)} بعد محاولات فاشلة متتالية.` : '') };
+    };
+    const bad = this.validatePin(d.pin, d.pin2);
+    if (bad) return { ok:false, message:bad };
+    if (mode === 'change' && !this.hasPin()) return { ok:false, message:'لا يوجد رمز حالي — عيّني رمزاً جديداً' };
+    if (mode === 'setup' && this.hasPin()) return { ok:false, message:'يوجد رمز أمان — استعملي «تغيير الرمز»' };
+    if (mode === 'change' && !await this.verifyPin(d.old)) { ev.pin = 'failed'; return fail('bad-pin', 'رمز الأمان الحالي غير صحيح'); }
+    const u = Auth.currentUser();
+    if (Auth.enabled()){
+      if (!u || u.disabled) return { ok:false, message:'الحساب الداخل لم يعد موجوداً أو أُوقف' };
+      if (!await Crypto.verify(String(d.password || ''), u.pass)){ ev.reauth = 'failed'; return fail('bad-password', 'كلمة المرور غير صحيحة'); }
+      ev.reauth = 'ok';
+      /* السرّ الثاني ليس الأول مكرّراً */
+      if (await Crypto.verify(this.normPin(d.pin), u.pass)) return { ok:false, message:'رمز الأمان يجب أن يختلف عن كلمة المرور' };
+    }
+    let recoveryCode = null;
+    if (mode === 'reset'){
+      const rec = Settings.get('authRecovery');
+      const okRec = rec && rec.hash && await Crypto.verify(String(d.recovery || '').trim().toUpperCase(), rec);
+      if (!okRec) return fail('bad-recovery', 'رمز الاسترجاع غير صحيح');
+      /* الرمز المستعمَل لا يُستعمل مرّتين: يُولَّد غيره ويُعرض مرة واحدة */
+      recoveryCode = Auth.newRecoveryCode();
+      await Settings.set({ authRecovery:await Crypto.hash(recoveryCode) });
+    }
+    await this.clearFailures();
+    await this._storePin(d.pin, mode);
+    return { ok:true, recoveryCode };
+  },
+
+  /* «نسيتُ الرمز» — طريقان موثّقان، ولا ثالث: رمز الاسترجاع الآن، أو انتظار 24 ساعة */
+  async resetFlow(opts){
+    const o = opts || {};
+    if (!this.can(null, 'security.pin')){ UI.toast('إدارة رمز الأمان لحساب المالكة وحده','err'); return false; }
+    const pend = this.pendingReset();
+    if (pend && this.resetReady()) return this.pinFlow('after-reset', o);
+    if (pend){
+      const go = await UI.confirm({ title:'طلب إعادة تعيين قائم', confirmText:'إلغاء الطلب', danger:true,
+        message:`طُلبت إعادة تعيين رمز الأمان في ${U.esc(this.fmtTs(pend.requestedAt))}${pend.by ? ' بحساب ' + U.esc(pend.by) : ''}.
+          يصبح تعيين رمزٍ جديد متاحاً في <strong>${U.esc(this.fmtTs(pend.effectiveAt))}</strong>. إن لم تطلبيه أنتِ فألغيه الآن.` });
+      if (go){ await this.cancelDelayedReset(); UI.toast('أُلغي طلب إعادة التعيين'); if (o.onDone) o.onDone(); }
+      return false;
+    }
+    const canCode = Auth.enabled() && Auth.hasRecovery();
+    const pick = await UI.choice({ title:'نسيتُ رمز الأمان',
+      message:`<p style="margin-top:0">لا يُعاد رمز الأمان بكلمة المرور وحدها — وإلا صار سرّاً واحداً لا اثنين.</p>
+        <ul style="margin:0;padding-inline-start:20px;line-height:1.9">
+          ${canCode ? '<li><b>برمز الاسترجاع</b> (المعروض عند تهيئة الحساب): رمزٌ جديد الآن.</li>' : ''}
+          <li><b>بلا رمز استرجاع</b>: طلبٌ ظاهر ومسجَّل، يصبح نافذاً بعد 24 ساعة ويُلغى بضغطة.</li></ul>`,
+      options:[ canCode ? { key:'code', label:'لديّ رمز الاسترجاع', primary:true } : null,
+                { key:'wait', label:'طلب إعادة تعيين بعد 24 ساعة' } ].filter(Boolean) });
+    if (pick === 'code') return this.pinFlow('reset', o);
+    if (pick !== 'wait') return false;
+    return new Promise(res => {
+      let settled = false;
+      const finish = v => { if (!settled){ settled = true; res(v); } };
+      const user = Auth.currentUser();
+      const h = UI.modal({ title:'طلب إعادة تعيين رمز الأمان', size:'narrow',
+        body:`<p style="margin-top:0">سيبقى الرمز الحالي فعّالاً 24 ساعة، ويظهر الطلب في منطقة الخطر وسجلّ الأحداث
+            طوال ذلك. بعدها تعيّنين رمزاً جديداً${Auth.enabled() ? ' بكلمة مرورك' : ''}.</p>
+          ${Auth.enabled() ? `<div class="form-grid sec-fields">${Gate.passField('rstPw', `كلمة مرور ${user ? user.name : 'حسابك'}`, 'current-password')}</div>` : ''}
+          <div class="sec-err" role="alert" hidden></div>`,
+        footer:`<button class="btn btn-primary" data-rst-ok>تقديم الطلب</button><button class="btn" data-close>إلغاء</button><div class="sp"></div>`,
+        onMount:(ov) => {
+          Gate.wireEyes(ov);
+          const err = ov.querySelector('.sec-err');
+          ov.querySelector('[data-rst-ok]').onclick = async () => {
+            const pw = ov.querySelector('#rstPw');
+            const r = await this.requestDelayedReset(pw ? pw.value : '');
+            if (pw) pw.value = '';
+            if (!r.ok){ err.textContent = r.message; err.hidden = false; return; }
+            finish(true); h.close();
+            UI.toast('سُجّل طلب إعادة تعيين رمز الأمان — يصبح نافذاً بعد 24 ساعة', 'ok', 8000);
+            if (o.onDone) o.onDone();
+          };
+        },
+        onClose:() => finish(false) });
+    });
+  },
+  fmtTs(iso){ const s = String(iso || ''); return s ? `${D.fmt(s.slice(0, 10))} ${s.slice(11, 16)}` : '—'; },
+
+  /* رمز الاسترجاع الجديد — يُعرض مرة واحدة ولا يُغلق قبل الإقرار بحفظه */
+  showRecoveryCode(code){
+    return new Promise(res => {
+      const h = UI.modal({ title:'رمز استرجاع جديد', size:'narrow',
+        body:`<p style="margin-top:0">استُعمل رمز الاسترجاع القديم فلم يعد صالحاً. هذا رمزك الجديد — اكتبيه واحفظيه،
+            لن يُعرض مرة أخرى:</p><div class="gate-code" data-recovery-code>${U.esc(code)}</div>
+          <div class="field"><label class="switch"><input type="checkbox" id="recAck"> كتبتُه وحفظتُه</label></div>`,
+        footer:`<button class="btn btn-primary" id="recGo" disabled>تم</button><div class="sp"></div>`,
+        onMount:(ov, hh) => {
+          const ack = ov.querySelector('#recAck'), go = ov.querySelector('#recGo');
+          ack.onchange = () => { go.disabled = !ack.checked; };
+          go.onclick = () => hh.close();
+        },
+        onClose:() => res(true) });
+      return h;
+    });
+  },
+
+  /* ----------------------- استعادة الرمز بلا رمز استرجاع -----------------------
+     ضاع الرمز **وضاع** رمز الاسترجاع: لا تُحبس المالكة خارج الاستعادة وإعادة
+     التهيئة إلى الأبد. الطريق: كلمة المرور الآن + انتظار 24 ساعة ظاهرٍ ومسجَّل
+     وقابلٍ للإلغاء من أي مالكة. من وجد جلسةً مفتوحة لا يستطيع الانتظار بلا أن
+     يُرى: الطلب ظاهر في منطقة الخطر وفي سجلّ الأحداث طوال الانتظار. */
+  RESET_DELAY_MS: 24 * 3600 * 1000,
+  pendingReset(){ const r = Settings.get('securityPinReset'); return (r && r.effectiveAt) ? r : null; },
+  resetReady(){ const r = this.pendingReset(); return !!r && Date.parse(r.effectiveAt) <= Date.now(); },
+  async requestDelayedReset(password){
+    if (!this.can(null, 'security.pin')) return { ok:false, message:'إدارة رمز الأمان لحساب المالكة وحده' };
+    if (!this.hasPin()) return { ok:false, message:'لا يوجد رمز أمان لإعادة تعيينه' };
+    if (this.pendingReset()) return { ok:false, message:'يوجد طلب إعادة تعيين قائم' };
+    const wait = this.lockedFor();
+    if (wait > 0) return { ok:false, message:`البوّابة مقفلة مؤقّتاً — أعيدي المحاولة بعد ${this.fmtWait(wait)}.` };
+    const ev = { cap:'security.pin', level:'high', action:'reset-request' };
+    if (Auth.enabled()){
+      const u = Auth.currentUser();
+      if (!u || !await Crypto.verify(String(password || ''), u.pass)){
+        const ms = await this.registerFailure();
+        await this.record(Object.assign({}, ev, { result:'denied', reason:'bad-password', reauth:'failed' }));
+        return { ok:false, message:'كلمة المرور غير صحيحة' + (ms ? ` — البوّابة مقفلة ${this.fmtWait(ms)}.` : '') };
+      }
+      ev.reauth = 'ok';
+    }
+    await this.clearFailures();
+    const now = Date.now();
+    await Settings.set({ securityPinReset:{ requestedAt:new Date(now).toISOString(),
+      effectiveAt:new Date(now + this.RESET_DELAY_MS).toISOString(), by:Auth.session.actorName || '' } });
+    await this.record(Object.assign(ev, { result:'done' }));
+    return { ok:true };
+  },
+  async cancelDelayedReset(){
+    if (!this.pendingReset()) return false;
+    await Settings.set({ securityPinReset:null });
+    await this.record({ cap:'security.pin', level:'high', action:'reset-cancel', result:'done' });
+    return true;
+  },
+  /* بعد انقضاء الانتظار: رمزٌ جديد بكلمة المرور وحدها، ويسقط الطلب */
+  async completeDelayedReset(d){
+    if (!this.resetReady()) return { ok:false, message:'لم تنقضِ مدّة الانتظار بعد' };
+    const saved = Settings.get('securityPin');
+    await Settings.set({ securityPin:null });
+    const r = await this.applyPin('setup', d);
+    if (!r.ok){ await Settings.set({ securityPin:saved }); return r; }
+    await Settings.set({ securityPinReset:null });
+    return r;
+  },
+
+  /* تفعيل «الدخول» ثم إيقافه، أو تعيين كلمة مرور مالكة: هويّةٌ طازجة فقط */
+  async confirmIdentity(key, detail){
+    return this.guard(key, { detail, run: async () => true });
+  }
+};
+Security.REASONS['bad-recovery'] = 'رمز الاسترجاع غير صحيح';
 
 
 /* ===== src/app/domain/00-calc.js ===================================================== */
@@ -6763,11 +7414,36 @@ const Backup = {
     } finally { this._busy = false; }
   },
   /* نسخة الأمان قبل الاستعادة — تُحفظ حيث لا يصلها التقليم، ولا تُعدّ نسخةً
-     إلا إن قُرئت من القرص سليمة. وإلا تُسأل المستخدمة صراحةً (انظري importBackup). */
+     إلا إن قُرئت من القرص سليمة. (7.11: البوّابة تنادي `preAction` — انظري Security.guard) */
   async safetyBackup(){
     if (!Desktop.on()) return null;
     try { return await this.saveVerified('backup', `قبل-الاستعادة-${D.stamp()}.json`, true); }
     catch(e){ Log.error('تعذّرت نسخة الأمان قبل الاستعادة', e); return null; }
+  },
+  /* ---------------------- نسخة الأمان قبل عملية خطرة (7.11) ----------------------
+     قبل أي عملية تمسّ مجموعات كبيرة من البيانات: نسخة كاملة بالوسائط، في مجلّد
+     «manual» الذي لا يقلّمه شيء، تُكتب ثم **تُقرأ من القرص وتُتحقَّق** (البنية
+     والبصمة والأعداد). تعذّر أيٌّ من ذلك ⟵ يُرمى، والبوّابة تُلغي العملية.
+     لم يعد هناك «متابعة بلا نقطة رجوع».
+
+     في المتصفح (لا قرص يُقرأ منه): تُسلسَل النسخة وتُحلَّل من نصّها وتُتحقَّق
+     بصمتها قبل تنزيلها — أقصى ما يمكن التحقّق منه هناك، ويُقال ذلك في السجل. */
+  PRE_ACTION: { 'dangerous.restore':'قبل-الاستعادة', 'dangerous.resetData':'قبل-إعادة-التهيئة',
+                'dangerous.clearDemo':'قبل-حذف-التجريبية' },
+  async preAction(key){
+    const name = `${this.PRE_ACTION[key] || 'نسخة-أمان'}-${D.stamp()}.json`;
+    if (Desktop.on()){
+      const r = await this.saveVerified('backup', name, true);
+      return Object.assign({}, r, { kind:'manual', verified:true });
+    }
+    const { obj, text } = await this.serialize(true);
+    const back = JSON.parse(text);
+    const v = await this.verify(back);
+    const same = STORE_NAMES.every(st => (back.data[st] || []).length === (obj.data[st] || []).length);
+    if (!v.ok || !same) throw new AppError('تعذّر التحقّق من نسخة الأمان — لم يُنفَّذ شيء','BACKUP_UNVERIFIED', v.errors);
+    UI.download(new Blob([text], { type:'application/json' }), name);
+    return { name, kind:'download', verified:'in-memory',
+             records:STORE_NAMES.reduce((a, st) => a + (obj.data[st] || []).length, 0) };
   },
   /* بعد استعادة: اليوم يُعلَّم منسوخاً. النسخة التي استُعيدت ما زالت على
      القرص، فنسخة تلقائية فورية تكرار لا حماية. */
@@ -7860,7 +8536,12 @@ const ICON = {
   print:'<path d="M7 8V3h10v5"/><rect x="4" y="8" width="16" height="8" rx="2"/><path d="M7 14h10v7H7z"/>',
   down:'<path d="M12 4v12M7 12l5 5 5-5"/><path d="M4 20h16"/>',
   up:'<path d="M12 20V8M7 12l5-5 5 5"/><path d="M4 4h16"/>',
-  box:'<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>'
+  box:'<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>',
+  shield:'<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+  lock:'<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/>',
+  moon:'<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  word:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M8.5 12l1.3 5 1.7-4 1.7 4 1.3-5"/>'
 };
 const svg = (p, sz=18, sw=1.8) =>
   `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -8791,6 +9472,89 @@ const Intro = {
 };
 
 
+/* ===== src/app/ui/04-theme.js ======================================================== */
+/* ================================ المظهر ==================================
+   فاتح · داكن · حسب الجهاز. الداكن ليس قلباً للألوان: لوحةٌ كاملة معرّفة في
+   ورقة الأنماط (الأسطح والنصوص والحدود والجداول والنوافذ والحالات)، والهوية
+   الباذنجانية والوردية تبقى معروفة بلا أن تلسع العين.
+
+   ثلاث قواعد لا تُكسر:
+     · الورق لا يعرف الداكن. لوحة الداكن معرّفة لـ`@media screen` وحدها، وتسقط
+       حين يكون العرض في وضع الطباعة (`data-tg-print`)، ومستند الطباعة يحمل
+       `data-theme="light"` بنفسه.
+     · Word لا يعرف الداكن. ألوانه تُقرأ من مسبارٍ بالفاتح (`Theme.docVar`).
+     · المال والبيانات لا يعرفانه: المظهر إعدادُ عرضٍ واحد، ولا شيء آخر.
+
+   التفضيل يُحفظ في الإعدادات (على القرص، ويدخل النسخة الاحتياطية) كوضع حركة
+   الهوية تماماً، ومعه نسخة في التخزين المحلي تُقرأ قبل تحميل القاعدة — فلا
+   ومضة فاتحة عند فتح التطبيق الداكن. */
+const Theme = {
+  MODES: [
+    { v:'system', t:'حسب الجهاز' },
+    { v:'light',  t:'فاتح' },
+    { v:'dark',   t:'داكن' }
+  ],
+  LS_KEY: 'tg_theme',
+  mode(){
+    let m = null;
+    try { m = Settings.get('theme'); } catch(e){ m = null; }
+    if (!this.MODES.some(x => x.v === m)){ try { m = localStorage.getItem(this.LS_KEY); } catch(e){ m = null; } }
+    return this.MODES.some(x => x.v === m) ? m : 'system';
+  },
+  systemDark(){
+    try { return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches; }
+    catch(e){ return false; }
+  },
+  effective(){ const m = this.mode(); return m === 'system' ? (this.systemDark() ? 'dark' : 'light') : m; },
+  apply(){
+    const eff = this.effective();
+    const root = document.documentElement;
+    root.setAttribute('data-theme', eff);
+    root.setAttribute('data-theme-mode', this.mode());
+    try { root.style.colorScheme = eff; } catch(e){}
+    const b = document.getElementById('btnTheme');
+    if (b){
+      b.innerHTML = svg(eff === 'dark' ? ICON.moon : ICON.sun, 18, 1.8);
+      const label = `المظهر: ${this.MODES.find(x => x.v === this.mode()).t}`;
+      b.title = label; b.setAttribute('aria-label', label);
+    }
+    return eff;
+  },
+  async set(mode){
+    const m = this.MODES.some(x => x.v === mode) ? mode : 'system';
+    try { localStorage.setItem(this.LS_KEY, m); } catch(e){}
+    await Settings.set({ theme:m });
+    this.apply();
+    await Audit.log('settings','theme',`ضبط المظهر: ${this.MODES.find(x => x.v === m).t}`);
+    return m;
+  },
+  /* فاتح ⟵ داكن ⟵ حسب الجهاز ⟵ فاتح — زرّ واحد في الشريط العلوي */
+  next(){ const order = ['light', 'dark', 'system']; return order[(order.indexOf(this.mode()) + 1) % order.length]; },
+  _watching: false,
+  watch(){
+    if (this._watching) return;
+    this._watching = true;
+    try {
+      const mq = matchMedia('(prefers-color-scheme: dark)');
+      const on = () => { if (this.mode() === 'system') this.apply(); };
+      if (mq.addEventListener) mq.addEventListener('change', on); else if (mq.addListener) mq.addListener(on);
+    } catch(e){}
+  },
+  /* قيمة متغيّر من لوحة الفاتح أيّاً كان المظهر المعروض — لمستندات Word */
+  docVar(name){
+    try {
+      let probe = document.getElementById('tgLightProbe');
+      if (!probe){
+        probe = document.createElement('span');
+        probe.id = 'tgLightProbe'; probe.setAttribute('data-theme', 'light'); probe.hidden = true;
+        document.body.appendChild(probe);
+      }
+      return getComputedStyle(probe).getPropertyValue(name).trim();
+    } catch(e){ return ''; }
+  }
+};
+
+
 /* ===== src/app/ui/05-brand.js ======================================================== */
 /* ============================== الهوية البصرية ===========================
    الشعار واللافتة يُخزَّنان في جدول الوسائط، ولا تُحفظ في الإعدادات إلا
@@ -9026,8 +9790,12 @@ const Brand = {
     const slot = this.slotStyle(size);
     const frame = this.frameStyle(o.pad);
     const cls = o.cls ? ' ' + o.cls : '';
+    /* `data-size`/`data-pad` تربط الصندوق بقواعد ورقة الأنماط التي تحمل المقاس
+       نفسه (7.11) — طبقةٌ لا تسقط لو حُذفت الأنماط السطرية. */
+    const dim = ` data-size="${Math.round(size)}"`;
+    const pad = o.pad ? ` data-pad="${Math.round(o.pad)}"` : '';
     if (!url)
-      return `<span class="brand-mark${cls}" data-brand-slot="logo" style="${slot}"><span data-brand-frame style="${frame}">`
+      return `<span class="brand-mark${cls}" data-brand-slot="logo"${dim} style="${slot}"><span data-brand-frame${pad} style="${frame}">`
         + `<svg data-brand-img="logo" viewBox="0 0 40 40" aria-hidden="true" style="${this.fitStyle()}">
       <circle cx="20" cy="20" r="19" fill="${forPrint ? '#432C4C' : '#C43E6B'}"/>
       <rect x="8" y="18" width="24" height="4" rx="2" fill="#fff"/>
@@ -9041,14 +9809,15 @@ const Brand = {
     const img = crop
       ? `<img data-brand-img="logo" data-brand-crop${prev} src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${this.cropStyle(crop)}">`
       : `<img data-brand-img="logo"${prev} src="${U.esc(url)}" alt="${U.esc(this.name())}" style="${this.fitStyle()}">`;
-    return `<span class="brand-logo${cls}" data-brand-slot="logo" style="${slot}"><span data-brand-frame style="${frame}">${img}</span></span>`;
+    return `<span class="brand-logo${cls}" data-brand-slot="logo"${dim} style="${slot}"><span data-brand-frame${pad} style="${frame}">${img}</span></span>`;
   },
   /* الشعار داخل غلافٍ صريح — لسطحٍ يحتاج توسيطاً أو خلفية حوله.
      تستعمله شاشة الدخول. */
   logoBox(size){ return this.slot(size, size, this.logoHtml(size)); },
   /* صندوقٌ عامّ: عرضٌ وارتفاعٌ صريحان، و`overflow:hidden`، وما بداخله محتوى. */
   slot(w, h, inner, extra){
-    return `<span class="brand-box" data-brand-slot style="width:${w}px;height:${h}px;`
+    const dim = w === h ? ` data-size="${Math.round(w)}"` : '';
+    return `<span class="brand-box" data-brand-slot${dim} style="width:${w}px;height:${h}px;`
          + `max-width:${w}px;max-height:${h}px${extra ? ';' + extra : ''}">${inner}</span>`;
   },
   /* ------------------------ اللافتة — عقدٌ واحد ------------------------
@@ -9667,8 +10436,9 @@ const Word = (() => {
 
   /* ------------------------------ الألوان ------------------------------ */
   const hex = v => String(v || '').trim().replace(/^#/, '').slice(0, 6).toUpperCase();
+  /* من لوحة الفاتح دائماً (Theme.docVar) — المظهر الداكن على الشاشة لا يصل إلى الورق */
   const cssVar = (name, fb) => {
-    try { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    try { const v = Theme.docVar(name);
           return /^#?[0-9a-f]{6}$/i.test(v) ? hex(v) : fb; } catch(e){ return fb; }
   };
   const rgb = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
@@ -11179,8 +11949,11 @@ Views.members = {
       ];
       UI.table($('mTable'), { cols, rows, state:f, rowCls:r=>r.m.archived?'archived-row':'',
         empty: UI.empty('لا توجد مشتركات مطابقة', 'جرّبي تغيير البحث أو أضيفي مشتركة جديدة',
-          '<button class="btn btn-primary" onclick="Forms.member()">إضافة مشتركة</button>'),
+          '<button class="btn btn-primary" data-new-member>إضافة مشتركة</button>'),
         onSort:(fn,d)=>{ f.sortFn = fn; f.sortDir = d; draw(); }, onPage:draw });
+      /* لا `onclick="…"` سطريّ: سياسة التطبيق المكتبي تحمل بصمات السكربت، فيُتجاهَل
+         'unsafe-inline' ويسقط المعالج السطريّ صامتاً — كان هذا الزر لا يفعل شيئاً على ويندوز. */
+      $('mTable').querySelectorAll('[data-new-member]').forEach(b => b.onclick = () => Forms.member());
       $('mTable').querySelectorAll('[data-view]').forEach(b => b.onclick = () => Screens.memberProfile(b.dataset.view));
       $('mTable').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => Forms.member(b.dataset.edit));
       $('mTable').querySelectorAll('[data-renew]').forEach(b => b.onclick = () => Forms.subscription(null, b.dataset.renew));
@@ -11230,7 +12003,8 @@ Views.member = {
   render(root, params){
     const m = Repos.members.get(params.id);
     if (!m){ root.innerHTML = UI.empty('المشتركة غير موجودة','ربما حُذفت. ارجعي إلى قائمة المشتركات.',
-      '<button class="btn btn-primary" onclick="go(\'members\')">قائمة المشتركات</button>'); return; }
+      '<button class="btn btn-primary" data-go-members>قائمة المشتركات</button>');
+      root.querySelector('[data-go-members]').onclick = () => go('members'); return; }
 
     const st = Svc.members.status(m.id);
     const subs = U.sortBy(Svc.subs.ofMember(m.id, true), s => s.startDate, -1);
@@ -15124,10 +15898,17 @@ Views.settings = {
         }
         if (!Auth.can('settings.users')){ authBox.checked = true;
           return UI.toast('ليس لديك صلاحية لتنفيذ هذا الإجراء','err'); }
-        if (!await UI.confirm({ title:'إيقاف تسجيل الدخول', danger:true, confirmText:'إيقاف',
-          message:'سيعمل النظام بلا حسابات: كل من يفتح الجهاز يستطيع كل شيء، وتعود نسبة الإجراءات إلى «المالكة».' })){
-          authBox.checked = true; return; }
-        await Settings.set({ authEnabled:false });
+        /* إيقاف الدخول يُسقط طبقة الهويّة من كل بوّابة بعده — فلا يُطفأ بنقرة من
+           جلسةٍ تُركت مفتوحة: كلمة المرور الآن (7.11). */
+        authBox.checked = true;
+        let off = null;
+        try {
+          off = await Security.guard('security.disableAuth', {
+            detail:'<p class="sec-detail" style="margin:0">سيعمل النظام بلا حسابات: كل من يفتح الجهاز يستطيع كل شيء، وتعود نسبة الإجراءات إلى «المالكة».</p>',
+            run: async () => { await Settings.set({ authEnabled:false }); return true; } });
+        } catch(e){ return UI.toast(e.message, 'err'); }
+        if (!off) return;
+        authBox.checked = false;
         await Audit.log('settings','auth','إيقاف تسجيل الدخول والصلاحيات');
         Auth.session = { actorId:null, actorName:'المالكة', roleKey:'owner' };
         try { sessionStorage.removeItem(Auth.SESSION_KEY); } catch(e){}
@@ -15162,17 +15943,80 @@ Views.settings = {
         ], empty:UI.empty('لا أحداث','كل عملية داخل النظام ستُسجَّل هنا'), onPage:() => renderRoute() });
     };
 
-    /* ---------------------------- منطقة الخطر ---------------------------- */
+    /* ---------------------------- منطقة الخطر ----------------------------
+       7.11: الحذف درجات لا زرّ واحد. كل درجة تُسمّى بما تحذفه، وتقول أين تُفعل
+       وما الذي تطلبه البوّابة قبلها — فلا يلتبس حذف سجلّ بحذف البرنامج كلّه. */
     const secDanger = () => {
-      box.innerHTML = `<div class="card" style="border-color:#E3B9BC"><div class="card-head"><h3>إعادة تهيئة البرنامج</h3></div>
+      const pin = Security.pinRecord(), pend = Security.pendingReset();
+      const canPin = Security.can(null, 'security.pin');
+      const layers = Auth.enabled() ? 'كلمة المرور + رمز الأمان + عبارة تُكتب + نسخة أمان مُتحقَّق منها'
+                                    : 'رمز الأمان + عبارة تُكتب + نسخة أمان مُتحقَّق منها';
+      const RES = { done:['chip-active','نُفّذت'], rejected:['chip-expired','رُفضت'], cancelled:['chip-none','أُلغيت'],
+                    failed:['chip-expired','فشلت'], denied:['chip-frozen','محاولة فاشلة'] };
+      const mark = v => v === 'ok' ? '✓' : v === 'failed' ? '✗' : '—';
+      const events = Security.recent(25);
+      box.innerHTML = `<div class="card"><div class="card-head"><h3>رمز الأمان للعمليات الخطرة</h3><div class="sp"></div>
+          <span class="chip ${pin ? 'chip-active' : 'chip-soon'}"><span class="dot"></span>${pin ? 'مُعيَّن' : 'غير مُعيَّن'}</span></div>
+        <div class="card-body">
+          <p class="t-sub" style="margin-top:0">سرٌّ ثانٍ للمالكة وحدها، غير كلمة المرور. يُطلب قبل الاستعادة وإعادة التهيئة
+            ${Auth.enabled() ? '' : '— وقبل كل عملية حسّاسة ما دام تسجيل الدخول غير مفعّل'}. يُحفظ ملبَّداً ولا يُكتب نصّاً في أي مكان.
+            ${pin && pin.setAt ? `<br>آخر تعيين: <span class="num">${U.esc(Security.fmtTs(pin.setAt))}</span>${pin.setBy ? ' — ' + U.esc(pin.setBy) : ''}` : ''}</p>
+          ${pend ? `<div class="sec-note" data-pin-pending>طلب إعادة تعيين قائم منذ ${U.esc(Security.fmtTs(pend.requestedAt))}${pend.by ? ' — ' + U.esc(pend.by) : ''}.
+            ${Security.resetReady() ? 'انقضت مدّة الانتظار: يمكن تعيين رمز جديد الآن.' : `يصبح نافذاً في ${U.esc(Security.fmtTs(pend.effectiveAt))}. إن لم تطلبيه أنتِ فألغيه.`}</div>` : ''}
+          <div class="row">
+            ${!pin ? `<button class="btn btn-primary" id="pinSet" ${canPin ? '' : 'disabled'}>تعيين رمز الأمان</button>`
+                   : `<button class="btn" id="pinChange" ${canPin ? '' : 'disabled'}>تغيير الرمز</button>
+                      <button class="btn btn-ghost" id="pinReset" ${canPin ? '' : 'disabled'}>${pend ? (Security.resetReady() ? 'تعيين رمز جديد' : 'طلب إعادة التعيين…') : 'نسيتُ الرمز'}</button>`}
+          </div>
+          ${canPin ? '' : '<p class="t-sub" style="margin-bottom:0">إدارة الرمز لحساب المالكة وحده.</p>'}
+        </div></div>
+
+        <div class="card" style="margin-top:14px"><div class="card-head"><h3>ما الذي يحذف ماذا</h3></div>
+          <div class="card-body tight"><div class="tbl-wrap"><table class="tbl danger-tiers">
+            <thead><tr><th>الدرجة</th><th>أين</th><th>ما الذي تطلبه</th></tr></thead><tbody>
+            <tr><td><b>سجلّ واحد</b><div class="t-sub">مشتركة، مصروف، فاتورة…</div></td><td>من شاشته</td>
+              <td class="t-sub">تأكيد. والمال يُلغى أو يُعكس ولا يُمحى من التاريخ.</td></tr>
+            <tr><td><b>مجموعة</b><div class="t-sub">البيانات التجريبية وما يتبعها</div></td><td>البيانات وسلامتها</td>
+              <td class="t-sub">هويّة طازجة + نسخة أمان مُتحقَّق منها</td></tr>
+            <tr><td><b>استبدال الكل</b><div class="t-sub">استعادة نسخة احتياطية</div></td><td>النسخ الاحتياطي · مركز الملفات</td>
+              <td class="t-sub">${U.esc(layers)}</td></tr>
+            <tr class="danger-row"><td><b>حذف الكل</b><div class="t-sub">إعادة تهيئة البرنامج</div></td><td>هنا، أدناه</td>
+              <td class="t-sub">${U.esc(layers)}</td></tr>
+          </tbody></table></div></div></div>
+
+        <div class="card danger-card" style="margin-top:14px"><div class="card-head"><h3>إعادة تهيئة كاملة — حذف كل البيانات</h3></div>
         <div class="card-body">
         <p style="margin-top:0;color:var(--muted)">تُفرِّغ البرنامج بالكامل ليعود كأنه جديد: كل المشتركات والاشتراكات
-          والمالية والرواتب والقياسات والمستندات والوصولات والوسائط والقوائم.
-          <strong>لا تعود أي بيانات تلقائياً بعدها</strong> — تبدئين من صفحة بيضاء.</p>
-        <p class="sens">قبل المتابعة: خذي نسخة احتياطية من قسم «النسخ الاحتياطي». بعد التنفيذ يتحقّق البرنامج
-          من خلوّ كل جدول على القرص فعلاً، ويرفض أن يعلن النجاح إن بقي شيء.</p>
-        <button class="btn btn-danger" data-perm="settings.danger" id="wipe">إعادة تهيئة كاملة</button></div></div>`;
+          والمالية والرواتب والحسابات والقياسات والمستندات والوصولات والوسائط والقوائم.
+          <strong>لا تعود أي بيانات تلقائياً بعدها</strong>.</p>
+        <ol class="sec-steps">
+          ${Auth.enabled() ? '<li><b>هويّة</b><span>كلمة مرور المالكة الآن — الجلسة المفتوحة لا تكفي</span></li>' : ''}
+          <li><b>رمز الأمان</b><span>${pin ? 'مُعيَّن' : 'يُطلب تعيينه أولاً'}</span></li>
+          <li><b>النيّة</b><span>عبارةٌ تولّدها البوّابة وتُكتب بيدك — اللصق معطّل</span></li>
+          <li><b>نسخة أمان</b><span>كاملة بالوسائط، تُكتب ثم تُقرأ من القرص وتُتحقَّق قبل الحذف — وإن تعذّرت لا يُحذف شيء</span></li>
+          <li><b>تحقّق</b><span>بعد الحذف يُفحص كل جدول على القرص، ولا يُعلن النجاح إن بقي شيء</span></li>
+        </ol>
+        <button class="btn btn-danger" data-perm="settings.danger" id="wipe">${svg(ICON.trash, 15)} إعادة تهيئة كاملة…</button></div></div>
+
+        <div class="card" style="margin-top:14px"><div class="card-head"><h3>سجلّ البوّابة الأمنية</h3><div class="sp"></div>
+          <span class="t-sub">${events.length ? `آخر ${events.length}` : ''}</span></div>
+          <div class="card-body tight">${events.length ? `<div class="tbl-wrap"><table class="tbl sec-log"><thead><tr>
+            <th>الوقت</th><th>العملية</th><th>الفاعلة</th><th title="كلمة المرور">هويّة</th><th>الرمز</th><th>العبارة</th>
+            <th>نسخة الأمان</th><th>النتيجة</th></tr></thead><tbody>
+            ${events.map(a => { const d = a.details || {}; const r = RES[d.result] || ['chip-none', d.result || a.action];
+              return `<tr><td class="num">${U.esc(Security.fmtTs(a.ts))}</td>
+                <td>${U.esc(((Security.CAPS[d.capability] || {}).label) || d.capability || a.action)}${d.action && !RES[d.action] ? `<div class="t-sub">${U.esc(d.action)}</div>` : ''}</td>
+                <td>${U.esc(d.actor || a.actor || '—')}</td>
+                <td class="ta-c">${mark(d.reauth)}</td><td class="ta-c">${mark(d.pin)}</td><td class="ta-c">${mark(d.phrase)}</td>
+                <td class="t-sub">${d.backup ? (d.backup.ok ? U.esc(d.backup.name) : 'تعذّرت') : '—'}</td>
+                <td><span class="chip ${r[0]}"><span class="dot"></span>${U.esc(r[1])}</span>
+                  ${d.reason ? `<div class="t-sub">${U.esc(Security.REASONS[d.reason] || d.reason)}</div>` : ''}</td></tr>`; }).join('')}
+            </tbody></table></div>` : UI.empty('لا أحداث بعد', 'كل محاولة لعملية خطرة — نجحت أو رُفضت — تُسجَّل هنا')}</div></div>`;
       box.querySelector('#wipe').onclick = () => Actions.wipe();
+      const again = () => renderRoute();
+      const b1 = box.querySelector('#pinSet'); if (b1) b1.onclick = () => Security.pinFlow('setup', { onDone:again });
+      const b2 = box.querySelector('#pinChange'); if (b2) b2.onclick = () => Security.pinFlow('change', { onDone:again });
+      const b3 = box.querySelector('#pinReset'); if (b3) b3.onclick = () => Security.resetFlow({ onDone:again });
     };
 
     ({ general:secGeneral, brand:secBrand, membership:secMembership, fields:secFields, money:secMoney,
@@ -18088,35 +18932,24 @@ Object.assign(Actions, {
     const exWithMedia = Repos.exercises.list(true).filter(x => x.mediaId).length;
     const mediaWarn = (!v.counts.media && exWithMedia)
       ? `<p class="err" style="margin-top:10px">هذه النسخة <strong>بلا وسائط</strong>: ${exWithMedia} تمريناً ستفقد صورته أو فيديوه.</p>` : '';
-    const ok = await UI.confirm({ title:'استعادة نسخة احتياطية', danger:true, confirmText:'استبدال البيانات',
-      message:`سيتم <strong>حذف كل البيانات الحالية</strong> واستبدالها ببيانات الملف. لا يمكن التراجع.`,
-      extra:`<table class="tbl" style="margin-top:12px"><thead><tr><th>الجدول</th><th>الحالي</th><th>في الملف</th></tr></thead><tbody>${table}</tbody></table>
+    /* تفاصيل ما سيُستبدل تُعرض داخل نافذة البوّابة نفسها: من يكتب كلمة مروره
+       ورمزه يرى في اللحظة نفسها ما الذي سيُحذف وما الذي سيحلّ محلّه. */
+    const detail = `<div class="sec-detail"><p style="margin:0 0 8px">سيتم <strong>حذف كل البيانات الحالية</strong>
+        واستبدالها ببيانات الملف.</p>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>الجدول</th><th>الحالي</th><th>في الملف</th></tr></thead><tbody>${table}</tbody></table></div>
         ${mediaWarn}${warnHtml}
-        <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''} — ${integ}</p>` });
-    if (!ok) return;
+        <p class="hint" style="margin-top:10px">نسخة الملف: ${U.esc(String(obj.exportedAt||'').slice(0,10))} — مخطط ${U.esc(String(obj.schema))}${Number(obj.schema) < APP.schema ? ' (ستُرقّى تلقائياً)' : ''} — ${integ}</p></div>`;
     /* نسخةٌ تلقائية تُكتب الآن تُقرأ من القاعدة نفسها التي ستُستبدل: لا تبدأ
        الاستعادة قبل أن تنتهي. وكان `finally` هنا يُطفئ علمها وهي جارية. */
     for (let i = 0; Backup._busy && i < 100; i++) await new Promise(r => setTimeout(r, 100));
     if (Backup._busy) return UI.toast('نسخة احتياطية تُكتب الآن — أعيدي المحاولة بعد لحظة','warn', 7000);
     Backup._busy = true;                        /* لا نسخة تلقائية من هنا حتى تنتهي الاستعادة */
     try {
-
-    /* نقطة رجوع قبل فعل لا يُتراجع عنه: البيانات الحالية تُحفظ أولاً.
-       وإن تعذّر ذلك لا نمضي بصمت — تُسأل المستخدمة صراحةً. */
-    if (Desktop.on()){
-      const safe = await Backup.safetyBackup();
-      if (safe) UI.toast(`حُفظت نسخة أمان من بياناتك الحالية — ${safe.name}`, 'ok', 7000);
-      else {
-        const go = await UI.confirm({ title:'تعذّرت نسخة الأمان', danger:true,
-          confirmText:'استعادة بلا نقطة رجوع',
-          message:'لم نتمكّن من حفظ نسخة من بياناتك <strong>الحالية</strong> قبل استبدالها. '
-                + 'المتابعة الآن تعني أن ما لديك اليوم سيُستبدل بلا ما يُرجعه.' });
-        if (!go) return;
-      }
-    }
-
-    try {
-      const counts = await Backup.restore(obj);
+      /* البوّابة (7.11): كلمة المرور الآن + رمز الأمان + عبارة النيّة + نسخة أمان
+         مُتحقَّق منها من القرص قبل أي مسّ — وتعذّرها يُلغي الاستعادة. لم يعد هناك
+         سؤال «استعادة بلا نقطة رجوع». */
+      const counts = await Security.guard('dangerous.restore', { detail, run: () => Backup.restore(obj) });
+      if (!counts) return;
       const skipped = counts._skippedTotal || 0, dups = counts._duplicatesTotal || 0;
       const total = STORE_NAMES.reduce((a, s) => a + (Number(counts[s]) || 0), 0);
       /* الرقم المعروض هو ما دخل فعلاً. وإن سقط شيء يُقال بصوت مسموع لا في سجل لا يُقرأ. */
@@ -18128,6 +18961,7 @@ Object.assign(Actions, {
       else UI.toast(`تمت الاستعادة — ${total} سجل`);
       await Backup.markRestored();
       $('brandName').textContent = Settings.get('gymName');
+      Theme.apply();
       /* المستخدمات المستعادات قد لا يشملن من كانت داخلة، أو قد تكون النسخة
          بتسجيل دخول مفعّل: البوّابة تقرّر كما عند الإقلاع — لا مساحة عمل
          مفتوحة لجلسة لم تعد صالحة. */
@@ -18139,7 +18973,7 @@ Object.assign(Actions, {
       buildNav(); paintWhoAmI();
       renderRoute();
     } catch(e){ Log.error('فشل الاستعادة', e); UI.toast('فشلت الاستعادة: ' + e.message,'err'); }
-    } finally { Backup._busy = false; }
+    finally { Backup._busy = false; }
   },
 
   /* استعادة من نسخة على القرص — مسار سطح المكتب: لا بحث في مجلّد التنزيلات */
@@ -18172,15 +19006,22 @@ Object.assign(Actions, {
       Log.error('تحميل البيانات التجريبية', e);
     } finally { renderRoute(); }
   },
+  /* حذف مجموعة (لا البرنامج كلّه): البيانات التجريبية وما يتبعها — هويّة طازجة
+     ونسخة أمان مُتحقَّق منها قبلها (البوّابة، 7.11). */
   async clearDemo(){
     const n = STORE_NAMES.reduce((a,s) => a + DB.all(s).filter(r => r.isDemo).length, 0);
     if (!n){ UI.toast('لا توجد بيانات تجريبية لحذفها','warn'); return; }
-    if (!await UI.confirm({ title:'حذف البيانات التجريبية', danger:true, confirmText:`حذف ${n} سجلاً`,
-      message:`سيُحذف ${n} سجلاً تجريبياً وما يتبعها (رواتب الموظفات التجريبيات وإيرادات اشتراكاتهنّ)، وتبقى بياناتك الحقيقية كما هي.` })) return;
     try {
-      const removed = await Seed.clearDemo();
+      const removed = await Security.guard('dangerous.clearDemo', {
+        detail:`<p class="sec-detail" style="margin:0">سيُحذف <strong>${n}</strong> سجلاً تجريبياً وما يتبعها (رواتب الموظفات
+          التجريبيات وإيرادات اشتراكاتهنّ)، وتبقى بياناتك الحقيقية كما هي.</p>`,
+        run: () => Seed.clearDemo() });
+      if (removed === null) return;
       UI.toast(`تم حذف ${removed} سجلاً تجريبياً`);
-    } catch(e){ UI.toast(e.message,'err', 8000); Log.error('حذف البيانات التجريبية', e); }
+    } catch(e){
+      if (e && e.code === 'FORBIDDEN'){ UI.toast(e.message, 'err'); throw e; }
+      UI.toast(e.message,'err', 8000); Log.error('حذف البيانات التجريبية', e);
+    }
     finally { renderRoute(); }
   },
   async restoreDefaults(){
@@ -18213,9 +19054,11 @@ Object.assign(Actions, {
       renderRoute();
     };
   },
-  /* إعادة تهيئة كاملة: تحذير برقم السجلات، تأكيدان، ثم تحقّق فعلي بعد التنفيذ */
+  /* إعادة تهيئة كاملة — أخطر فعل في النظام. كانت تأكيدين يُنقران؛ صارت
+     البوّابة كاملة (7.11): كلمة مرور المالكة الآن، ورمز الأمان، وعبارةٌ تولّدها
+     البوّابة وتُكتب بيدٍ لا تُلصق، ونسخة أمان تُكتب وتُقرأ من القرص قبل الحذف —
+     ثم تحقّق فعلي من خلوّ كل جدول بعده. */
   async wipe(){
-    Auth.require('settings.danger');
     const counts = Object.fromEntries(STORE_NAMES.map(s => [s, DB.count(s)]));
     /* القائمة تُبنى من كل الجداول لا من قائمة مكتوبة يدوياً: جدول جديد يظهر هنا
        تلقائياً، ولا يُحذف شيء دون أن تراه صاحبة النادي قبل الحذف. */
@@ -18223,21 +19066,20 @@ Object.assign(Actions, {
       .map(k => `<tr><td>${U.esc(storeLabel(k))}</td><td class="num">${counts[k]}</td></tr>`).join('');
     const total = Object.entries(counts).filter(([k]) => k !== 'meta').reduce((a,[,v]) => a+v, 0);
     if (!total){ UI.toast('البرنامج فارغ أصلاً','warn'); return; }
-    const ok1 = await UI.confirm({ title:'إعادة تهيئة كاملة', danger:true, confirmText:'متابعة',
-      message:`سيُحذف <strong>${total}</strong> سجلاً نهائياً من هذا الجهاز، ولن يعود أي شيء تلقائياً بعد الحذف.`,
-      extra:`${rows?`<table class="tbl" style="margin-top:10px"><thead><tr><th>النوع</th><th>العدد</th></tr></thead><tbody>${rows}</tbody></table>`:''}
-        <p class="err" style="margin-top:10px">صدّري نسخة احتياطية أولاً — هذه العملية لا يمكن التراجع عنها.</p>` });
-    if (!ok1) return;
-    const ok2 = await UI.confirm({ title:'تأكيد أخير', danger:true, confirmText:'نعم، احذفي كل شيء',
-      message:'بعد هذه الخطوة يبدأ البرنامج فارغاً تماماً: بلا مشتركات، بلا مالية، وبلا قوائم افتراضية.' });
-    if (!ok2) return;
+    const detail = `<div class="sec-detail"><p style="margin:0 0 8px">سيُحذف <strong>${total}</strong> سجلاً نهائياً من هذا الجهاز:
+        بلا مشتركات، بلا مالية، بلا حسابات، وبلا قوائم افتراضية. لا يعود شيء تلقائياً بعدها.</p>
+      ${rows ? `<div class="tbl-wrap sec-counts"><table class="tbl"><thead><tr><th>النوع</th><th>العدد</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}</div>`;
     try {
-      await Seed.factoryReset();
+      const done = await Security.guard('dangerous.resetData', { detail, run: () => Seed.factoryReset() });
+      if (!done) return;
       $('brandName').textContent = Settings.get('gymName');
       document.title = `${Settings.get('gymName')} — نظام الإدارة`;
+      Theme.apply(); buildNav(); paintWhoAmI();
       go('dashboard'); renderRoute();
-      UI.toast('تمت إعادة التهيئة. البرنامج فارغ الآن — ابدئي بإنشاء مدد الاشتراكات من الإعدادات.', 'ok', 9000);
+      UI.toast('تمت إعادة التهيئة. البرنامج فارغ الآن — ونسخة الأمان من بياناتك السابقة محفوظة في مجلّد النسخ اليدوية.', 'ok', 12000);
     } catch(e){
+      /* الرفض عند حدّ الفعل يبقى رفضاً يُرمى (كما كان بـ`Auth.require`) — لا نجاحاً صامتاً */
+      if (e && e.code === 'FORBIDDEN'){ UI.toast(e.message, 'err'); throw e; }
       Log.error('فشل إعادة التهيئة', e);
       UI.toast('لم تكتمل إعادة التهيئة: ' + e.message, 'err', 9000);
       renderRoute();
@@ -19151,7 +19993,19 @@ Forms.user = function(id){
       sync();
       ov.querySelector('#usSave').onclick = async () => {
         const d = UI.read(scope);
-        const res = await guard(scope, () => u ? Svc.users.update(u.id, d) : Svc.users.create(d));
+        const save = () => u ? Svc.users.update(u.id, d) : Svc.users.create(d);
+        /* حسابٌ جديد بصلاحية المالكة (أو ترقية إليها) طريقٌ إلى كل شيء — ومنه إلى
+           تجاوز كلمة مرور المالكة. فيمرّ ببوّابة الهويّة الطازجة (7.11). */
+        const escalates = Auth.isAdminRole(d.roleKey) && (!u || !Auth.isAdminRole(u.roleKey));
+        if (escalates){
+          const v = Svc.users.validate(u ? Object.assign({}, u, d) : d, u ? u.id : null);
+          if (!v.ok) return UI.showErrors(scope, v.errors);
+        }
+        const res = await guard(scope, () => escalates
+          ? Security.guard('security.adminAccount', { run:save,
+              detail:`<p class="sec-detail" style="margin:0">${u ? `ترقية <strong>${U.esc(u.name)}</strong>` : `إنشاء <strong>${U.esc(d.name || '')}</strong>`}
+                إلى دور «${U.esc(Auth.roleName(d.roleKey))}» — صلاحية كاملة تشمل الحسابات والنسخ الاحتياطي.</p>` })
+          : save());
         if (!res) return;
         UI.toast(u ? 'حُفظت البيانات' : `أُنشئ حساب ${res.name}`);
         h.close(); renderRoute();
@@ -19175,7 +20029,14 @@ Forms.userPassword = function(id){
       ov.querySelector('#upSave').onclick = async () => {
         const scope = ov.querySelector('#upForm'), d = UI.read(scope);
         if (d.password !== d.password2) return UI.showErrors(scope, { password2:'كلمتا المرور غير متطابقتين' });
-        const res = await guard(scope, () => Svc.users.setPassword(u.id, d.password));
+        /* تعيين كلمة مرور **مالكةٍ أخرى** بلا معرفة القديمة: من يفعله يستطيع بعدها
+           أن يدخل بحسابها — فيمرّ ببوّابة الهويّة الطازجة (7.11). */
+        const set = () => Svc.users.setPassword(u.id, d.password);
+        const risky = Auth.isAdminRole(u.roleKey) && u.id !== Auth.session.actorId;
+        const res = await guard(scope, () => risky
+          ? Security.guard('security.adminAccount', { run:set,
+              detail:`<p class="sec-detail" style="margin:0">تعيين كلمة مرور جديدة لحساب <strong>${U.esc(u.name)}</strong> (صلاحية المالكة).</p>` })
+          : set());
         if (!res) return;
         UI.toast('تم تغيير كلمة المرور'); h.close(); renderRoute();
       };
@@ -19550,6 +20411,8 @@ async function boot(){
      فالنافذة لا تُظهَر قبلها. */
   Intro.mount();
   Gate.shield();
+  /* المظهر من نسخته المحلية قبل أي انتظار: لا ومضة فاتحة تحت تطبيقٍ داكن */
+  Theme.apply();
   const root = $('viewRoot');
   root.innerHTML = `<div class="card"><div class="card-body">
     <div class="skeleton" style="width:40%;margin-bottom:12px"></div>
@@ -19583,6 +20446,9 @@ async function boot(){
   await DB.init(adapter);
   const mig = await Migrations.run();               // ترقية بيانات الإصدارات الأقدم قبل أي عرض
   await Settings.load();
+  /* المظهر من الإعدادات المحفوظة (المصدر)، ونسخته المحلية تتبعه */
+  try { const tm = Settings.get('theme'); if (tm) localStorage.setItem(Theme.LS_KEY, tm); } catch(e){}
+  Theme.apply(); Theme.watch();
   /* الافتراضيات تُزرع مرة واحدة عند أول تشغيل فقط — لا بعد إعادة التهيئة */
   if (!Settings.get('initialized')){
     await Seed.ensureDefaults();
@@ -19629,6 +20495,11 @@ async function boot(){
   };
   $('btnQuickBackup').onclick = () => Actions.exportBackup(true);
   $('btnBell').onclick = e => { e.stopPropagation(); Screens.notifications(); };
+  /* المظهر لكل من يستعمل الجهاز: فاتح ⟵ داكن ⟵ حسب الجهاز */
+  $('btnTheme').onclick = async () => {
+    const m = await Theme.set(Theme.next());
+    UI.toast(`المظهر: ${Theme.MODES.find(x => x.v === m).t}`, 'ok', 2200);
+  };
   $('globalSearch').oninput = U.debounce(e => Actions.globalSearch(e.target.value), 220);
   $('globalSearch').onkeydown = e => { if (e.key === 'Escape'){ e.target.value=''; $('globalSearchRes').classList.add('hidden'); } };
 
@@ -19742,7 +20613,9 @@ async function bootSafely(){
       <p>${U.esc(e && e.message || 'خطأ غير معروف')}</p>
       <p class="t-sub">جرّبي إغلاق النوافذ الأخرى التي تفتح النظام ثم إعادة تحميل الصفحة.
          إذا تكرّر الخطأ فافتحي الملف من متصفح عادي خارج وضع التصفّح الخاص.</p>
-      <button class="btn btn-primary" onclick="location.reload()">إعادة المحاولة</button></div></div>`;
+      <button class="btn btn-primary" id="bootRetry">إعادة المحاولة</button></div></div>`;
+    const retry = root && root.querySelector('#bootRetry');
+    if (retry) retry.addEventListener('click', () => location.reload());
     Desktop.ready();
     _readyReject(e);
   }
@@ -19751,7 +20624,7 @@ async function bootSafely(){
 /* واجهة مكشوفة للاختبار الآلي وللصيانة من Console */
 window.TG = { APP, U, D, DUR, Money, Calc, Validate, Offers, Svc, Repos, DB, Settings, PayMethods, Backup, Seed, Audit, Migrations, Integrity, Exporter,
               STORE_LABELS, storeLabel,
-              Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto,
+              Auth, PERMISSIONS, PERM_KEYS, ROLE_PRESETS, Crypto, Security, Theme,
               Fields, FIELD_TYPES, FIELD_ENTITIES, Brand, Print, ImageEditor, Word,
               Desktop, DesktopFiles, FOLDERS, FileCentre, Build, Intro, InstanceLock, FIN, NAV, Policy,
               STATUS, STORE_NAMES, SCHEMA, UI, Views, Reports, Forms, Screens, Actions, IDBAdapter, LSAdapter, MemAdapter, AppError, Log,
