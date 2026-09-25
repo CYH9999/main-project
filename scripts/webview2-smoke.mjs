@@ -23,6 +23,7 @@
    ========================================================================== */
 import { spawn, execFileSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
 import { chromium } from 'playwright';
 
 const exe = process.argv[2];
@@ -64,21 +65,36 @@ child.on('error', e => { exited = 'error: ' + e.message; });
 const diagnose = () => {
   if (process.platform !== 'win32') return;
   console.log('  · حالة التطبيق:', exited === null ? 'يعمل' : `خرج (${exited})`);
-  console.log(ps(`Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'msedgewebview2' -or $_.ProcessId -eq ${child.pid} } | ForEach-Object { '  · ' + $_.ProcessId + ' ' + $_.Name + ' :: ' + (($_.CommandLine + '') -replace '\\s+', ' ').Substring(0, [Math]::Min(300, ($_.CommandLine + '').Length)) } | Out-String -Width 400`));
-  console.log(ps(`Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 9000 -and $_.LocalPort -le 9999 } | ForEach-Object { '  · منفذ ' + $_.LocalAddress + ':' + $_.LocalPort + ' ⟵ ' + $_.OwningProcess } | Out-String`));
+  /* سطر أوامر عملية المتصفّح كاملاً (بلا --type): هل وصلها المفتاح؟ */
+  console.log(ps(`Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { '  · المتصفّح ' + $_.ProcessId + ' :: ' + $_.CommandLine } | Out-String -Width 4000`));
+  /* Chromium يكتب DevToolsActivePort في مجلّد بيانات المستخدم حين يفتح منفذ التصحيح */
+  console.log(ps(`$d = Join-Path $env:LOCALAPPDATA 'com.tabarak.gym\\EBWebView'; if (Test-Path "$d\\DevToolsActivePort") { '  · DevToolsActivePort: ' + ((Get-Content "$d\\DevToolsActivePort") -join ' ') } else { '  · لا DevToolsActivePort في ' + $d }`));
+  console.log(ps(`$ids = (Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'").ProcessId; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess } | ForEach-Object { '  · منفذ WebView2 ' + $_.LocalAddress + ':' + $_.LocalPort + ' ⟵ ' + $_.OwningProcess } | Out-String`));
+  console.log('  · WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS في بيئة الإطلاق:', ARGS);
 };
 let browser = null;
 try {
   /* المنفذ يُفتح حين تُنشأ بيئة WebView2 — ننتظره بحدٍّ أعلى */
-  let up = false;
+  /* Chromium يكتب المنفذ الفعلي في DevToolsActivePort داخل مجلّد بيانات WebView2 —
+     يُقرأ منه إن اختلف عن المطلوب */
+  const activePort = () => {
+    try {
+      const f = path.join(process.env.LOCALAPPDATA || '', 'com.tabarak.gym', 'EBWebView', 'DevToolsActivePort');
+      const n = Number(fs.readFileSync(f, 'utf8').split(/\r?\n/)[0]);
+      return n > 0 ? n : null;
+    } catch (e) { return null; }
+  };
+  let up = false, port = PORT;
   for (let i = 0; i < 90 && !up; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${PORT}/json/version`); up = r.ok; } catch (e) { /* لم يُفتح بعد */ }
+    for (const p of new Set([PORT, activePort()].filter(Boolean))) {
+      try { const r = await fetch(`http://127.0.0.1:${p}/json/version`); if (r.ok) { up = true; port = p; break; } } catch (e) { /* لم يُفتح بعد */ }
+    }
     if (!up) await sleep(1000);
   }
-  ok('WebView2 فتح منفذ التصحيح للتطبيق المثبَّت', up);
+  ok('WebView2 فتح منفذ التصحيح للتطبيق المثبَّت', up, up ? String(port) : '');
   if (!up) { diagnose(); throw new Error('no CDP'); }
 
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const pages = () => browser.contexts().flatMap(c => c.pages());
   let page = null;
   for (let i = 0; i < 60 && !page; i++) {
