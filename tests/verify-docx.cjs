@@ -40,18 +40,21 @@ const ok = (name, pass, detail) => { console.log(`  ${pass ? '✓' : '✗'} ${na
     const c = document.createElement('canvas'); c.width = c.height = 800;
     const x = c.getContext('2d'); x.fillStyle = '#D63384'; x.beginPath(); x.arc(400, 400, 360, 0, 7); x.fill();
     await TG.Brand.setMedia('logo', new File([await new Promise(r => c.toBlob(r, 'image/png'))], 'l.png', { type: 'image/png' }));
-    const grab = async (name, fn, wantLandscape) => {
+    const grab = async (name, fn, wantLandscape, expect) => {
       let blob = null; const real = TG.UI.download;
       TG.UI.download = async b => { blob = b; return null; };
       try { await fn(); } finally { TG.UI.download = real; }
       const u = new Uint8Array(await blob.arrayBuffer()); let s = '';
       for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
-      out.push({ name, b64: btoa(s), wantLandscape });
+      out.push({ name, b64: btoa(s), wantLandscape, expect: expect || [] });
     };
     const m = TG.Repos.members.list().find(x => TG.Svc.payments.ofMember(x.id).length);
     const rc = await TG.Svc.receipts.ensure(TG.Svc.payments.ofMember(m.id)[0].id);
     const rows = TG.Repos.members.list().map(x => `<tr><td>${x.code}</td><td>${x.name}</td><td>${x.phone || ''}</td><td>فعّال</td><td>01/01/2026</td><td>1</td><td>30,000 د.ع</td><td>20,000 د.ع</td></tr>`).join('');
-    await grab('وصل', () => TG.Word.fromPrint(`وصل ${rc.no}`, TG.Print.receiptHtml(rc, { format: 'a4' })), false);
+    /* 7.11: الوصل بقالبه الخاص — والنصّ في الناتج يحمل رقمه ومشتركته ومبلغه من اللقطة نفسها */
+    const rm = TG.Print.receiptModel(rc, { format: 'a4' });
+    await grab('وصل', () => TG.Word.receipt(rc), false, [rm.no, rm.member.name, TG.Money.fmt(rm.amount).replace(/[^\d,]/g, '')]);
+    await grab('وصولات-اليوم', () => TG.Actions.wordDayReceipts(TG.Repos.payments.list()[0].date), false, ['القبض', 'بيانات الدفعة']);  // «وصولات» فيها لام-ألف يفكّها pdftotext بترتيبٍ بصريّ
     await grab('كشف-حساب', () => TG.Word.fromPrint(`كشف حساب ${m.name}`, TG.Print.statementHtml(m.id)), false);
     await grab('كشف-الصندوق', () => TG.Word.fromPrint('كشف الصندوق', TG.Print.cashDayHtml(TG.D.today())), false);
     await grab('قائمة-المشتركات', () => TG.Word.fromPrint('قائمة المشتركات',
@@ -86,6 +89,9 @@ const ok = (name, pass, detail) => { console.log(`  ${pass ? '✓' : '✗'} ${na
       const txt = execFileSync(pt, ['-layout', pdf, '-']).toString('utf8');
       ok('النصّ العربي في الناتج', (txt.match(/[؀-ۿ]/g) || []).length > 40, `${(txt.match(/[؀-ۿ]/g) || []).length} حرفاً`);
       ok('ولا شيفرة ولا وسوم HTML', !/<\/?(div|table|td|span)|function\s*\(|w:tbl/.test(txt));
+      /* pdftotext يحيط المقاطع بعلامات اتجاه (LRE/PDF/RLE…) — تُزال قبل المقارنة */
+      const flat = txt.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').replace(/\s+/g, ' ');
+      for (const e of d.expect || []) ok(`وفي الناتج: ${e}`, flat.indexOf(e) !== -1 || flat.replace(/\s/g, '').indexOf(String(e).replace(/\s/g, '')) !== -1);
     }
   }
   console.log(`\n${fails === 0 ? '✓ كل ملفات Word فُتحت في معالج نصوص خارجي.' : '✗ ' + fails + ' فحصاً سقط.'}  (${out})`);

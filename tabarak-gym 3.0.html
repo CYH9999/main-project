@@ -8987,22 +8987,22 @@ const UI = {
   /* مخرج الملفات الوحيد في النظام. في المتصفح تنزيل كما كان، وفي سطح
      المكتب كتابةٌ في مجلّد «تبارك جيم» تحت المستندات. والنداء واحد في
      الحالين فلا تعرف شاشةٌ أين تُكتب ملفاتها. */
-  download(blob, filename, category){
-    if (Desktop.on()) return UI.saveNative(blob, filename, category);
+  download(blob, filename, category, opts){
+    if (Desktop.on()) return UI.saveNative(blob, filename, category, opts);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1200);
     return Promise.resolve(null);
   },
-  async saveNative(blob, filename, category){
+  async saveNative(blob, filename, category, opts){
     try {
       const cat = DesktopFiles.categoryOf(filename, category);
       const r = await DesktopFiles.save(blob, filename, category);
       const kind = { csv:'CSV', excel:'Excel', word:'Word' }[cat];
       /* الرسالة تقول أي نوع حُفظ، وأين، وتُعطي طريقاً إليه — لا «تم الحفظ»
-         ثم ابحثي عنه. */
-      UI.toast(kind ? `تم حفظ ملف ${kind}` : 'تم حفظ الملف', 'ok', 9000,
+         ثم ابحثي عنه. (ولسطحٍ يعرف ما حفظه جملته الخاصة: «تم تصدير الوصل إلى Word».) */
+      UI.toast((opts && opts.message) || (kind ? `تم حفظ ملف ${kind}` : 'تم حفظ الملف'), 'ok', 9000,
         { where: `${r.name} — ${Desktop.pretty(r.folder)}`, actions: UI.savedActions(r, cat) });
       return r;
     } catch(e){
@@ -9317,10 +9317,27 @@ ${this.docCss('#tgPrintRoot')}
         body{background:#fff;margin:0;padding:0}
         .print-wrap{padding:0}
         ${UI.docCss('body')}
-      </style></head><body><div class="print-wrap">${head}${UI.printPrepare(html)}</div>
-      <script>window.onload=function(){setTimeout(function(){window.print();},350);}<\/script></body></html>`);
+      </style></head><body><div class="print-wrap">${head}${UI.printPrepare(html)}</div></body></html>`);
     doc.close();
+    UI.printWhenLoaded(w, doc, 350);
     return w;
+  },
+  /* أمر الطباعة من الصفحة الأمّ بعد اكتمال تحميل الوعاء (والصور فيه) — لا
+     وسم سكربت سطريّ داخل الوعاء. الوعاء يرث سياسة التطبيق، وسياسة التطبيق
+     المكتبي تحمل بصمات السكربت فيُتجاهل فيها 'unsafe-inline': فكان سطر
+     `window.onload=…print()` يُرفض صامتاً ولا يُطبع شيء (7.11). مرّة واحدة. */
+  printWhenLoaded(w, doc, delay){
+    let done = false;
+    const fire = () => {
+      if (done) return; done = true;
+      setTimeout(() => {
+        try { w.focus(); } catch(e){}
+        try { w.print(); } catch(e){ Log.warn('تعذّر أمر الطباعة', e); }
+      }, delay);
+    };
+    try { if (doc.readyState === 'complete') fire(); else w.addEventListener('load', fire, { once:true }); }
+    catch(e){ fire(); }
+    setTimeout(fire, delay + 1500);          /* محرّكٌ لا يُطلق حدث التحميل بعد document.write */
   },
 };
 
@@ -10630,8 +10647,22 @@ const Word = (() => {
     return para('', { space:[480, 0] })
       + `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${grid}</w:tblGrid><w:tr>${cells}</w:tr></w:tbl>`;
   }
+  /* شريط بيانات (الوصل): خانات متساوية، العنوان صغيرٌ باهت والقيمة عريضة، وخطٌّ
+     بلون الهوية فوقها — أوّل ما تقع عليه العين بعد الترويسة. */
+  function band(b, T, width){
+    const n = Math.max(1, b.cells.length), w = Math.floor(width / n);
+    const brd = `<w:tcBorders><w:top ${border(T.accent, 18)}/><w:bottom ${border(T.line, 6)}/></w:tcBorders>`;
+    const cells = b.cells.map(([k, v]) => `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${brd}<w:shd w:val="clear" w:color="auto" w:fill="${T.band}"/></w:tcPr>`
+      + para(k, { pstyle:'TGLabel', center:true }) + para(v, { pstyle:'TGBand', center:true, color:T.plum }) + '</w:tc>').join('');
+    return `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>`
+      + `<w:tblGrid>${b.cells.map(() => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr></w:tbl>`
+      + para('', { pstyle:'TGGap' });
+  }
   function block(b, T, width, landscape){
     switch (b.type){
+      case 'band': return band(b, T, width);
+      case 'stamp': return para(b.text, { pstyle:'TGTotal', color:'B4353F', center:true,
+        border:`<w:pBdr><w:top ${border('B4353F', 12)}/><w:bottom ${border('B4353F', 12)}/></w:pBdr>` });
       case 'h1': return para(b.text, { pstyle:'Heading1', keepNext:true });
       case 'h2': return para(b.text, { pstyle:'Heading2', keepNext:true });
       case 'p':  return para(b.text, { pstyle:'Normal' });
@@ -10661,9 +10692,9 @@ const Word = (() => {
   }
   function headerXml(T, d, width){
     const b = Brand.get();
-    const logoW = 1300, rest = width - logoW, a = Math.floor(rest * .55), c = rest - a;
+    const logoW = d.logoMm && d.logoMm > 18 ? 1500 : 1300, rest = width - logoW, a = Math.floor(rest * .55), c = rest - a;
     const logoCell = `<w:tc><w:tcPr><w:tcW w:w="${logoW}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
-      + `<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>${T.logo ? drawing('rIdLogo', 18, Brand.name()) : ''}</w:p></w:tc>`;
+      + `<w:p><w:pPr><w:bidi/><w:spacing w:before="0" w:after="0"/></w:pPr>${T.logo ? drawing('rIdLogo', d.logoMm || 18, Brand.name()) : ''}</w:p></w:tc>`;
     const nameCell = `<w:tc><w:tcPr><w:tcW w:w="${a}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
       + para(Brand.name(), { pstyle:'TGBrand', color:T.plum })
       + (b.subtitle ? para(b.subtitle, { pstyle:'TGSmall' }) : '')
@@ -10671,7 +10702,7 @@ const Word = (() => {
     const metaCell = `<w:tc><w:tcPr><w:tcW w:w="${c}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
       + para(d.title, { pstyle:'TGDocTitle', color:T.accent })
       + (d.subtitle ? para(d.subtitle, { pstyle:'TGSmall' }) : '')
-      + para(`${D.dayName(D.today())} ${D.fmt(D.today())}`, { pstyle:'TGSmall' }) + '</w:tc>';
+      + para(d.dateText || `${D.dayName(D.today())} ${D.fmt(D.today())}`, { pstyle:'TGSmall' }) + '</w:tc>';
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr ${W_NS}>`
       + `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${width}" w:type="dxa"/><w:tblLayout w:type="fixed"/>`
       + `<w:tblBorders><w:bottom ${border(T.accent, 12)}/></w:tblBorders><w:tblCellMar><w:bottom w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>`
@@ -10716,6 +10747,7 @@ ${pstyle('TGCell', 'TG Cell', '<w:spacing w:before="30" w:after="30" w:line="252
 ${pstyle('TGHead', 'TG Table Head', '<w:spacing w:before="40" w:after="40"/>', `<w:b/><w:bCs/><w:color w:val="FFFFFF"/>${sz(18)}`, 'Normal')}
 ${pstyle('TGLabel', 'TG Label', '<w:spacing w:before="30" w:after="30"/>', `<w:color w:val="${T.muted}"/>${sz(17)}`, 'Normal')}
 ${pstyle('TGTotal', 'TG Total', '<w:spacing w:before="70" w:after="70"/>', `<w:b/><w:bCs/>${sz(24)}`, 'Normal')}
+${pstyle('TGBand', 'TG Band Value', '<w:spacing w:before="0" w:after="60"/>', `<w:b/><w:bCs/>${sz(23)}`, 'Normal')}
 ${pstyle('TGNote', 'TG Note', '<w:spacing w:before="120" w:after="120"/><w:ind w:left="120" w:right="120"/>', `<w:color w:val="${T.ink}"/>${sz(17)}`, 'Normal')}
 ${pstyle('TGGap', 'TG Gap', '<w:spacing w:before="0" w:after="120" w:line="120" w:lineRule="exact"/>', sz(8), 'Normal')}
 <w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/>
@@ -10904,7 +10936,46 @@ ${T.logo ? `<Relationship Id="rIdLogo" Type="${REL}/image" Target="media/logo.pn
     Audit.log('report','export',`تصدير Word: ${title}`).catch(() => {});
     return { blob, saved };
   }
-  return { build, blocksFromHtml, fromPrint, theme, logoAccent, fileName, WIDE_COLS };
+  /* ------------------------------ وصل قبض (7.11) ------------------------------
+     قالبٌ مستقلّ للوصل — لا تقريرٌ عامّ: ترويسة الهوية بشعارٍ أكبر، وشريطٌ برقم
+     الوصل وتاريخه ووقته وطريقة الدفع، ثم «استلمنا من» والبيان والفترة، ثم
+     المجاميع، والمبلغ المستلم بارزاً بلون الهوية، ثم التوقيعان.
+
+     المصدر `Print.receiptModel` — القارئ نفسه الذي تبني منه الورقة. فلا حساب
+     ثانٍ ولا مبلغٌ آخر: كل رقمٍ كما جُمِّد في لقطة الوصل يوم إصداره. وملف Word
+     ليس طباعة: لا يزيد عدّاد النسخ، ولا يُكتب عليه «نسخة مُعادة الطباعة». */
+  function receiptBlocks(m){
+    const blocks = [{ type:'band', cells:[['رقم الوصل', m.no], ['التاريخ', D.fmt(m.date)], ['الوقت', m.time || '—'], ['طريقة الدفع', m.methodLabel]] }];
+    if (m.voided) blocks.push({ type:'stamp', text:'هذا الوصل مُبطَل — أُلغيت الدفعة المرتبطة به' });
+    blocks.push({ type:'h2', text:'بيانات الدفعة' });
+    blocks.push({ type:'kv', rows:[['استلمنا من', m.member.name], ['الكود', m.member.code], ['البيان', m.doc.title],
+                                   [m.doc.kind === 'sale' ? 'الأصناف' : 'فترة الاشتراك', m.doc.detail || '—']] });
+    if (m.doc.lines.length) blocks.push({ type:'table', headers:['الصنف', 'الكمية', 'السعر', 'المجموع'],
+      rows:m.doc.lines.map(l => [{ t:l.name }, { t:String(U.round2(l.qty)) }, { t:Money.fmt(l.unitPrice) }, { t:Money.fmt(l.total) }]) });
+    const sums = [[`قيمة ${m.doc.kind === 'sale' ? 'الفاتورة' : 'الاشتراك'}`, Money.fmt(m.doc.price)]];
+    if (m.doc.discount) sums.push(['الخصم', `− ${Money.fmt(m.doc.discount)}`]);
+    sums.push(['الإجمالي المستحق', Money.fmt(m.doc.total)]);
+    if (m.paidBefore) sums.push(['المدفوع سابقاً', Money.fmt(m.paidBefore)]);
+    blocks.push({ type:'kv', single:true, rows:sums });
+    blocks.push({ type:'total', label:'المبلغ المستلم', value:Money.fmt(m.amount) });
+    if (m.showBalance && m.remaining > 0) blocks.push({ type:'total', label:'المتبقّي بعد هذه الدفعة', value:Money.fmt(m.remaining) });
+    blocks.push({ type:'sign', labels:['توقيع المستلمة', 'توقيع المشتركة'] });
+    if (m.gym.footer) blocks.push({ type:'note', text:m.gym.footer });
+    blocks.push({ type:'small', text:`سجّلت الاستلام: ${m.operator}` });
+    blocks.push({ type:'small', text:'نسخة Word من الوصل — وثيقة على دفعة وقعت، وليست مطالبة بمبلغ جديد.' });
+    return blocks;
+  }
+  const receiptFileName = m => `وصل-${String(m.no || '').replace(/[\\/:*?"<>|]+/g, '-')}-${m.date || D.today()}.docx`;
+  async function receipt(rec){
+    const m = Print.receiptModel(rec, { format:'a4' });
+    const blob = await build({ title:'وصل قبض', subtitle:`رقم ${m.no}`, dateText:`${D.dayName(m.date)} ${D.fmt(m.date)} — ${m.time}`,
+                               logoMm:22, blocks:receiptBlocks(m), landscape:false });
+    blob.tgMeta.receipt = { no:m.no, amount:m.amount, member:m.member.name };
+    const saved = await UI.download(blob, receiptFileName(m), 'word', { message:'تم تصدير الوصل إلى Word' });
+    Audit.log('receipt','word',`تصدير وصل ${m.no} إلى Word (ليس طباعة)`, rec.id).catch(() => {});
+    return { blob, saved, model:m };
+  }
+  return { build, blocksFromHtml, fromPrint, theme, logoAccent, fileName, WIDE_COLS, receipt, receiptBlocks, receiptFileName };
 })();
 
 
@@ -11853,7 +11924,8 @@ Views.desk = {
           return `<tr><td class="num">${U.esc(String(p.createdAt).slice(11, 16))}</td>
             <td>${U.esc(mm ? mm.name : 'زبونة عابرة')}</td><td class="num"><strong>${Money.fmt(p.amount)}</strong></td>
             <td>${U.esc(payLabel(p.method))}</td>
-            <td class="ta-l"><button class="btn btn-sm" data-rcp="${p.id}">${svg(ICON.print, 13)} ${rc ? 'إعادة طباعة' : 'وصل'}</button></td></tr>`;
+            <td class="ta-l"><div class="t-actions"><button class="btn btn-sm" data-rcp="${p.id}">${svg(ICON.print, 13)} ${rc ? 'إعادة طباعة' : 'وصل'}</button>
+              <button class="btn btn-sm" data-rcpw="${p.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button></div></td></tr>`;
         }).join('')}</tbody></table></div></div>` : ''}`;
 
     /* ------------------------------ الربط ------------------------------ */
@@ -12101,7 +12173,8 @@ Views.member = {
             <button class="btn btn-primary btn-sm" data-a="renew">${st.status === STATUS.NEVER ? 'تسجيل اشتراك' : 'تجديد'}</button>
             <button class="btn btn-sm" data-a="checkin">تسجيل حضور</button>
             ${balance.due > 0 ? '<button class="btn btn-sm" data-a="collect">قبض</button>' : ''}
-            ${lastPayment ? '<button class="btn btn-sm" data-a="lastreceipt">طباعة وصل</button>' : ''}
+            ${lastPayment ? `<button class="btn btn-sm" data-a="lastreceipt">طباعة الوصل</button>
+              <button class="btn btn-sm" data-rcpw="${lastPayment.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} تصدير الوصل إلى Word</button>` : ''}
             <button class="btn btn-sm" data-a="note">ملاحظة</button>
             <button class="btn btn-sm" data-a="edit">تعديل البيانات</button>
           </div>
@@ -12374,7 +12447,8 @@ Views.member = {
                 : (r.kind === 'paid' ? '<span class="t-sub">لم يُصدَر</span>' : '')}</td>
           <td class="num ${run > 0 ? 'money-neg' : ''}">${Money.fmt(run)}</td>
           <td class="ta-l"><div class="t-actions">
-            ${r.kind === 'paid' ? `<button class="btn btn-sm" data-receipt="${r.payment.id}">${svg(ICON.print, 13)} وصل</button>` : ''}
+            ${r.kind === 'paid' ? `<button class="btn btn-sm" data-receipt="${r.payment.id}">${svg(ICON.print, 13)} وصل</button>
+              <button class="btn btn-sm" data-rcpw="${r.payment.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button>` : ''}
             ${r.kind === 'owed' ? (() => {
               const paidOn = r.ref.t === 'sale' ? (saleIdx[r.ref.id] || 0) : (payIdx[r.ref.id] || 0);
               const due = U.round2(r.debit - paidOn);
@@ -12413,7 +12487,7 @@ Views.member = {
           <td class="num">${D.fmt(String(r.issuedAt).slice(0, 10))}</td><td class="num">${Money.fmt(r.amount)}</td>
           <td class="num">${r.reprints ? r.reprints + ' إعادة' : 'الأصل'}</td>
           <td class="ta-l"><div class="t-actions"><button class="btn btn-sm" data-reprint="${r.id}">${svg(ICON.print, 13)} طباعة</button>
-            <button class="btn btn-sm" data-rcpword="${r.id}">${svg(ICON.down, 13)} Word</button></div></td></tr>`).join('')}
+            <button class="btn btn-sm" data-rcpword="${r.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button></div></td></tr>`).join('')}
         </tbody></table></div></div>` : ''}`;
     };
 
@@ -12589,10 +12663,9 @@ Views.member = {
       on('[data-pmts]', b => Screens.paymentLedger('subscription', b.dataset.pmts));
       on('[data-receipt]', b => Actions.printReceiptForPayment(b.dataset.receipt));
       on('[data-reprint]', b => Actions.printReceipt(b.dataset.reprint));
-      /* نسخة Word من الوصل: مستندٌ لا طباعة — لا يزيد عدّاد إعادة الطباعة ولا يُصدر رقماً */
-      on('[data-rcpword]', b => { const rc = Repos.receipts.get(b.dataset.rcpword);
-        if (rc) Word.fromPrint(`وصل ${rc.no}`, Print.receiptHtml(rc, { format:'a4' }))
-          .catch(e => UI.toast('تعذّر تصدير Word: ' + e.message, 'err')); });
+      /* نسخة Word من الوصل: مستندٌ لا طباعة — لا يزيد عدّاد إعادة الطباعة ولا يُصدر رقماً.
+         7.11: بقالب الوصل الخاص (Word.receipt) لا بقالب التقارير العام. */
+      on('[data-rcpword]', b => Actions.receiptWord(b.dataset.rcpword));
       on('[data-docedit]', b => Forms.document(b.dataset.docedit, m.id));
       on('[data-docview]', b => Screens.viewMedia((Repos.memberDocs.get(b.dataset.docview) || {}).mediaId));
       on('[data-idview]', () => Screens.viewMedia(m.idMediaId));
@@ -13809,7 +13882,8 @@ Views.finance = {
           </tbody></table>` : ''}
       </div></div>
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>حركة اليوم بالتفصيل</h3><div class="sp"></div>
-        ${todayPays.length ? `<button class="btn btn-sm" id="cashPrintAll">${svg(ICON.print, 15)} طباعة كل الوصولات (${todayPays.length})</button>` : ''}
+        ${todayPays.length ? `<button class="btn btn-sm" id="cashPrintAll">${svg(ICON.print, 15)} طباعة كل الوصولات (${todayPays.length})</button>
+          <button class="btn btn-sm" id="cashWordAll" title="كل وصل في صفحته">${svg(ICON.word, 15)} الوصولات إلى Word</button>` : ''}
         <button class="btn btn-sm" id="cashDayPrint">${svg(ICON.print, 15)} طباعة كشف اليوم</button>
         ${UI.wordButton('cashDayWord')}</div><div class="card-body">
         <h4 style="font-size:13px;margin:0 0 8px">المقبوض اليوم</h4>
@@ -13823,7 +13897,8 @@ Views.finance = {
               <td class="num"><strong>${Money.fmt(p.amount)}</strong></td>
               <td>${U.esc(PayMethods.label(p.method))}${Svc.cashbook.isCash(p.method) ? '' : ' <span class="pill">خارج الدرج</span>'}</td>
               <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">لم يُصدَر</span>'}</td>
-              <td class="ta-l"><button class="btn btn-sm" data-rcp="${p.id}">${svg(ICON.print, 13)} وصل</button></td></tr>`; }).join('')}
+              <td class="ta-l"><div class="t-actions"><button class="btn btn-sm" data-rcp="${p.id}">${svg(ICON.print, 13)} وصل</button>
+                <button class="btn btn-sm" data-rcpw="${p.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button></div></td></tr>`; }).join('')}
           </tbody><tfoot><tr><th colspan="3">الإجمالي</th><th class="num">${Money.fmt(U.sum(todayPays, p => p.amount))}</th>
             <th colspan="3" class="t-sub">منها نقداً ${Money.fmt(U.sum(todayPays.filter(p => Svc.cashbook.isCash(p.method)), p => p.amount))}</th></tr></tfoot></table>`
           : '<div class="t-sub">لم يُقبض شيء اليوم بعد.</div>'}
@@ -13882,6 +13957,8 @@ Views.finance = {
     if (ctc) ctc.onclick = () => FIN.open('capital');
     const pa = body.querySelector('#cashPrintAll');
     if (pa) pa.onclick = () => Actions.printDayReceipts(today);
+    const pw = body.querySelector('#cashWordAll');
+    if (pw) pw.onclick = async () => { pw.disabled = true; try { await Actions.wordDayReceipts(today); } finally { pw.disabled = false; } };
     const dp = body.querySelector('#cashDayPrint');
     const dayDoc = () => [`كشف صندوق ${D.fmt(today)}`, Print.cashDayHtml(today)];
     if (dp) dp.onclick = () => Print.open(...dayDoc());
@@ -18466,6 +18543,7 @@ Object.assign(Screens, {
           <td class="num">${rc ? (rc.voided ? `<span class="pill bad">${U.esc(rc.no)} مُبطَل</span>` : U.esc(rc.no)) : '<span class="t-sub">لم يُصدَر</span>'}</td>
           <td class="ta-l"><div class="t-actions">
             <button class="btn btn-sm" data-rcp="${pm.id}">${svg(ICON.print,13)} وصل</button>
+            <button class="btn btn-sm" data-rcpw="${pm.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button>
             ${pm.archived?'<span class="t-sub">ملغاة</span>':
             `<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}" title="إلغاء الدفعة">${svg(ICON.trash,14)}</button>`}</div></td></tr>`; }).join('')}
         </tbody></table>
@@ -18473,7 +18551,8 @@ Object.assign(Screens, {
         : '<div class="t-sub">لم تُسجَّل أي دفعة على هذه الفاتورة — لا يوجد ما يُطبع وصلاً.</div>'}
       ${sl.notes?`<h4 style="font-size:14px;margin:14px 0 6px">ملاحظات</h4><p style="margin:0">${U.esc(sl.notes)}</p>`:''}`,
       footer:`${!sl.archived && st.due>0?'<button class="btn btn-primary" id="slPay">قبض دفعة</button>':''}
-              ${lastPaid ? `<button class="btn" id="slPrint">${svg(ICON.print,15)} طباعة وصل آخر دفعة</button>` : ''}
+              ${lastPaid ? `<button class="btn" id="slPrint">${svg(ICON.print,15)} طباعة وصل آخر دفعة</button>
+                <button class="btn" data-rcpw="${lastPaid.id}">${svg(ICON.word,15)} تصدير الوصل إلى Word</button>` : ''}
               <div class="sp"></div><button class="btn" data-close>إغلاق</button>`,
       onMount(ov, h){
         const pay = ov.querySelector('#slPay');
@@ -18557,6 +18636,7 @@ Object.assign(Screens, {
             <td class="t-sub">${U.esc(pm.notes||'')}${pm.migrated?' <span class="chip chip-none">مرحّلة</span>':''}</td>
             <td class="ta-l"><div class="t-actions">
               <button class="btn btn-sm" data-rcp="${pm.id}">${svg(ICON.print,13)} وصل</button>
+              <button class="btn btn-sm" data-rcpw="${pm.id}" title="تصدير الوصل إلى Word">${svg(ICON.word, 13)} Word</button>
               ${pm.archived?'<span class="t-sub">ملغاة</span>':`<button class="btn btn-sm btn-icon btn-danger" data-delpm="${pm.id}">${svg(ICON.trash,14)}</button>`}</div></td></tr>`; }).join('')}
           </tbody></table>
           <div class="t-sub" style="margin-top:8px">لكل دفعة وصل واحد برقم واحد. إعادة الطباعة تزيد عدّاد النسخ ولا تُنشئ مالاً.</div>`
@@ -19195,63 +19275,83 @@ const Print = {
       .doc{padding:0}
       ${UI.docCss('body')}
       </style></head><body>${UI.printPrepare(html)}
-      <script>window.onload=function(){setTimeout(function(){window.print();},${o.slip ? 250 : 400});}<\/script>
       </body></html>`);
     doc.close();
+    UI.printWhenLoaded(w, doc, o.slip ? 250 : 400);
     return w;
   },
 
-  /* -------------------------------- وصل -------------------------------- */
-  receiptHtml(receipt, opts){
+  /* -------------------------------- وصل --------------------------------
+     7.11: `receiptModel` هو القارئ الوحيد للّقطة. الورقة (`receiptHtml`) وملف
+     Word (`Word.receipt`) يُبنيان منه — فلا يمكن أن يختلف مبلغٌ أو اسمٌ أو رقم
+     بين ما طُبع وما صُدِّر. ولا يُحسب فيه شيء جديد: كل رقم كما جُمِّد يوم الإصدار. */
+  receiptModel(receipt, opts){
     const o = opts || {};
     const s = receipt.snapshot || {};
     const g = s.gym || {}, mem = s.member || {}, doc = s.doc || {}, pay = s.payment || {};
-    const slip = (o.format || receipt.format) === 'slip';
-    const copies = Number(receipt.reprints) || 0;
+    const issued = String(receipt.issuedAt || '');
+    return {
+      no:receipt.no, voided:!!receipt.voided, voidReason:receipt.voidReason || '',
+      slip:(o.format || receipt.format) === 'slip',
+      date:issued.slice(0, 10), time:issued.slice(11, 16), copies:Number(receipt.reprints) || 0,
+      gym:{ name:g.name || Brand.name(), subtitle:g.subtitle || '',
+            contact:[g.phone, g.address, g.instagram ? '@' + String(g.instagram).replace(/^@/, '') : ''].filter(x => U.norm(x)).join(' — '),
+            footer:g.footer || Settings.get('receiptNote') || '' },
+      member:{ name:mem.name || '—', code:mem.code || '—' },
+      doc:{ kind:doc.kind, title:doc.title || '—', detail:doc.detail || '', lines:doc.lines || [],
+            price:doc.price, discount:doc.discount || 0, total:doc.total },
+      methodLabel:pay.methodLabel || PayMethods.label(pay.method),
+      amount:pay.amount, paidBefore:pay.paidBefore || 0, remaining:pay.remaining || 0,
+      showBalance:!!Settings.get('receiptShowBalance'),
+      operator:receipt.issuedBy || s.operator || '—'
+    };
+  },
+  receiptHtml(receipt, opts){
+    const m = this.receiptModel(receipt, opts);
+    const slip = m.slip;
     const logo = Brand.logoHtml(slip ? Brand.BOX.slip : Brand.BOX.receipt, true);
-    const contact = [g.phone, g.address, g.instagram ? '@' + String(g.instagram).replace(/^@/, '') : ''].filter(x => U.norm(x)).join(' — ');
-    const lines = (doc.lines || []);
+    const lines = m.doc.lines;
     return `<div class="doc ${slip ? 'slip' : ''}">
       <div class="doc-head">
         <div class="doc-head-brand">${logo}
-          <div><strong>${U.esc(g.name || Brand.name())}</strong>
-            ${g.subtitle ? `<span>${U.esc(g.subtitle)}</span>` : ''}
-            ${contact ? `<span>${U.esc(contact)}</span>` : ''}</div></div>
+          <div><strong>${U.esc(m.gym.name)}</strong>
+            ${m.gym.subtitle ? `<span>${U.esc(m.gym.subtitle)}</span>` : ''}
+            ${m.gym.contact ? `<span>${U.esc(m.gym.contact)}</span>` : ''}</div></div>
         <div class="doc-head-meta"><strong>وصل قبض</strong>
-          <span>رقم <b class="num">${U.esc(receipt.no)}</b></span>
-          <span class="num">${U.esc(D.fmt(String(receipt.issuedAt).slice(0, 10)))} — ${U.esc(String(receipt.issuedAt).slice(11, 16))}</span></div>
+          <span>رقم <b class="num">${U.esc(m.no)}</b></span>
+          <span class="num">${U.esc(D.fmt(m.date))} — ${U.esc(m.time)}</span></div>
       </div>
 
-      ${receipt.voided ? '<div class="doc-total" style="border-style:dashed">هذا الوصل مُبطَل — أُلغيت الدفعة المرتبطة به</div>' : ''}
+      ${m.voided ? '<div class="doc-total" style="border-style:dashed">هذا الوصل مُبطَل — أُلغيت الدفعة المرتبطة به</div>' : ''}
 
       <dl class="doc-kv">
-        <dt>استلمنا من</dt><dd>${U.esc(mem.name || '—')}</dd>
-        <dt>الكود</dt><dd class="num">${U.esc(mem.code || '—')}</dd>
-        <dt>البيان</dt><dd>${U.esc(doc.title || '—')}</dd>
-        <dt>طريقة الدفع</dt><dd>${U.esc(pay.methodLabel || PayMethods.label(pay.method))}</dd>
+        <dt>استلمنا من</dt><dd>${U.esc(m.member.name)}</dd>
+        <dt>الكود</dt><dd class="num">${U.esc(m.member.code)}</dd>
+        <dt>البيان</dt><dd>${U.esc(m.doc.title)}</dd>
+        <dt>طريقة الدفع</dt><dd>${U.esc(m.methodLabel)}</dd>
       </dl>
-      ${doc.detail ? `<div style="margin-bottom:10px">${U.esc(doc.detail)}</div>` : ''}
+      ${m.doc.detail ? `<div style="margin-bottom:10px">${U.esc(m.doc.detail)}</div>` : ''}
 
       ${lines.length ? `<table class="doc-tbl"><thead><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>المجموع</th></tr></thead>
         <tbody>${lines.map(l => `<tr><td>${U.esc(l.name)}</td><td class="num">${U.round2(l.qty)}</td>
           <td class="num">${Money.fmt(l.unitPrice)}</td><td class="num">${Money.fmt(l.total)}</td></tr>`).join('')}</tbody></table>` : ''}
 
       <table class="doc-tbl doc-sums"><tbody>
-        <tr><td>قيمة ${doc.kind === 'sale' ? 'الفاتورة' : 'الاشتراك'}</td><td class="num ta-l">${Money.fmt(doc.price)}</td></tr>
-        ${doc.discount ? `<tr><td>الخصم</td><td class="num ta-l">− ${Money.fmt(doc.discount)}</td></tr>` : ''}
-        <tr><td>الإجمالي المستحق</td><td class="num ta-l">${Money.fmt(doc.total)}</td></tr>
-        ${pay.paidBefore ? `<tr><td>المدفوع سابقاً</td><td class="num ta-l">${Money.fmt(pay.paidBefore)}</td></tr>` : ''}
+        <tr><td>قيمة ${m.doc.kind === 'sale' ? 'الفاتورة' : 'الاشتراك'}</td><td class="num ta-l">${Money.fmt(m.doc.price)}</td></tr>
+        ${m.doc.discount ? `<tr><td>الخصم</td><td class="num ta-l">− ${Money.fmt(m.doc.discount)}</td></tr>` : ''}
+        <tr><td>الإجمالي المستحق</td><td class="num ta-l">${Money.fmt(m.doc.total)}</td></tr>
+        ${m.paidBefore ? `<tr><td>المدفوع سابقاً</td><td class="num ta-l">${Money.fmt(m.paidBefore)}</td></tr>` : ''}
       </tbody></table>
 
-      <div class="doc-total"><span>المبلغ المستلم</span><span class="num">${Money.fmt(pay.amount)}</span></div>
-      ${Settings.get('receiptShowBalance') && pay.remaining > 0
-        ? `<div class="doc-total" style="border-width:1px"><span>المتبقّي بعد هذه الدفعة</span><span class="num">${Money.fmt(pay.remaining)}</span></div>` : ''}
+      <div class="doc-total"><span>المبلغ المستلم</span><span class="num">${Money.fmt(m.amount)}</span></div>
+      ${m.showBalance && m.remaining > 0
+        ? `<div class="doc-total" style="border-width:1px"><span>المتبقّي بعد هذه الدفعة</span><span class="num">${Money.fmt(m.remaining)}</span></div>` : ''}
 
       ${!slip ? `<div class="doc-sign"><div>توقيع المستلمة</div><div>توقيع المشتركة</div></div>` : ''}
       <div class="doc-foot">
-        ${U.esc(g.footer || Settings.get('receiptNote') || '')}
-        <div>سجّلت الاستلام: ${U.esc(receipt.issuedBy || s.operator || '—')}</div>
-        ${copies > 0 ? `<div class="doc-copy">نسخة مُعادة الطباعة رقم ${copies + 1} — ليست مطالبة بمبلغ جديد</div>` : ''}
+        ${U.esc(m.gym.footer)}
+        <div>سجّلت الاستلام: ${U.esc(m.operator)}</div>
+        ${m.copies > 0 ? `<div class="doc-copy">نسخة مُعادة الطباعة رقم ${m.copies + 1} — ليست مطالبة بمبلغ جديد</div>` : ''}
       </div>
     </div>`;
   },
@@ -19328,6 +19428,29 @@ Actions.printReceipt = async function(receiptId, format){
   await Svc.receipts.markPrinted(receiptId).catch(e => Log.warn('تعذّر تسجيل الطباعة', e));
   return w;
 };
+/* --------------------------- الوصل إلى Word (7.11) ---------------------------
+   بجانب كل «طباعة الوصل» في النظام: «تصدير الوصل إلى Word». المصدر لقطة الوصل
+   نفسها (Print.receiptModel)، والرسالة تقول ما وقع — «تم تصدير الوصل إلى Word»
+   — لا «طُبع». ولا يزيد عدّاد الطباعة: ملف Word ليس ورقة سُلّمت. */
+Actions.receiptWord = async function(receiptId){
+  const r = Repos.receipts.get(receiptId);
+  if (!r){ UI.toast('الوصل غير موجود','err'); return null; }
+  try {
+    const out = await Word.receipt(r);
+    if (!Desktop.on()) UI.toast('تم تصدير الوصل إلى Word', 'ok', 5000, { where:Word.receiptFileName(out.model) });
+    return out;
+  } catch(e){
+    Log.error('تعذّر تصدير الوصل إلى Word', e);
+    UI.toast('تعذّر تصدير الوصل إلى Word: ' + ((e && e.message) || ''), 'err', 8000);
+    return null;
+  }
+};
+/* من الدفعة: الوصل يُصدَر برقمه إن لم يكن صدر (كما عند الطباعة تماماً) ثم يُصدَّر */
+Actions.receiptWordForPayment = async function(paymentId){
+  const r = await guard(null, () => Svc.receipts.ensure(paymentId));
+  if (!r) return null;
+  return Actions.receiptWord(r.id);
+};
 /* الطريق المعتاد من الشاشات: دفعة ⇒ وصل (يُصدَر مرة واحدة) ⇒ طباعة */
 Actions.printReceiptForPayment = async function(paymentId){
   const r = await guard(null, () => Svc.receipts.ensure(paymentId));
@@ -19356,7 +19479,10 @@ Actions.saveAndPrintReceipt = async function(paymentId, okMsg){
     return null;
   }
   const w = await Actions.printReceipt(r.id, Settings.get('receiptFormat') || 'a4');
-  if (!w) UI.toast(`تمّ الحفظ ووصلها رقم ${r.no} — لم تُفتح نافذة الطباعة، وتعيدينها من سجل الدفعات متى شئتِ`,'warn', 10000);
+  if (!w) UI.toast(`تمّ الحفظ ووصلها رقم ${r.no} — لم تُفتح نافذة الطباعة، وتعيدينها من سجل الدفعات متى شئتِ`,'warn', 10000,
+    { actions:[{ label:'تصدير الوصل إلى Word', onClick:() => Actions.receiptWord(r.id) }] });
+  else UI.toast(`الوصل رقم ${r.no}`, 'ok', 9000,
+    { actions:[{ label:'تصدير الوصل إلى Word', onClick:() => Actions.receiptWord(r.id) }] });
   return r;
 };
 /* آخر دفعة على مستند — ما يُطبع وصله بعد الحفظ مباشرة */
@@ -19434,6 +19560,33 @@ Actions.printDayReceipts = async function(date){
   for (const r of receipts) await Svc.receipts.markPrinted(r.id).catch(e => Log.warn('تعذّر تسجيل الطباعة', e));
   UI.toast(`طُبعت ${receipts.length} وصولات`, 'ok');
   renderRoute();
+};
+
+/* وصولات اليوم إلى Word: الوصولات نفسها (تُصدَر ما لم يُصدَر، بلا مالٍ جديد)،
+   كلٌّ بقالب الوصل في صفحته — ولا يُحسب شيء منها طباعة. */
+Actions.wordDayReceipts = async function(date){
+  const pays = U.sortBy(Repos.payments.list().filter(x => x.date === date), x => x.createdAt);
+  if (!pays.length) return UI.toast('لا مقبوضات اليوم','warn');
+  const receipts = [];
+  for (const p of pays){ const r = await guard(null, () => Svc.receipts.ensure(p.id)); if (r) receipts.push(r); }
+  if (!receipts.length) return UI.toast('تعذّر إصدار الوصولات','err');
+  try {
+    const blocks = [];
+    receipts.forEach((r, i) => {
+      blocks.push(...Word.receiptBlocks(Print.receiptModel(r, { format:'a4' })));
+      if (i < receipts.length - 1) blocks.push({ type:'break' });
+    });
+    const blob = await Word.build({ title:'وصولات القبض', subtitle:`${receipts.length} وصلاً — ${D.fmt(date)}`,
+      dateText:`${D.dayName(date)} ${D.fmt(date)}`, logoMm:22, blocks, landscape:false });
+    await UI.download(blob, `وصولات-${date}.docx`, 'word', { message:`تم تصدير ${receipts.length} وصولات إلى Word` });
+    if (!Desktop.on()) UI.toast(`تم تصدير ${receipts.length} وصولات إلى Word`);
+    Audit.log('receipt','word',`تصدير وصولات ${D.fmt(date)} إلى Word (${receipts.length}) — ليست طباعة`).catch(() => {});
+    return blob;
+  } catch(e){
+    Log.error('تعذّر تصدير الوصولات إلى Word', e);
+    UI.toast('تعذّر تصدير الوصولات إلى Word: ' + ((e && e.message) || ''), 'err', 8000);
+    return null;
+  }
 };
 
 /* ---------------------------- كشف حساب شريكة ---------------------------
@@ -20531,6 +20684,14 @@ async function boot(){
     else if (pick === 'att') go('attendance');
   };
   $('btnQuickBackup').onclick = () => Actions.exportBackup(true);
+  /* «تصدير الوصل إلى Word» في كل سطحٍ يطبع وصلاً — مستمعٌ واحد، فلا ينساه سطحٌ جديد */
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest && e.target.closest('[data-rcpw]');
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    b.disabled = true;
+    Actions.receiptWordForPayment(b.dataset.rcpw).finally(() => { b.disabled = false; });
+  });
   $('btnBell').onclick = e => { e.stopPropagation(); Screens.notifications(); };
   /* المظهر لكل من يستعمل الجهاز: فاتح ⟵ داكن ⟵ حسب الجهاز */
   $('btnTheme').onclick = async () => {

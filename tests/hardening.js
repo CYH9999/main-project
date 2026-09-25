@@ -770,7 +770,9 @@ module.exports = function register({ group, record, TESTS_JS }) {
           };
         };
         const results = {};
-        const run = async (label, open, sel, wantLandscape) => {
+        /* refFn: للمستند الذي له قالب Word خاصّ (الوصل، 7.11) لا يمرّ بـ`fromPrint` —
+           يُعطى المستند المطبوع نفسه مرجعاً، فيبقى الفحص «كل خلية مطبوعة موجودة في Word». */
+        const run = async (label, open, sel, wantLandscape, refFn) => {
           const n0 = words().length, s0 = seen.length;
           await open();
           await sleep(250);
@@ -780,8 +782,9 @@ module.exports = function register({ group, record, TESTS_JS }) {
           btn.click();
           for (let i = 0; i < 80 && words().length === n0; i++) await sleep(100);
           const f = words().slice(-1)[0];
-          if (words().length === n0 || !seen[s0]) { results[label] = { error: 'لم يُحفظ ملف' }; }
-          else results[label] = Object.assign(inspect(f, seen[s0]), { wantLandscape });
+          const ref = seen[s0] || (refFn ? refFn() : null);
+          if (words().length === n0 || !ref) { results[label] = { error: 'لم يُحفظ ملف' }; }
+          else results[label] = Object.assign(inspect(f, ref), { wantLandscape });
           while (TG.UI.stack.length) TG.UI.stack[TG.UI.stack.length - 1].close();
         };
         const go = async (route, params) => { TG.go(route, params); TG.renderRoute(); await sleep(200); };
@@ -794,7 +797,8 @@ module.exports = function register({ group, record, TESTS_JS }) {
 
         await run('قائمة المشتركات', () => go('members'), '#mWord', true);
         await run('كشف حساب مشتركة', () => go('member', { id: m.id, tab: 'money' }), '[data-a="statementWord"]', false);
-        await run('وصل قبض', () => go('member', { id: m.id, tab: 'money' }), `[data-rcpword="${rcp.id}"]`, false);
+        await run('وصل قبض', () => go('member', { id: m.id, tab: 'money' }), `[data-rcpword="${rcp.id}"]`, false,
+          () => ({ t: `وصل ${rcp.no}`, h: TG.Print.receiptHtml(TG.Repos.receipts.get(rcp.id), { format: 'a4' }) }));
         await run('الجدول الأسبوعي', () => go('trainings'), '#tWord', true);
         await run('كشف الرواتب', () => go('payroll'), '#pWord', true);
         await run('كشف الصندوق اليومي', () => go('finance', { tab: 'cash' }), '#cashDayWord', false);

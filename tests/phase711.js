@@ -789,6 +789,129 @@ module.exports = function register({ group, record, TESTS_JS }) {
     rows.push({ name: 'ولا معالج سطريّ رفضته السياسة', pass: !csp.some(t => /inline event handler|script-src/.test(t)), detail: csp.slice(0, 2).join(' | ') });
     record('تدقيق 7.11 — أزرار كانت لا تعمل في التطبيق المثبَّت', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 12) الوصل إلى Word — قالبه، ومصدره الواحد، وكل سطحٍ يطبع وصلاً          *
+   * ===================================================================== */
+  group('Word 7.11 — الوصل بقالبه الخاص', async (browser) => {
+    const srv = await serve();
+    const { rows, ok } = collect();
+    let errs = [];
+    try {
+      const a = await open(browser, srv);
+      errs = a.errors;
+      const r = await a.page.evaluate(async () => {
+        const TG = window.TG, H = window.TGH, G = window.TG711, out = {};
+        const { Svc, Repos, D, Money, Brand, Print, Actions, Word } = TG;
+        await Brand.setMedia('logo', await H.makeFile({ type: 'png', w: 512, h: 512 }));
+        /* دفعة حقيقية على اشتراك حقيقي — من الخدمات نفسها */
+        const plan = Repos.plans.list()[0];
+        const m = (await Svc.members.create({ name: 'رُقيّة الجبوري', phone: '07712345678' })).rec;
+        const sub = await Svc.subs.create({ memberId: m.id, planId: plan.id, startDate: D.today(), price: 45000, discount: 5000,
+          paidAmount: 25000, paymentMethod: 'cash' });
+        const pay = Actions.lastPaymentOf('subscription', (sub.rec || sub).id);
+        out.payAmount = pay.amount;
+        const FS = window.__TG_FS__;
+        const toasts = H.captureToasts();
+        const words0 = FS.files.filter(f => f.category === 'word').length;
+        const res = await Actions.receiptWordForPayment(pay.id);
+        await G.tick(200);
+        toasts.stop();
+        const rc = Svc.receipts.forPayment(pay.id);
+        out.no = rc.no; out.reprints = Number(rc.reprints) || 0; out.lastPrinted = rc.lastPrintedAt;
+        const model = Print.receiptModel(rc, { format: 'a4' });
+        out.model = { no: model.no, member: model.member.name, amount: model.amount, total: model.doc.total, method: model.methodLabel };
+        out.meta = res && res.blob && res.blob.tgMeta;
+        const f = FS.files.filter(x => x.category === 'word').slice(-1)[0];
+        out.saved = FS.files.filter(x => x.category === 'word').length === words0 + 1;
+        out.file = f && { name: f.name, folder: f.folder };
+        out.toast = toasts.list.map(t => t.msg);
+        /* الحزمة */
+        const bin = atob(f.b64), u = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        const dv = new DataView(u.buffer), z = {}; let p = 0;
+        while (p + 30 <= u.length && dv.getUint32(p, true) === 0x04034b50) {
+          const size = dv.getUint32(p + 18, true), nl = dv.getUint16(p + 26, true), xl = dv.getUint16(p + 28, true);
+          z[new TextDecoder().decode(u.subarray(p + 30, p + 30 + nl))] = new TextDecoder().decode(u.subarray(p + 30 + nl + xl, p + 30 + nl + xl + size));
+          p += 30 + nl + xl + size;
+        }
+        out.pk = bin.slice(0, 2) === 'PK';
+        out.parts = Object.keys(z);
+        const doc = z['word/document.xml'] || '', hdr = z['word/header1.xml'] || '';
+        out.badXml = Object.keys(z).filter(n => /\.(xml|rels)$/.test(n) && new DOMParser().parseFromString(z[n], 'application/xml').getElementsByTagName('parsererror').length);
+        const text = [...new DOMParser().parseFromString(doc, 'application/xml').getElementsByTagName('w:t')].map(t => t.textContent).join(' ');
+        const htext = [...new DOMParser().parseFromString(hdr, 'application/xml').getElementsByTagName('w:t')].map(t => t.textContent).join(' ');
+        out.hasNo = text.includes(rc.no) && htext.includes(rc.no);
+        out.hasMember = text.includes('رُقيّة الجبوري');
+        out.hasAmount = text.includes(Money.fmt(pay.amount));
+        out.hasTotal = text.includes(Money.fmt(model.doc.total));
+        out.hasMethod = text.includes(model.methodLabel);
+        out.hasPeriod = text.includes(model.doc.detail);
+        out.noPhone = !text.includes('07712345678');
+        out.title = htext.includes('وصل قبض');
+        out.brand = htext.includes(Brand.name());
+        out.rtl = /<w:bidi\/>/.test(doc) && /<w:bidiVisual\/>/.test(doc) && /<w:rtl\/>/.test(doc);
+        out.portrait = !/w:orient="landscape"/.test(doc);
+        out.logo = /r:embed="rIdLogo"/.test(hdr) && out.parts.includes('word/media/logo.png');
+        out.accent = out.meta && out.meta.accent;
+        out.notReprint = !text.includes('مُعادة الطباعة');
+        /* الورقة والملف من مصدر واحد: كل خلية في الوصل المطبوع موجودة في Word */
+        const host = document.createElement('div'); host.innerHTML = Print.receiptHtml(rc, { format: 'a4' });
+        const cells = [...host.querySelectorAll('td,dd')].map(c => c.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+        out.lost = cells.filter(c => !text.replace(/\s+/g, ' ').includes(c));
+        out.audit = Repos.audit.list(true).some(x => x.entity === 'receipt' && x.action === 'word' && x.entityId === rc.id);
+        /* كل سطحٍ يطبع وصلاً فيه «Word» بجانبه */
+        TG.go('desk'); await G.tick(300);
+        out.deskBtn = !!document.querySelector(`[data-rcpw="${pay.id}"]`);
+        TG.go('member', { id: m.id, tab: 'money' }); await G.tick(300);
+        out.memberBtns = !!document.querySelector(`[data-rcpw="${pay.id}"]`) && !!document.querySelector(`[data-rcpword="${rc.id}"]`);
+        TG.go('finance', { tab: 'cash' }); await G.tick(300);
+        out.cashBtn = !!document.querySelector(`[data-rcpw="${pay.id}"]`) && !!document.querySelector('#cashWordAll');
+        TG.Screens.paymentLedger('subscription', (sub.rec || sub).id); await G.tick(250);
+        out.ledgerBtn = !!document.querySelector(`.modal [data-rcpw="${pay.id}"]`);
+        const n1 = FS.files.filter(x => x.category === 'word').length;
+        document.querySelector(`.modal [data-rcpw="${pay.id}"]`).click();
+        await G.until(() => FS.files.filter(x => x.category === 'word').length > n1, 5000);
+        out.ledgerSaved = FS.files.filter(x => x.category === 'word').length === n1 + 1;
+        TG.UI.stack.slice().forEach(h => h.close());
+        /* وصولات اليوم في ملفٍ واحد، كلٌّ بصفحته */
+        const n2 = FS.files.filter(x => x.category === 'word').length;
+        await Actions.wordDayReceipts(D.today());
+        const day = FS.files.filter(x => x.category === 'word').slice(-1)[0];
+        out.daySaved = FS.files.filter(x => x.category === 'word').length === n2 + 1 && /^وصولات-/.test(day.name);
+        const todays = Repos.payments.list().filter(x => x.date === D.today()).length;
+        const dbin = atob(day.b64);
+        out.dayBreaks = (dbin.match(/w:type="page"/g) || []).length;
+        out.todays = todays;
+        out.reprintsAfter = Number(Svc.receipts.forPayment(pay.id).reprints) || 0;
+        return out;
+      });
+      ok('Word من دفعة اشتراك حقيقية: ملف .docx حقيقي بأجزائه وXML سليم', r.pk && r.saved && !r.badXml.length
+         && ['word/document.xml', 'word/styles.xml', 'word/header1.xml', 'word/footer1.xml', '[Content_Types].xml'].every(p => r.parts.includes(p)),
+         `${r.file && r.file.name} ${r.badXml.join(',')}`);
+      ok('في مجلّد Exports\\Word، واسمه يحمل رقم الوصل', r.file && /Word/.test(r.file.folder) && r.file.name.includes(r.no), JSON.stringify(r.file));
+      ok('الرسالة: «تم تصدير الوصل إلى Word» — لا «طُبع»', r.toast.some(t => t === 'تم تصدير الوصل إلى Word') && !r.toast.some(t => /طُبع/.test(t)),
+         r.toast.join(' | '));
+      ok('رقم الوصل في الترويسة والمتن', r.hasNo, r.no);
+      ok('المشتركة الصحيحة', r.hasMember);
+      ok('المبلغ الصحيح = مبلغ الدفعة نفسها', r.hasAmount && r.model.amount === r.payAmount, `${r.model.amount} / ${r.payAmount}`);
+      ok('والإجمالي المستحق وطريقة الدفع وفترة الاشتراك', r.hasTotal && r.hasMethod && r.hasPeriod);
+      ok('ولا رقم هاتف (قاعدة الخصوصية نفسها في الورقة)', r.noPhone);
+      ok('ترويسة الهوية: اسم النادي و«وصل قبض» والشعار', r.brand && r.title && r.logo);
+      ok('عربيّ من اليمين: قسم وفقرات bidi وجداول bidiVisual', r.rtl);
+      ok('عمودي (الوصل ليس جدولاً عريضاً)', r.portrait);
+      ok('ولون الهوية مقروءٌ من الشعار أو اللوحة', /^[0-9A-F]{6}$/.test(r.accent || ''), r.accent);
+      ok('كل خلية في الوصل المطبوع موجودة في Word — مصدرٌ واحد', r.lost.length === 0, r.lost.join(' | '));
+      ok('Word ليس طباعة: لا يزيد عدّاد النسخ ولا يُكتب «مُعادة الطباعة»', r.reprints === 0 && !r.lastPrinted && r.notReprint && r.reprintsAfter === 0);
+      ok('ويُسجَّل حدث «تصدير Word» للوصل', r.audit);
+      ok('زرّ Word بجانب الوصل: في الاستقبال، وملف المشتركة، وكشف الصندوق، وسجل الدفعات',
+         r.deskBtn && r.memberBtns && r.cashBtn && r.ledgerBtn, JSON.stringify([r.deskBtn, r.memberBtns, r.cashBtn, r.ledgerBtn]));
+      ok('والزرّ في سجل الدفعات يحفظ ملفاً فعلاً', r.ledgerSaved);
+      ok('وصولات اليوم في ملف واحد، كلّ وصلٍ في صفحته', r.daySaved && r.dayBreaks === r.todays - 1, `${r.dayBreaks} فاصل / ${r.todays} دفعة`);
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('Word 7.11 — الوصل بقالبه الخاص', rows, errs);
+  });
 };
 
 /* أدوات الصفحة لهذه المجموعات */
