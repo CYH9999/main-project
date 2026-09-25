@@ -912,6 +912,114 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('Word 7.11 — الوصل بقالبه الخاص', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 13) المظهر: فاتح · داكن · حسب الجهاز — والورق وWord والمال لا يعرفونه     *
+   * ===================================================================== */
+  group('المظهر 7.11 — فاتح وداكن وحسب الجهاز', async (browser) => {
+    const srv = await serve();
+    const { rows, ok } = collect();
+    let errs = [];
+    try {
+      /* الجهاز يفضّل الداكن */
+      const a = await open(browser, srv, { context: { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' } });
+      errs = a.errors;
+      const lum = `(c => { const m = String(c).match(/\\d+(\\.\\d+)?/g).map(Number); const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); };
+        return .2126 * f(m[0]) + .7152 * f(m[1]) + .0722 * f(m[2]); })`;
+      const r = await a.page.evaluate(async (LUM) => {
+        const TG = window.TG, H = window.TGH, G = window.TG711, out = {};
+        const L = eval(LUM);
+        const ratio = (x, y) => { const a = L(x), b = L(y); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05); };
+        const cs = el => getComputedStyle(el);
+        out.defaultMode = TG.Theme.mode();
+        out.systemEff = document.documentElement.getAttribute('data-theme');
+        await TG.Seed.loadDemo(10);
+        await TG.Brand.setMedia('logo', await H.makeFile({ type: 'png', w: 600, h: 600, alpha: true }));
+        const fp0 = H.fingerprint(), money0 = JSON.stringify(H.money());
+        const wordLight = await (async () => { await TG.Theme.set('light'); const t = await TG.Word.theme(); return [t.ink, t.plum, t.line, t.muted].join(','); })();
+        out.lightBg = cs(document.body).backgroundColor;
+        TG.go('members'); await G.tick(250);
+        /* داكن */
+        await TG.Theme.set('dark');
+        TG.go('members'); await G.tick(250);
+        const body = cs(document.body);
+        out.darkBg = body.backgroundColor; out.darkInk = body.color;
+        out.bodyContrast = ratio(body.color, body.backgroundColor);
+        const card = document.querySelector('.card');
+        out.cardBg = cs(card).backgroundColor;
+        const th = document.querySelector('table.tbl th');
+        out.thContrast = th ? ratio(cs(th).color, cs(th).backgroundColor) : 0;
+        const btn = document.querySelector('#btnQuickAdd');
+        out.btnContrast = ratio(cs(btn).color, cs(btn).backgroundColor);
+        const inp = document.querySelector('#globalSearch');
+        out.inpContrast = ratio(cs(inp).color, cs(inp).backgroundColor);
+        out.themeBtn = !!document.querySelector('#btnTheme svg');
+        /* الهوية: الشعار الشفّاف مرئيّ على لوحه في المعاينة */
+        TG.go('settings', { sec: 'brand' }); await G.tick(250);
+        const prev = document.querySelector('.brand-prev[data-brand-slot="logo"]');
+        out.plate = prev ? L(cs(prev).backgroundColor) : 0;
+        out.sidebarLogo = !!document.querySelector('.brand [data-brand-slot="logo"] img');
+        /* Word لا يعرف المظهر */
+        const t = await TG.Word.theme();
+        out.wordSame = [t.ink, t.plum, t.line, t.muted].join(',') === wordLight;
+        out.wordDark = [t.ink, t.plum, t.line, t.muted].join(',');
+        /* الطباعة لا تعرفه: وضع الطباعة يعيد لوحة الفاتح، والمستند ورق */
+        const stub = TG.Desktop.call;
+        let during = null;
+        TG.Desktop.call = async (cmd, args) => {
+          if (cmd === 'tg_print') {
+            const root = document.getElementById('tgPrintRoot');
+            during = { surface: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
+                       docColor: root ? cs(root.querySelector('.doc') || root).color : '', rootTheme: root && root.getAttribute('data-theme'),
+                       bodyBg: cs(document.body).backgroundColor };
+            return true;
+          }
+          return stub.call(TG.Desktop, cmd, args);
+        };
+        const m = TG.Repos.members.list()[0];
+        TG.Print.open('كشف', TG.Print.statementHtml(m.id));
+        await G.until(() => during, 5000);
+        TG.Desktop.call = stub;
+        if (TG.UI._printUndo) TG.UI._printUndo();
+        out.print = during;
+        /* حسب الجهاز: يتبع تفضيل النظام */
+        await TG.Theme.set('system');
+        out.systemNow = document.documentElement.getAttribute('data-theme');
+        /* المال والبيانات لم تتغيّر بتبديل المظهر */
+        const fp1 = H.fingerprint();
+        out.dataSame = H.diff(fp0, fp1).filter(x => x !== 'meta').length === 0 && JSON.stringify(H.money()) === money0;
+        await TG.Theme.set('dark');
+        out.stored = TG.Settings.get('theme'); out.ls = localStorage.getItem('tg_theme');
+        return out;
+      }, lum);
+      ok('الافتراضي «حسب الجهاز»، والجهاز يفضّل الداكن ⟵ داكن', r.defaultMode === 'system' && r.systemEff === 'dark', `${r.defaultMode}/${r.systemEff}`);
+      ok('الفاتح: خلفية فاتحة', /rgb\(246, 242, 245\)/.test(r.lightBg), r.lightBg);
+      ok('الداكن: خلفية داكنة ونصّ فاتح بتباين ≥ 7:1', r.bodyContrast >= 7 && r.darkBg !== r.lightBg, `${r.bodyContrast.toFixed(2)} ${r.darkBg}/${r.darkInk}`);
+      ok('والبطاقة سطحٌ داكن لا أبيض', r.cardBg !== 'rgb(255, 255, 255)', r.cardBg);
+      ok('رؤوس الجداول مقروءة (≥ 4.5:1)', r.thContrast >= 4.5, r.thContrast.toFixed(2));
+      ok('الزرّ الأساسي والحقول مقروءة (≥ 4.5:1)', r.btnContrast >= 4.5 && r.inpContrast >= 4.5, `${r.btnContrast.toFixed(2)}/${r.inpContrast.toFixed(2)}`);
+      ok('زرّ المظهر في الشريط العلوي', r.themeBtn);
+      ok('الشعار الشفّاف على لوحٍ فاتح في المعاينة الداكنة، ومرئيّ في الشريط', r.plate > 0.8 && r.sidebarLogo, r.plate);
+      ok('Word بألوان الورق نفسها في الداكن', r.wordSame, r.wordDark);
+      ok('الطباعة في الداكن: لوحة الفاتح والمستند أسود على أبيض',
+         !!r.print && r.print.surface.toUpperCase() === '#FFFFFF' && r.print.rootTheme === 'light' && /rgb\(0, 0, 0\)/.test(r.print.docColor),
+         JSON.stringify(r.print));
+      ok('«حسب الجهاز» يتبع تفضيل النظام', r.systemNow === 'dark');
+      ok('تبديل المظهر لا يمسّ بيانات ولا مالاً', r.dataSame);
+      ok('التفضيل محفوظ على القرص ونسخته المحلية', r.stored === 'dark' && r.ls === 'dark');
+      await a.page.reload({ waitUntil: 'domcontentloaded' });
+      await boot(a.page);
+      const after = await a.page.evaluate(() => ({ t: document.documentElement.getAttribute('data-theme'), m: window.TG.Theme.mode() }));
+      ok('ويبقى بعد إعادة التشغيل', after.t === 'dark' && after.m === 'dark', JSON.stringify(after));
+      await a.ctx.close();
+      /* والجهاز يفضّل الفاتح */
+      const b = await open(browser, srv, { context: { viewport: { width: 1280, height: 800 }, colorScheme: 'light' } });
+      const lightSys = await b.page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+      ok('والجهاز يفضّل الفاتح ⟵ فاتح', lightSys === 'light', lightSys);
+      await b.ctx.close();
+    } finally { srv.close(); }
+    record('المظهر 7.11 — فاتح وداكن وحسب الجهاز', rows, errs);
+  });
 };
 
 /* أدوات الصفحة لهذه المجموعات */
