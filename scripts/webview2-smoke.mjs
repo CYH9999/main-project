@@ -7,7 +7,7 @@
    كل نمطٍ سطريّ هناك وحده.
 
    هنا يُشغَّل **الملف التنفيذي المثبَّت** على مشغّل ويندوز، ويُفتح منفذ تصحيح
-   WebView2 بالطريقة الموثّقة (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS)، ويتّصل
+   WebView2 بالطرق الموثّقة (متغيّر البيئة وسياسة AdditionalBrowserArguments)، ويتّصل
    Playwright بالصفحة الحقيقية عبر CDP، ثم يُقاس ما يُرسم:
 
      · نمطٌ سطريّ يُطبَّق فعلاً (السياسة المطبَّقة تسمح بالأنماط)
@@ -45,19 +45,28 @@ const ps = cmd => {
     { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] }); }
   catch (e) { return `(تعذّر: ${e.message})`; }
 };
-/* طريقان موثّقان لتمرير وسائط المتصفح إلى WebView2، ويُستعمل الاثنان:
+/* تمرير وسائط المتصفح إلى WebView2 — ثلاثة طرق موثّقة، تُستعمل كلّها:
      · متغيّر البيئة WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-     · تجاوز المحمِّل في السجلّ لكل ملف تنفيذي (HKCU\…\WebView2\AdditionalBrowserArguments)،
-       وهو يتقدّم على ما يمرّره التطبيق نفسه (wry يمرّر وسائطه الافتراضية). */
-const REG = 'HKCU:\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
+     · سياسة المستخدم HKCU\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments
+     · سياسة الجهاز  HKLM\… (المفتاح نفسه)
+   مشغّل CI يشغّل التطبيق **مرفوع الصلاحية**، وفي تشغيلَي 21 و22 وصلت عمليّةَ المتصفّح وسائطُ wry
+   وحدها: متغيّر البيئة وسياسة المستخدم لم يُطبَّقا (وهما ممّا يضبطه مستخدمٌ عادي). سياسة الجهاز لا
+   يكتبها إلا مديرٌ، وهي الطريق الذي يبقى لعمليّة مرفوعة. اسم القيمة: اسم الملف التنفيذي، و«*». */
+const POLICY = 'Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
+const HIVES = ['LocalMachine', 'CurrentUser'];
 const exeName = path.basename(exe);
+const VALUE_NAMES = [exeName, '*'];
+/* ‏.NET مباشرةً لا Remove-ItemProperty: هناك «*» محرفُ بدلٍ يمحو كل قيم المفتاح، وهنا اسمٌ حرفيّ */
+const reg = (hive, body) => ps(`$k = [Microsoft.Win32.Registry]::${hive}.CreateSubKey('${POLICY}'); ${body}; $k.Close()`);
 if (process.platform === 'win32') {
-  ps(`New-Item -Path '${REG}' -Force | Out-Null; New-ItemProperty -Path '${REG}' -Name '${exeName}' -Value '${ARGS}' -PropertyType String -Force | Out-Null`);
-  console.log('  · تجاوز المحمِّل:', ps(`(Get-ItemProperty -Path '${REG}').'${exeName}'`).trim());
+  console.log('  · صلاحية المشغّل:', ps(`if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { 'مرفوعة' } else { 'عادية' }`).trim());
+  for (const hive of HIVES) {
+    const got = reg(hive, `${VALUE_NAMES.map(n => `$k.SetValue('${n}', '${ARGS}')`).join('; ')}; (${VALUE_NAMES.map(n => `'${n}=' + $k.GetValue('${n}')`).join(' + " · " + ')})`);
+    console.log(`  · سياسة ${hive}:`, got.trim());
+  }
 }
-/* إن كانت نسخةٌ من التطبيق تعمل قبلنا فهي تملك عمليّة متصفّح WebView2 لمجلّد البيانات نفسه،
-   فتنضمّ نسختنا إليها وتضيع وسائطنا (رأينا عمليّة المتصفّح بوسائط wry وحدها). تُعرض ثم تُغلق،
-   ومعها عمليّات WebView2 لهذا التطبيق، قبل التشغيل. */
+/* احتياط: نسخةٌ تعمل قبلنا تملك عمليّة متصفّح WebView2 لمجلّد البيانات نفسه، فتنضمّ نسختنا إليها
+   وتضيع وسائطنا. تُعرض ثم تُغلق، ومعها عمليّات WebView2 لهذا التطبيق، قبل التشغيل. */
 const appName = exeName;
 const listApp = () => ps(`Get-CimInstance Win32_Process -Filter "Name='${appName}'" | ForEach-Object { '  · نسخة ' + $_.ProcessId + ' (الأب ' + $_.ParentProcessId + ') ' + $_.CreationDate + ' :: ' + $_.CommandLine } | Out-String -Width 4000`).trim();
 if (process.platform === 'win32') {
@@ -174,7 +183,10 @@ try {
 } finally {
   try { if (browser) await browser.close(); } catch (e) {}
   try { child.kill(); } catch (e) {}
-  if (process.platform === 'win32') ps(`Remove-ItemProperty -Path '${REG}' -Name '${exeName}' -ErrorAction SilentlyContinue`);
+  /* السياسة لا تبقى بعد الفحص — لا على المشغّل ولا على أي جهاز يُشغَّل عليه هذا السكربت */
+  if (process.platform === 'win32') {
+    for (const hive of HIVES) reg(hive, VALUE_NAMES.map(n => `$k.DeleteValue('${n}', $false)`).join('; '));
+  }
   /* WebView2 يُبقي عمليّاته أحياناً — تُنهى بالاسم حتى لا يعلق المشغّل */
   if (process.platform === 'win32') {
     try { spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch (e) {}
