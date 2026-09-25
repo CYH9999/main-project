@@ -1,0 +1,32 @@
+[package]
+name = "tabarak-gym-desktop"
+version = "7.11.0"
+description = "نظام إدارة تبارك جيم — غلاف سطح المكتب"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+
+# الطباعة الأصلية على ويندوز تمرّ من واجهة WebView2 مباشرة:
+# ICoreWebView2_16::ShowPrintUI. وهذه الاعتماديات تُبنى على ويندوز وحدها.
+# تُثبَّت على النسخة التي يستعملها Tauri/wry نفسه (0.38 مع windows-core 0.61):
+# نسخة أحدث تعني نوعين مختلفين لنفس الواجهة في شجرة واحدة، فلا يقبل المترجم
+# تحويل ما يُعيده Tauri إلى ما نستورده نحن.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "=0.38.2"
+windows-core = "=0.61.2"
+
+# غلاف سطح المكتب لا يحمل منطق عمل، فالبناء يُضبط للحجم والثبات لا للسرعة.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

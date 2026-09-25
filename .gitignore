@@ -1,2 +1,9 @@
 node_modules/
 package-lock.json
+
+# مخرج البناء: نسخة مُولَّدة من ملف الواجهة الواحد (انظري scripts/prepare-frontend.mjs)
+app/
+
+# مخرجات بناء سطح المكتب
+src-tauri/target/
+src-tauri/gen/

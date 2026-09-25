@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "تبارك جيم",
+  "mainBinaryName": "تبارك جيم",
+  "version": "7.11.0",
+  "identifier": "com.tabarak.gym",
+
+  "build": {
+    "frontendDist": "../app",
+    "beforeBuildCommand": "node scripts/prepare-frontend.mjs",
+    "beforeDevCommand": "node scripts/prepare-frontend.mjs"
+  },
+
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "تبارك جيم — نظام الإدارة",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 600,
+        "center": true,
+        "maximized": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "decorations": true,
+        "fullscreen": false,
+        "visible": false,
+        "backgroundColor": "#241826",
+        "dragDropEnabled": false,
+        "zoomHotkeysEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "dangerousDisableAssetCspModification": ["style-src"],
+      "freezePrototype": false
+    }
+  },
+
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "تبارك جيم",
+    "copyright": "© تبارك جيم",
+    "category": "Business",
+    "shortDescription": "نظام إدارة تبارك جيم",
+    "longDescription": "نظام إدارة النادي: المشتركات والاشتراكات والحضور والمال والمخزون والتقارير — يعمل على الجهاز بلا إنترنت.",
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller" },
+      "allowDowngrades": false,
+      "wix": {
+        "language": ["ar-SA"]
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["Arabic", "English"],
+        "displayLanguageSelector": true
+      }
+    }
+  }
+}
