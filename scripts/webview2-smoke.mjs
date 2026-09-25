@@ -41,7 +41,8 @@ const ARGS = `--remote-debugging-port=${PORT}`;
 /* PowerShell بأمرٍ مرمَّز (UTF-16LE) — الاسم العربي للملف التنفيذي لا يمرّ بعلامات تنصيص */
 const ps = cmd => {
   try { return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
-    Buffer.from(cmd, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 60000 }); }
+    Buffer.from(`$ProgressPreference = 'SilentlyContinue'; ${cmd}`, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] }); }
   catch (e) { return `(تعذّر: ${e.message})`; }
 };
 /* طريقان موثّقان لتمرير وسائط المتصفح إلى WebView2، ويُستعمل الاثنان:
@@ -54,17 +55,31 @@ if (process.platform === 'win32') {
   ps(`New-Item -Path '${REG}' -Force | Out-Null; New-ItemProperty -Path '${REG}' -Name '${exeName}' -Value '${ARGS}' -PropertyType String -Force | Out-Null`);
   console.log('  · تجاوز المحمِّل:', ps(`(Get-ItemProperty -Path '${REG}').'${exeName}'`).trim());
 }
+/* إن كانت نسخةٌ من التطبيق تعمل قبلنا فهي تملك عمليّة متصفّح WebView2 لمجلّد البيانات نفسه،
+   فتنضمّ نسختنا إليها وتضيع وسائطنا (رأينا عمليّة المتصفّح بوسائط wry وحدها). تُعرض ثم تُغلق،
+   ومعها عمليّات WebView2 لهذا التطبيق، قبل التشغيل. */
+const appName = exeName;
+const listApp = () => ps(`Get-CimInstance Win32_Process -Filter "Name='${appName}'" | ForEach-Object { '  · نسخة ' + $_.ProcessId + ' (الأب ' + $_.ParentProcessId + ') ' + $_.CreationDate + ' :: ' + $_.CommandLine } | Out-String -Width 4000`).trim();
+if (process.platform === 'win32') {
+  const before = listApp();
+  console.log(before ? `  · نسخٌ تعمل قبل التشغيل:\n${before}` : '  · لا نسخة تعمل قبل التشغيل');
+  ps(`Get-CimInstance Win32_Process -Filter "Name='${appName}'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };
+      Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -match 'com\.tabarak\.gym' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+  await sleep(3000);
+}
 let exited = null;
 const child = spawn(exe, [], {
   env: Object.assign({}, process.env, { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: ARGS }),
   detached: false, stdio: 'ignore', windowsHide: false
 });
+console.log('  · التشغيل: pid', child.pid);
 child.on('exit', code => { exited = code; });
 child.on('error', e => { exited = 'error: ' + e.message; });
 /* تشخيصٌ يُطبع حين لا يُفتح المنفذ: هل التطبيق حيّ؟ وما سطور أوامر عمليّات WebView2؟ */
 const diagnose = () => {
   if (process.platform !== 'win32') return;
   console.log('  · حالة التطبيق:', exited === null ? 'يعمل' : `خرج (${exited})`);
+  console.log(listApp());
   /* سطر أوامر عملية المتصفّح كاملاً (بلا --type): هل وصلها المفتاح؟ */
   console.log(ps(`Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { '  · المتصفّح ' + $_.ProcessId + ' :: ' + $_.CommandLine } | Out-String -Width 4000`));
   /* Chromium يكتب DevToolsActivePort في مجلّد بيانات المستخدم حين يفتح منفذ التصحيح */
