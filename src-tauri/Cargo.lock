@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "tabarak-gym-desktop"
-version = "7.10.0"
+version = "7.11.0"
 dependencies = [
  "base64 0.22.1",
  "serde",

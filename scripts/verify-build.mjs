@@ -175,6 +175,25 @@ const FEATURES = [
     },
     confWhy: 'style-src مستثنى من تعديل Tauri (الأنماط السطرية تُطبَّق)، وscript-src باقٍ ببصماته' },
 
+  { key: 'security', label: 'بوّابة العمليات الخطرة (هويّة طازجة، رمز أمان، عبارة، نسخة أمان، سجلّ)',
+    html: [/const Security = \{/, /async guard\(key, opts\)\{/, /Security\.guard\('dangerous\.resetData'/,
+           /Security\.guard\('dangerous\.restore'/, /Security\.guard\('dangerous\.clearDemo'/,
+           /Security\.guard\('security\.disableAuth'/, /Security\.guard\('security\.adminAccount'/g,
+           /async preAction\(key\)\{/, /PIN_ITERATIONS: 120000/, /async registerFailure\(\)\{/, /SECURITY_KEEP: 500/],
+    htmlMin: { "Security.guard('security.adminAccount'": 2 } },
+
+  { key: 'theme', label: 'المظهر: فاتح وداكن وحسب الجهاز — والورق فاتح دائماً',
+    html: [/const Theme = \{/, /html\[data-theme="dark"\]:not\(\[data-tg-print="on"\]\)\{/, /id="btnTheme"/,
+           /docVar\(name\)\{/, /root\.setAttribute\('data-theme', 'light'\)/] },
+
+  { key: 'receiptword', label: 'الوصل إلى Word بقالبه ومن لقطته',
+    html: [/receiptModel\(receipt, opts\)\{/, /async function receipt\(rec\)\{/, /Actions\.receiptWord = /,
+           /Actions\.wordDayReceipts = /, /data-rcpw=/g],
+    htmlMin: { 'data-rcpw=': 6 } },
+
+  { key: 'deskhero', label: 'اللافتة على الاستقبال (أو شريط هويةٍ هادئ)',
+    html: [/receptionHeader\(\)\{/, /\$\{Brand\.receptionHeader\(\)\}/, /data-desk-hero="empty"/] },
+
   { key: 'build', label: 'هويّة البناء',
     html: [/const Build = \{/, /Build\.details\(\)/],
     rust: [/env!\("TG_GIT_SHA"\)/, /env!\("TG_BUILD_ID"\)/, /env!\("TG_FRONTEND_SHA"\)/] },

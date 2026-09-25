@@ -139,7 +139,7 @@ td.num,th.num{display:table-cell;text-align:end}
 .nav-item{
   display:flex;align-items:center;gap:10px;width:100%;text-align:right;
   background:none;border:0;color:var(--sidebar-item);padding:8px 12px;border-radius:var(--r-sm);cursor:pointer;
-  font-size:13.5px;position:relative;min-height:36px;
+  font-size:13.5px;position:relative;
 }
 .nav-item:hover{background:var(--sidebar-hover);color:#fff}
 .nav-item.active{background:var(--sidebar-active);color:#fff;font-weight:600}
@@ -186,7 +186,7 @@ td.num,th.num{display:table-cell;text-align:end}
 /* ============================ Buttons ============================ */
 .btn{
   display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--btn-bg);
-  padding:7px 14px;border-radius:var(--r-sm);min-height:32px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink-2);
+  padding:7px 14px;border-radius:var(--r-sm);cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink-2);
   transition:background .13s,border-color .13s;
 }
 .btn:hover{background:var(--surface-3);border-color:var(--btn-hover-line)}
@@ -200,7 +200,7 @@ td.num,th.num{display:table-cell;text-align:end}
 .btn-dark:hover{background:var(--plum-900)}
 .btn-danger{background:var(--btn-bg);border-color:var(--danger-line);color:var(--red-600)}
 .btn-danger:hover{background:var(--red-50)}
-.btn-sm{padding:4px 10px;font-size:12.5px;border-radius:var(--r-sm);min-height:28px}
+.btn-sm{padding:5px 10px;font-size:12.5px;border-radius:var(--r-sm)}
 .btn-icon{padding:6px;border-radius:var(--r-sm)}
 .btn-ghost{border-color:transparent;background:none}
 .btn-ghost:hover{background:var(--surface-3);border-color:transparent}
@@ -287,7 +287,7 @@ table.tbl td.ta-l{text-align:left}
 .field label{font-size:12.5px;color:var(--ink-2);font-weight:600}
 .field .hint{font-size:11.5px;color:var(--muted)}
 .inp,select.inp,textarea.inp{
-  width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--input-bg);min-height:32px;
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--input-bg);
 }
 .inp:focus{border-color:var(--rose-500);outline:none;box-shadow:0 0 0 2px var(--rose-100)}
 textarea.inp{min-height:74px;resize:vertical}
@@ -1019,6 +1019,13 @@ body.locked{background:var(--plum-900)}
   .content{padding:14px}
   .pulse{gap:16px}.pulse .p-sep{display:none}
   .gsearch{display:none}
+  /* الشريط العلوي يلتفّ على الهاتف: العنوان في سطر والأزرار (المظهر، التنبيهات،
+     الإضافة السريعة) في سطرٍ تحته — بدل أن تجرّ الصفحة أفقياً (7.11). */
+  .topbar{flex-wrap:wrap;row-gap:8px;gap:10px;padding:10px 14px}
+  .topbar>div:first-child{min-width:0;flex:1 1 60%}
+  .desk-hero-empty{flex-wrap:wrap;row-gap:8px}
+  .desk-hero-empty .dh-txt{min-width:0;flex:1 1 50%}
+  .desk-hero-empty .sp{display:none}
   /* الجداول المصغّرة تُكتب داخل البطاقات مباشرة بلا غلاف تمرير (بخلاف .tbl-wrap)،
      فتدفع الصفحة كلها أفقياً على شاشة الهاتف. تُمرَّر داخل بطاقتها بدل أن تجرّ الصفحة،
      فيبقى الشريط الجانبي والأزرار في مكانها ولا يختفي شيء خارج الحافة. */
@@ -1160,7 +1167,7 @@ body.locked{background:var(--plum-900)}
    ملاحظة صيانة: أي حساب مالي يُكتب في Calc أو Services فقط، ممنوع داخل UI.
    ============================================================================ */
 'use strict';
-const APP = { name:'تبارك جيم', version:'7.10.0', schema:8, db:'tabarak_gym' };
+const APP = { name:'تبارك جيم', version:'7.11.0', schema:8, db:'tabarak_gym' };
 
 
 /* ===== src/app/core/10-utils.js ====================================================== */
@@ -7503,13 +7510,6 @@ const Backup = {
       return null;
     } finally { this._busy = false; }
   },
-  /* نسخة الأمان قبل الاستعادة — تُحفظ حيث لا يصلها التقليم، ولا تُعدّ نسخةً
-     إلا إن قُرئت من القرص سليمة. (7.11: البوّابة تنادي `preAction` — انظري Security.guard) */
-  async safetyBackup(){
-    if (!Desktop.on()) return null;
-    try { return await this.saveVerified('backup', `قبل-الاستعادة-${D.stamp()}.json`, true); }
-    catch(e){ Log.error('تعذّرت نسخة الأمان قبل الاستعادة', e); return null; }
-  },
   /* ---------------------- نسخة الأمان قبل عملية خطرة (7.11) ----------------------
      قبل أي عملية تمسّ مجموعات كبيرة من البيانات: نسخة كاملة بالوسائط، في مجلّد
      «manual» الذي لا يقلّمه شيء، تُكتب ثم **تُقرأ من القرص وتُتحقَّق** (البنية
@@ -8865,6 +8865,8 @@ const UI = {
   /* ------------------------------- Modal ------------------------------- */
   stack: [],
   modal({ title, body, footer, size='', onMount, onClose }){
+    /* التركيز يعود إلى من فتح النافذة حين تُغلق — كنوافذ ويندوز (7.11) */
+    const opener = document.activeElement;
     const ov = document.createElement('div');
     ov.className = 'overlay';
     ov.innerHTML = `<div class="modal ${size}" role="dialog" aria-modal="true" aria-label="${U.esc(title)}">
@@ -8876,7 +8878,19 @@ const UI = {
     document.getElementById('modalRoot').appendChild(ov);
     const handle = { el:ov, closed:false,
       close(){ if (this.closed) return; this.closed = true;
-        ov.remove(); UI.stack = UI.stack.filter(x=>x!==handle); if(onClose) onClose(); } };
+        ov.remove(); UI.stack = UI.stack.filter(x=>x!==handle); if(onClose) onClose();
+        if (!UI.stack.length && opener && opener.isConnected && typeof opener.focus === 'function'
+            && document.activeElement === document.body){ try { opener.focus({ preventScroll:true }); } catch(e){} } } };
+    /* Tab لا يغادر النافذة المفتوحة إلى الصفحة خلفها */
+    ov.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return;
+      const f = [...ov.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')]
+        .filter(el => !el.disabled && el.getAttribute('tabindex') !== '-1' && el.offsetParent !== null);
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+    });
     ov.addEventListener('click', e => { if (e.target === ov) handle.close(); });
     ov.querySelectorAll('[data-close]').forEach(b => b.onclick = () => handle.close());
     UI.stack.push(handle);
@@ -16002,7 +16016,7 @@ Views.settings = {
           </div>
           <div id="intOut" style="margin-top:12px"></div></div></div>`;
       box.querySelector('#demoLoad').onclick = () => Actions.loadDemo();
-      box.querySelector('#demoClear').onclick = () => Actions.clearDemo();
+      box.querySelector('#demoClear').onclick = () => Actions.clearDemo().catch(() => {});
       box.querySelector('#intScan').onclick = () => Actions.integrityScan();
       box.querySelector('#defRestore').onclick = () => Actions.restoreDefaults();
       box.querySelector('#crExpire').onclick = async () => {
@@ -16210,7 +16224,7 @@ Views.settings = {
                 <td><span class="chip ${r[0]}"><span class="dot"></span>${U.esc(r[1])}</span>
                   ${d.reason ? `<div class="t-sub">${U.esc(Security.REASONS[d.reason] || d.reason)}</div>` : ''}</td></tr>`; }).join('')}
             </tbody></table></div>` : UI.empty('لا أحداث بعد', 'كل محاولة لعملية خطرة — نجحت أو رُفضت — تُسجَّل هنا')}</div></div>`;
-      box.querySelector('#wipe').onclick = () => Actions.wipe();
+      box.querySelector('#wipe').onclick = () => Actions.wipe().catch(() => {});
       const again = () => renderRoute();
       const b1 = box.querySelector('#pinSet'); if (b1) b1.onclick = () => Security.pinFlow('setup', { onDone:again });
       const b2 = box.querySelector('#pinChange'); if (b2) b2.onclick = () => Security.pinFlow('change', { onDone:again });

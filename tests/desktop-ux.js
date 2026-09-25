@@ -641,6 +641,10 @@ module.exports = function register({ group, record, TESTS_JS }) {
        /Start-Process .*\/S.*\/D=/.test(job) && /binary \$installed\.FullName/.test(job));
     ok('وفشل التثبيت يُسقط البناء لا يُتجاوز',
        /throw "التثبيت الصامت/.test(job));
+    /* 7.11: المثبَّت يُشغَّل في WebView2 الحقيقي ويُقاس ما يُرسم — بعد التثبيت وقبل الرفع */
+    const live = at('scripts/webview2-smoke.mjs');
+    ok('الفحص الحيّ في WebView2 على المثبَّت: بعد التثبيت وقبل الرفع',
+       live > at('Start-Process') && live < upload && fs.existsSync(path.join(ROOT, 'scripts', 'webview2-smoke.mjs')), `${live}`);
 
     /* اسم الحزمة يفرّق بين بناء وبناء */
     ok('اسم الحزمة يحمل رقم التشغيل وبصمة الالتزام',

@@ -1020,6 +1020,110 @@ module.exports = function register({ group, record, TESTS_JS }) {
     } finally { srv.close(); }
     record('المظهر 7.11 — فاتح وداكن وحسب الجهاز', rows, errs);
   });
+
+  /* ===================================================================== *
+   * 14) دورة النسخة الكاملة (§62): إنشاء ⟵ نسخة ⟵ إعادة تشغيل ⟵ تعديل ⟵     *
+   *     استعادة ببوّابتها ⟵ تحقّق من البيانات والهوية والوسائط والحسابات والمال *
+   * ===================================================================== */
+  group('دورة النسخة الكاملة 7.11 — من الإنشاء إلى الاستعادة', async (browser) => {
+    const srv = await serve();
+    const { rows, ok } = collect();
+    let errs = [];
+    try {
+      const a = await open(browser, srv);
+      errs = a.errors;
+      /* 1–7: نادٍ ممثّل، هوية متحرّكة، صورة موظفة، دخول مفعّل، رمز أمان، تقارير */
+      const r1 = await a.page.evaluate(async (P) => {
+        const TG = window.TG, H = window.TGH, out = {};
+        await H.representative(P.ANIM);
+        /* النادي الممثّل فيه حساب استقبال — فتُنشأ المالكة حساباً ثانياً ثم يُفعَّل الدخول */
+        await TG.Svc.users.create({ username: 'owner1', name: 'المالكة', roleKey: 'owner', password: P.OWNER_PW }, { bootstrap: true });
+        await TG.Settings.set({ authEnabled: true }); TG.Auth.restoreSession();
+        await TG.Auth.login('owner1', P.OWNER_PW);
+        await TG.Security.applyPin('setup', { password: P.OWNER_PW, pin: P.PIN, pin2: P.PIN });
+        /* تقارير ومستندات من النادي نفسه */
+        const rep = TG.Reports.build(TG.D.monthKey(TG.D.today()));
+        out.reportOk = !!rep && TG.Reports.html(rep, false).length > 1000;
+        const pay = TG.Repos.payments.list()[0];
+        out.receiptWord = !!(await TG.Actions.receiptWordForPayment(pay.id));
+        /* نسخة يدوية من الزرّ (تُقرأ وتُتحقَّق من القرص) */
+        await TG.Actions.exportBackup(true);
+        const FS = window.__TG_FS__;
+        const man = FS.files.filter(f => f.category === 'backup').slice(-1)[0];
+        out.manName = man && man.name;
+        /* الجسر المزيّف يحفظ الملفات في ذاكرة الصفحة — والقرص الحقيقي يبقى بعد إعادة
+           التشغيل. فيُحمل الملف عبرها كما يبقى على القرص. */
+        out.manFile = man && { folder: man.folder, name: man.name, category: man.category, text: man.text, b64: null,
+                               bytes: man.bytes, modified: man.modified };
+        out.fp = H.fingerprint(); out.money = H.money(); out.links = H.brokenLinks();
+        out.brand = { logo: TG.Brand.get().logoMediaId, banner: TG.Brand.get().bannerMediaId,
+                      logoCrop: JSON.stringify(TG.Brand.cropOf('logo')), bannerCrop: JSON.stringify(TG.Brand.cropOf('banner')),
+                      animated: TG.Brand.isAnimated('logo') && TG.Brand.isAnimated('banner') };
+        out.staffPhoto = TG.Repos.staff.list(true).filter(s => s.photoMediaId).length;
+        out.users = TG.Repos.users.list(true).map(u => u.username).sort().join(',');
+        return out;
+      }, { OWNER_PW, PIN, ANIM: ANIM_B64 });
+      ok('نادٍ ممثّل بلا رابط مكسور، وتقرير إداري ووصل Word منه', r1.links.length === 0 && r1.reportOk && r1.receiptWord);
+      ok('نسخة يدوية كُتبت وتُحقِّق منها', /^نسخة/.test(r1.manName || ''), r1.manName);
+      /* 9: إعادة تشغيل */
+      await a.page.reload({ waitUntil: 'domcontentloaded' });
+      await boot(a.page);
+      /* 10–11: تعديل بعد النسخة، ثم استعادة من القرص ببوّابتها */
+      const r2 = await a.page.evaluate(async (P) => {
+        const TG = window.TG, H = window.TGH, out = {};
+        out.afterRestart = H.diff(P.fp, H.fingerprint()).filter(x => x !== 'meta');
+        out.sessionKept = TG.Auth.session.actorName;
+        if (!TG.Auth.session.actorId) await TG.Auth.login('owner1', P.OWNER_PW);
+        window.__TG_FS__.files.push(P.manFile);
+        await TG.Svc.members.create({ name: 'أُضيفت بعد النسخة' });
+        await TG.Brand.clearMedia('banner');
+        await TG.Repos.expenses.create({ date: TG.D.today(), amount: 123456, notes: 'بعد النسخة', method: 'cash' });
+        const pay = TG.Repos.payments.list()[1]; await TG.Svc.payments.remove(pay.id);
+        out.changed = H.diff(P.fp, H.fingerprint()).length > 0;
+        await window.TGTests.throughGate(() => TG.Actions.restoreFromDisk('manual', P.man), { password: P.OWNER_PW });
+        await new Promise(r => setTimeout(r, 500));
+        out.diff = H.diff(P.fp, H.fingerprint()).filter(x => x !== 'meta');
+        out.money = H.money(); out.links = H.brokenLinks();
+        out.brand = { logo: TG.Brand.get().logoMediaId, banner: TG.Brand.get().bannerMediaId,
+                      logoCrop: JSON.stringify(TG.Brand.cropOf('logo')), bannerCrop: JSON.stringify(TG.Brand.cropOf('banner')),
+                      animated: TG.Brand.isAnimated('logo') && TG.Brand.isAnimated('banner') };
+        out.staffPhoto = TG.Repos.staff.list(true).filter(s => s.photoMediaId && TG.Repos.media.get(s.photoMediaId)).length;
+        out.event = ((TG.Security.recent(1)[0] || {}).details || {});
+        return out;
+      }, { OWNER_PW, PIN, fp: r1.fp, man: r1.manName, manFile: r1.manFile });
+      ok('بعد إعادة التشغيل: القرص كما كُتب، والجلسة باقية', r2.afterRestart.length === 0 && r2.sessionKept === 'المالكة',
+         `${r2.afterRestart.join(',')} / ${r2.sessionKept}`);
+      ok('التعديل بعد النسخة وقع (المقارنة لها معنى)', r2.changed);
+      ok('الاستعادة ببوّابتها: كل جدول سجلاً بسجل كما كان', r2.diff.length === 0, r2.diff.join('،'));
+      ok('والمال رقماً برقم', JSON.stringify(r2.money) === JSON.stringify(r1.money), `${JSON.stringify(r1.money)} ⟵ ${JSON.stringify(r2.money)}`);
+      ok('ولا رابط مكسور', r2.links.length === 0, r2.links.slice(0, 3).join(' | '));
+      ok('والهوية: الشعار واللافتة بقصّهما ومتحرّكان', JSON.stringify(r2.brand) === JSON.stringify(r1.brand), JSON.stringify(r2.brand));
+      ok('والوسائط: صور الموظفات', r2.staffPhoto === r1.staffPhoto && r1.staffPhoto > 0, `${r1.staffPhoto} ⟵ ${r2.staffPhoto}`);
+      ok('والحدث الأمني بنسخة أمانه في البيانات المستعادة', r2.event.capability === 'dangerous.restore' && r2.event.result === 'done'
+         && r2.event.backup && r2.event.backup.ok, JSON.stringify(r2.event));
+      /* 12–16: إعادة تشغيل بعد الاستعادة، والحسابات تدخل بكلماتها، ورمز الأمان يعمل */
+      await a.page.reload({ waitUntil: 'domcontentloaded' });
+      await boot(a.page);
+      const r3 = await a.page.evaluate(async (P) => {
+        const TG = window.TG, H = window.TGH, out = {};
+        out.diff = H.diff(P.fp, H.fingerprint()).filter(x => x !== 'meta');
+        let bad = null; try { await TG.Auth.login('owner1', 'wrong'); } catch (e) { bad = e.code; }
+        await TG.Auth.login('owner1', P.OWNER_PW);
+        await TG.Auth.logout(); await TG.Auth.login('reception1', 'Recep#12345');
+        out.reception = TG.Auth.session.actorName;
+        out.pin = await TG.Security.verifyPin(P.PIN);
+        out.bad = bad;
+        out.users = TG.Repos.users.list(true).map(u => u.username).sort().join(',');
+        return out;
+      }, { OWNER_PW, PIN, fp: r1.fp });
+      ok('بعد إعادة التشغيل: البيانات المستعادة كما هي', r3.diff.length === 0, r3.diff.join(','));
+      ok('الحسابات: المالكة والاستقبال يدخلان بكلمتيهما، والخاطئة تُرفض', r3.bad === 'BAD_LOGIN' && r3.reception === 'استقبال'
+         && r3.users === r1.users, `${r3.bad}/${r3.reception}/${r3.users}`);
+      ok('ورمز الأمان المستعاد يعمل', r3.pin);
+      await a.ctx.close();
+    } finally { srv.close(); }
+    record('دورة النسخة الكاملة 7.11 — من الإنشاء إلى الاستعادة', rows, errs);
+  });
 };
 
 /* أدوات الصفحة لهذه المجموعات */

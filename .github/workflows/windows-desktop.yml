@@ -67,7 +67,10 @@ jobs:
         run: npm run test:render
 
       # ملفات Word يحمّلها معالج نصوص خارجي (LibreOffice Writer) ويُخرجها PDF.
-      # يتخطّى بإعلانٍ صريح إن لم يكن مثبّتاً على المشغّل — والبنية مفحوصة في npm test.
+      # 7.11: يُثبَّت Writer هنا فلا يتخطّى الفحص على المشغّل — كان «يتخطّى بإعلان»
+      # فتمرّ البوّابة خضراء بلا أن يُفتح ملف واحد. والوصل يُفحص نصّه: رقمه ومشتركته ومبلغه.
+      - name: تثبيت LibreOffice Writer وأدوات PDF
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libreoffice-writer poppler-utils fonts-noto-core
       - name: ملفات Word في معالج نصوص خارجي
         run: npm run test:docx
 
@@ -183,6 +186,22 @@ jobs:
           if (-not $installed) { throw "لا ملف تنفيذي في مجلّد التثبيت" }
           Write-Host "المفحوص: $($installed.Name)"
           node scripts/verify-build.mjs binary $installed.FullName
+
+      # البوّابة الخامسة (7.11) — الأصدق للواجهة: المثبَّت يُشغَّل داخل WebView2
+      # الحقيقي، ويتّصل Playwright بصفحته عبر منفذ التصحيح الموثّق، ويُقاس ما يُرسم:
+      # نمطٌ سطريّ يُطبَّق، شعار 512×512 في صندوقه 38×38، لافتةٌ ظاهرة على
+      # الاستقبال بنسبة 4:1، ولا خرق لسياسة أمن المحتوى. هذا بالضبط ما كان يسقط
+      # على ويندوز وحده ولا يُرى في أي محاكاة. انظري scripts/webview2-smoke.mjs.
+      - name: فحص حيّ في WebView2 — الشعار واللافتة والسياسة المطبَّقة
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "tg-verify"
+          $installed = Get-ChildItem $dest -Filter *.exe |
+            Where-Object { $_.Name -notlike 'uninstall*' } |
+            Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $installed) { throw "لا ملف تنفيذي مثبَّت للفحص الحيّ" }
+          node scripts/webview2-smoke.mjs $installed.FullName
 
       - name: قياس المخرجات وبصماتها
         shell: pwsh
