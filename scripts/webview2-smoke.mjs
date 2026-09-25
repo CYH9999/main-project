@@ -21,7 +21,8 @@
    ليس بديلاً عن تجربة المستخدمة على جهازها — يُقال ذلك في التقرير — لكنه أوّل
    قياسٍ لهذا التطبيق داخل WebView2 نفسه لا داخل ما يشبهه.
    ========================================================================== */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { chromium } from 'playwright';
 
 const exe = process.argv[2];
@@ -35,10 +36,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 if (!exe) { console.error('المسار إلى الملف التنفيذي المثبَّت مطلوب'); process.exit(2); }
 
+const ARGS = `--remote-debugging-port=${PORT}`;
+/* PowerShell بأمرٍ مرمَّز (UTF-16LE) — الاسم العربي للملف التنفيذي لا يمرّ بعلامات تنصيص */
+const ps = cmd => {
+  try { return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+    Buffer.from(cmd, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 60000 }); }
+  catch (e) { return `(تعذّر: ${e.message})`; }
+};
+/* طريقان موثّقان لتمرير وسائط المتصفح إلى WebView2، ويُستعمل الاثنان:
+     · متغيّر البيئة WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+     · تجاوز المحمِّل في السجلّ لكل ملف تنفيذي (HKCU\…\WebView2\AdditionalBrowserArguments)،
+       وهو يتقدّم على ما يمرّره التطبيق نفسه (wry يمرّر وسائطه الافتراضية). */
+const REG = 'HKCU:\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
+const exeName = path.basename(exe);
+if (process.platform === 'win32') {
+  ps(`New-Item -Path '${REG}' -Force | Out-Null; New-ItemProperty -Path '${REG}' -Name '${exeName}' -Value '${ARGS}' -PropertyType String -Force | Out-Null`);
+  console.log('  · تجاوز المحمِّل:', ps(`(Get-ItemProperty -Path '${REG}').'${exeName}'`).trim());
+}
+let exited = null;
 const child = spawn(exe, [], {
-  env: Object.assign({}, process.env, { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` }),
-  detached: false, stdio: 'ignore'
+  env: Object.assign({}, process.env, { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: ARGS }),
+  detached: false, stdio: 'ignore', windowsHide: false
 });
+child.on('exit', code => { exited = code; });
+child.on('error', e => { exited = 'error: ' + e.message; });
+/* تشخيصٌ يُطبع حين لا يُفتح المنفذ: هل التطبيق حيّ؟ وما سطور أوامر عمليّات WebView2؟ */
+const diagnose = () => {
+  if (process.platform !== 'win32') return;
+  console.log('  · حالة التطبيق:', exited === null ? 'يعمل' : `خرج (${exited})`);
+  console.log(ps(`Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'msedgewebview2' -or $_.ProcessId -eq ${child.pid} } | ForEach-Object { '  · ' + $_.ProcessId + ' ' + $_.Name + ' :: ' + (($_.CommandLine + '') -replace '\\s+', ' ').Substring(0, [Math]::Min(300, ($_.CommandLine + '').Length)) } | Out-String -Width 400`));
+  console.log(ps(`Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 9000 -and $_.LocalPort -le 9999 } | ForEach-Object { '  · منفذ ' + $_.LocalAddress + ':' + $_.LocalPort + ' ⟵ ' + $_.OwningProcess } | Out-String`));
+};
 let browser = null;
 try {
   /* المنفذ يُفتح حين تُنشأ بيئة WebView2 — ننتظره بحدٍّ أعلى */
@@ -48,7 +76,7 @@ try {
     if (!up) await sleep(1000);
   }
   ok('WebView2 فتح منفذ التصحيح للتطبيق المثبَّت', up);
-  if (!up) throw new Error('no CDP');
+  if (!up) { diagnose(); throw new Error('no CDP'); }
 
   browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
   const pages = () => browser.contexts().flatMap(c => c.pages());
@@ -115,6 +143,7 @@ try {
 } finally {
   try { if (browser) await browser.close(); } catch (e) {}
   try { child.kill(); } catch (e) {}
+  if (process.platform === 'win32') ps(`Remove-ItemProperty -Path '${REG}' -Name '${exeName}' -ErrorAction SilentlyContinue`);
   /* WebView2 يُبقي عمليّاته أحياناً — تُنهى بالاسم حتى لا يعلق المشغّل */
   if (process.platform === 'win32') {
     try { spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' }); } catch (e) {}
