@@ -2245,7 +2245,7 @@ const Audit = {
   KEEP: 1000, SECURITY_KEEP: 500,
   async log(entity, action, summary, entityId, details){
     try{
-      const rec = { ts:new Date().toISOString(), entity, action,
+      const rec = { ts:new Date().toISOString(), seq:this._next(), entity, action,
         summary:String(summary||''), entityId:entityId||null,
         actorId:Auth.session.actorId || null, actor:Auth.session.actorName || '' };
       if (details && typeof details === 'object') rec.details = details;
@@ -2262,7 +2262,15 @@ const Audit = {
       }
     }catch(e){ Log.warn('تعذّر تسجيل الحدث', e); }
   },
-  recent(n=50){ return U.sortBy(Repos.audit.list(true), x=>x.ts, -1).slice(0,n); }
+  /* ترتيبٌ ثابت لحدثين في الملّي ثانية نفسها (محاولة فاشلة ثم إقفالها مثلاً): `seq`
+     يتزايد داخل الجلسة وعبرها (يبدأ من الوقت بالميكروثانية). والأحداث الأقدم بلا `seq`
+     تُرتَّب بوقتها كما كانت. */
+  _seqLast: 0,
+  _next(){ this._seqLast = Math.max(this._seqLast + 1, Date.now() * 1000); return this._seqLast; },
+  recent(n=50){
+    const key = x => `${x.ts}|${String(Number(x.seq) || 0).padStart(18, '0')}`;
+    return U.sortBy(Repos.audit.list(true), key, -1).slice(0,n);
+  }
 };
 
 

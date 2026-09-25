@@ -211,6 +211,7 @@ module.exports = function register({ group, record, TESTS_JS }) {
         const locked = await Security.verifyLayers({ def, ev: ev(), pw: P.OWNER_PW, pin: P.PIN, ph: phrase, phrase });
         out.correctWhileLocked = locked.ok;
         out.lockedEvent = (Security.recent(1)[0].details || {}).reason;
+        out.lockedAmong = Security.recent(3).some(e => (e.details || {}).reason === 'locked');
         /* تتضاعف ولها سقف */
         out.c3 = Security.cooldownMs(3); out.c4 = Security.cooldownMs(4); out.c50 = Security.cooldownMs(50);
         out.maxMs = Security.LOCK.maxMs;
